@@ -1,6 +1,6 @@
 // Point of sale: contracts, the new-contract wizard (Cash / Rent to Own), contract detail (send by text/email,
 // sign in person, download), contract templates + the drag-and-drop field designer, and POS settings.
-import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, head, me, settings, can, isAdmin, onLive, hashQuery, loadCatalog, catalog, COPY, TRASH , planUrl , live } from './admin.js';
+import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, head, me, settings, can, isAdmin, onLive, hashQuery, loadCatalog, catalog, COPY, TRASH , planUrl , live, CONFIG_URL } from './admin.js';
 import { buildDrawingPackage, render3D, floorPlanPNG } from '../js/drawings.js';
 import { FIELD_TYPES, SIGNER_ROLES, TAGS, tagLabel, rtoCalc, usd, saleTypeLabel, DEFAULT_RTO } from '../js/shared/contract.js';
 
@@ -9,13 +9,17 @@ const verLabel = v => (v.revision || 1) > 1 ? `Revision ${v.revision}` : 'Origin
 const verStatus = v => v.status === 'superseded' ? (v.completed_at ? 'Signed, then replaced' : `Replaced (was ${(STATUS[v.prev_status] || 'draft').toLowerCase()})`) : (STATUS[v.status] || v.status);
 const ROLE = Object.fromEntries(SIGNER_ROLES);
 const fullName = c => [c?.first_name, c?.last_name].filter(Boolean).join(' ');
-const tabs = active => `<div class="tabs"><button data-tab="#/pos" class="${active === 'contracts' ? 'on' : ''}">Contracts</button><button data-tab="#/pos/templates" class="${active === 'templates' ? 'on' : ''}">Templates</button>${isAdmin() ? `<button data-tab="#/pos/settings" class="${active === 'settings' ? 'on' : ''}">Rent-to-own &amp; contract settings</button>` : ''}</div>`;
-const wireTabs = () => $$('[data-tab]').forEach(b => (b.onclick = () => { location.hash = b.dataset.tab; }));
+// Contracts, Contract templates and Point of sale settings each have their own menu item now (no tabs).
+const tabs = () => '';
+const wireTabs = () => {};
 
 export async function posPage(arg, rest = []) {
   if (arg === 'new') return wizard();
   if (arg === 'revise' && rest[1]) return wizard(Number(rest[1]));
   if (arg === 'contracts' && rest[1]) return contractDetail(Number(rest[1]));
+  // old addresses (#/pos/templates, #/pos/settings) still work
+  if (arg === 'templates' && location.hash.startsWith('#/pos/')) { location.replace('#/templates' + (rest[1] ? '/' + rest[1] : '')); return; }
+  if (arg === 'settings' && location.hash.startsWith('#/pos/')) { location.replace('#/pos-settings'); return; }
   if (arg === 'templates' && rest[1]) return designer(Number(rest[1]));
   if (arg === 'templates') return templatesPage();
   if (arg === 'settings') return posSettings();
@@ -27,7 +31,7 @@ export async function posPage(arg, rest = []) {
 // ---------------------------------------------------------------------------
 async function contractsPage() {
   const st = hashQuery().get('status') || '';
-  $('#main').innerHTML = head('Point of sale', 'Write up Cash and Rent-to-Own contracts from any 3D design, send them by text or email for e-signature, or sign in person.', '<a class="btn primary" href="#/pos/new">+ New contract</a>') + tabs('contracts') + `
+  $('#main').innerHTML = head('Contracts', 'Every Cash and Rent-to-Own contract. Click one to send it, sign in person or download it; click Edit to change a sale and resend it.', `${can('pos.templates') || can('pos.view') ? '<a class="btn ghost" href="#/templates">Contract templates</a>' : ''}<a class="btn primary" href="#/pos/new">+ New contract</a>`) + `
     <div class="row" style="margin-bottom:12px"><input class="in" id="kq" placeholder="Search customer or contract #" style="max-width:300px">
       <select class="in" id="ks" style="max-width:200px"><option value="">All contracts</option>${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${k === st ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select class="in" id="kt" style="max-width:170px"><option value="">Cash &amp; RTO</option><option value="cash">Cash</option><option value="rto">Rent to own</option></select></div>
@@ -36,18 +40,19 @@ async function contractsPage() {
   const render = async () => {
     const p = new URLSearchParams({ q: $('#kq').value, status: $('#ks').value, sale_type: $('#kt').value });
     const rows = await api('GET', '/api/pos/contracts?' + p);
-    live('#ktable').innerHTML = rows.length ? `<table class="tbl"><tr><th>Contract</th><th>Customer</th><th>Building</th><th>Type</th><th class="num">Price</th><th>Status</th><th>Latest version</th></tr>${rows.map(k => `<tr class="click" data-id="${k.id}">
+    live('#ktable').innerHTML = rows.length ? `<table class="tbl"><tr><th>Contract</th><th>Customer</th><th>Building</th><th>Type</th><th class="num">Price</th><th>Status</th><th>Latest version</th><th></th></tr>${rows.map(k => `<tr class="click" data-id="${k.id}">
       <td><b>${esc(k.number)}</b>${k.versions > 1 ? ` <span class="pill" title="${k.versions} versions on file">Rev ${k.revision} · latest</span>` : ''}<div class="muted" style="font-size:12px">${esc(k.template_name || '')}</div></td>
       <td>${esc(k.customer || fullName(k))}<div class="muted" style="font-size:12px">${esc(k.phone || k.email || '')}</div></td><td>${esc(k.shed || '')}</td>
       <td><span class="pill ${esc(k.sale_type)}">${k.sale_type === 'rto' ? 'Rent to own' : 'Cash'}</span>${k.monthly ? `<div class="muted" style="font-size:12px">${esc(k.monthly)}/mo</div>` : ''}</td>
       <td class="num"><b>${fmt(k.total)}</b></td>
       <td><span class="pill ${esc(k.status)}">${esc(STATUS[k.status] || k.status)}</span>${k.status !== 'void' && k.status !== 'draft' ? `<div class="muted" style="font-size:12px">${k.signed}/${k.signers} signed</div>` : ''}</td>
-      <td class="muted">${fmtDate(k.created_at)}<div style="font-size:12px">${esc(k.created_by_name || '')}</div></td></tr>`).join('')}</table>`
+      <td class="muted">${fmtDate(k.created_at)}<div style="font-size:12px">${esc(k.created_by_name || '')}</div></td>
+      <td class="num" style="white-space:nowrap">${can('pos.create') ? `<a class="btn ghost sm" href="#/pos/revise/${k.id}" title="Change this sale and resend it (the current version is kept)">Edit</a>` : ''}</td></tr>`).join('')}</table>`
       : `<div class="empty">No contracts yet. Click <b>+ New contract</b>, or open a quote and click <b>Start contract</b>.</div>`;
   };
   let t; $('#kq').oninput = () => { clearTimeout(t); t = setTimeout(guard(render), 250); };
   $('#ks').onchange = $('#kt').onchange = guard(render);
-  $('#ktable').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) location.hash = `#/pos/contracts/${tr.dataset.id}`; };
+  $('#ktable').onclick = e => { if (e.target.closest('a')) return; const tr = e.target.closest('tr[data-id]'); if (tr) location.hash = `#/pos/contracts/${tr.dataset.id}`; };
   onLive(type => { if (type === 'contract') render().catch(() => {}); });
   await render();
 }
@@ -69,9 +74,22 @@ async function wizard(reviseId = null) {
     if (P.rto?.term_months) S.term = Number(P.rto.term_months);
     if (P.cash?.deposit != null) S.deposit = Number(P.cash.deposit);
   }
-  const quoteId = qp.get('quote') || P.quote_id || old?.quote_id;
+  // Coming back from the 3D configurator: put back everything the rep had typed
+  const DRAFT_KEY = 'pos-draft:' + (reviseId || 'new');
+  let draft = null;
+  if (qp.get('from3d')) { try { draft = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null'); } catch { draft = null; } }
+  if (draft) {
+    Object.assign(S, { sale_type: draft.sale_type || S.sale_type, template_id: draft.template_id ?? S.template_id, custom: { ...(draft.custom || S.custom) }, cob: !!draft.cob });
+    if (draft.term) S.term = draft.term;
+    if (draft.deposit != null) S.deposit = draft.deposit;
+  }
+  const prevQuoteId = draft ? draft.quote_id : (P.quote_id || old?.quote_id || null);
+  const quoteId = qp.get('quote') || draft?.quote_id || P.quote_id || old?.quote_id;
   if (quoteId) S.quote = await api('GET', `/api/v1/quotes/${Number(quoteId)}`).catch(() => null);
-  const cid = qp.get('contact') || P.contact_id || old?.contact_id || S.quote?.contact_id;
+  // a new design means a new price: work the deposit out again from the default %
+  const newDesign = !!(S.quote && qp.get('quote') && Number(qp.get('quote')) !== Number(prevQuoteId));
+  if (newDesign && (draft || old)) delete S.deposit;
+  const cid = qp.get('contact') || draft?.contact_id || P.contact_id || old?.contact_id || S.quote?.contact_id;
   if (cid && can('crm.view')) S.contact = await api('GET', `/api/crm/contacts/${Number(cid)}`).catch(() => null);
   if (!S.quote && S.contact?.quotes?.length) S.quote = await api('GET', `/api/v1/quotes/${S.contact.quotes[0].id}`);
   if (!meta.templates.some(t => t.sale_type === 'cash' || t.sale_type === 'any') && meta.templates.some(t => t.sale_type === 'rto')) S.sale_type = 'rto';
@@ -108,16 +126,38 @@ async function wizard(reviseId = null) {
       <p class="muted" style="font-size:12.5px;margin:10px 0 0">You'll see the finished contract before anything is sent.</p></div>
   </div>`;
 
+  const INPUTS = ['sName', 'sPhone', 'sEmail', 'cName', 'cPhone', 'cEmail', 'coSigner', 'rOver', 'rFirst', 'wNote'];
+  const saveDraft = () => {
+    const inputs = {}; for (const id of INPUTS) { const el = $('#' + id); if (el) inputs[id] = el.value; }
+    $$('[data-custom]').forEach(i => { S.custom[i.dataset.custom] = i.value; });
+    try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ sale_type: S.sale_type, template_id: S.template_id, cob: S.cob, custom: S.custom, term: S.term, deposit: S.deposit ?? null, quote_id: S.quote?.id || null, contact_id: S.contact?.id || S.quote?.contact_id || null, inputs })); } catch { /* private mode: we still come back with the design and customer */ }
+  };
+  // Open the 3D configurator for this customer; saving there brings the new design straight back to this contract
+  const open3D = () => {
+    saveDraft();
+    const u = new URLSearchParams();
+    const v3 = S.quote?.links?.view_3d;
+    if (v3) { const x = new URL(v3, location.href); const tok = x.searchParams.get('q') || (x.hash.match(/^#q-([a-f0-9]+)/) || [])[1]; if (tok) u.set('q', tok); }
+    u.set('pos', '1');
+    const contactId = S.contact?.id || S.quote?.contact_id; if (contactId) u.set('contact', contactId);
+    const nm = $('#sName').value.trim(); if (nm) u.set('name', nm);
+    if ($('#sEmail').value.trim()) u.set('email', $('#sEmail').value.trim());
+    if ($('#sPhone').value.trim()) u.set('phone', $('#sPhone').value.trim());
+    u.set('back', (reviseId ? `#/pos/revise/${reviseId}` : '#/pos/new') + '?from3d=1');
+    const [base, hash] = CONFIG_URL.split('#'); // the demo's configurator address ends in #staff
+    location.href = base + (base.includes('?') ? '&' : '?') + u.toString() + (hash ? '#' + hash : '');
+  };
   const renderQuote = async () => {
     const q = S.quote;
     if (q) {
       live('#wQuote').innerHTML = `<div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px"><div class="plan-prev" style="width:200px;flex:none"><img src="${planUrl(q.id)}" alt=""></div>
         <div style="flex:1;min-width:0"><b style="font-size:16px">${esc(q.shed.style)} ${esc(q.shed.size)}</b><div class="muted">${esc(q.number)} · ${esc(q.customer.full_name)} · ${fmt(q.pricing.total)}</div>
         <div class="muted" style="font-size:12.5px;margin-top:6px">${esc(q.options.filter(o => !o.name.startsWith('Removed')).map(o => o.name).join(', ') || 'No options')}</div>
-        <div class="row" style="margin-top:10px"><a class="btn ghost sm" href="${esc(q.links.view_3d)}${old && q.links.view_3d.includes('?') ? '&revise=' + old.id : ''}" target="_blank" title="Opens the design in the dealer configurator. Change it and submit; then come back and pick the new design.">${old ? 'Change the 3D design ↗' : 'Open in 3D ↗'}</a><button class="btn ghost sm" id="wPick">Use a different design</button></div></div></div>`;
+        <div class="row" style="margin-top:10px"><button class="btn primary sm" id="w3d" title="Opens this design in the 3D configurator. Make your changes and click Save design &amp; return; you come straight back here with everything you typed.">Change design in 3D configurator</button><button class="btn ghost sm" id="wPick">Use a different saved design</button></div></div></div>`;
     } else {
-      live('#wQuote').innerHTML = `<p class="muted" style="margin:0 0 10px">Pick the customer's 3D design (quote). Designing a new one? Open the configurator, submit it, then come back.</p><div class="row"><button class="btn primary sm" id="wPick">Choose a design</button><a class="btn ghost sm" href="/" target="_blank">Open configurator ↗</a></div>`;
+      live('#wQuote').innerHTML = `<p class="muted" style="margin:0 0 10px">Design the building in the 3D configurator for this customer, or pick one of their saved designs. When you save in the configurator you come straight back here.</p><div class="row"><button class="btn primary sm" id="w3d">Design in 3D configurator</button><button class="btn ghost sm" id="wPick">Choose a saved design</button></div>`;
     }
+    $('#w3d').onclick = open3D;
     $('#wPick').onclick = () => pickQuote(async q => { S.quote = await api('GET', `/api/v1/quotes/${q.id}`); if (!$('#sName').value) { $('#sName').value = S.quote.customer.full_name; $('#sEmail').value = S.quote.customer.email || ''; $('#sPhone').value = S.quote.customer.phone || ''; } renderQuote(); renderMoney(); renderSum(); });
   };
   const tplList = () => meta.templates.filter(t => t.sale_type === S.sale_type || t.sale_type === 'any');
@@ -128,8 +168,8 @@ async function wizard(reviseId = null) {
     if (!list.some(t => t.id === S.template_id && ready(t))) S.template_id = list.find(ready)?.id || null;
     $('#wTpl').innerHTML = list.length ? `<div class="choice">${list.map(t => ready(t)
       ? `<label><input type="radio" name="tpl" value="${t.id}" ${t.id === S.template_id ? 'checked' : ''}><b>${esc(t.name)}</b><small>${t.pages.length} page${t.pages.length === 1 ? '' : 's'}${t.append_drawings ? ' + drawings' : ''} · signers: ${t.roles.map(r => ROLE[r]).join(', ')}</small></label>`
-      : `<label style="opacity:.6;cursor:not-allowed"><input type="radio" disabled><b>${esc(t.name)}</b><small>Not ready — ${can('pos.templates') ? `<a href="#/pos/templates/${t.id}">add a customer signature box</a>` : 'needs a customer signature box'}</small></label>`).join('')}</div>`
-      : `<div class="callout warn">No ${saleTypeLabel(S.sale_type)} template yet. ${can('pos.templates') ? '<a href="#/pos/templates">Upload one</a>.' : 'Ask your admin to upload one.'}</div>`;
+      : `<label style="opacity:.6;cursor:not-allowed"><input type="radio" disabled><b>${esc(t.name)}</b><small>Not ready — ${can('pos.templates') ? `<a href="#/templates/${t.id}">add a customer signature box</a>` : 'needs a customer signature box'}</small></label>`).join('')}</div>`
+      : `<div class="callout warn">No ${saleTypeLabel(S.sale_type)} template yet. ${can('pos.templates') ? '<a href="#/templates">Upload one</a>.' : 'Ask your admin to upload one.'}</div>`;
     const t = tpl();
     const roles = t?.roles || [];
     $('#wCob').innerHTML = roles.includes('cobuyer') ? `<label class="chk"><input type="checkbox" id="cobOn" ${S.cob ? 'checked' : ''}>Add a co-buyer</label><div class="form" id="cobF" style="margin-top:10px" ${S.cob ? '' : 'hidden'}>
@@ -144,7 +184,7 @@ async function wizard(reviseId = null) {
     renderSum();
   };
   const terms = (meta.rto?.terms?.length ? meta.rto.terms : DEFAULT_RTO.terms);
-  S.term = meta.rto?.default_term || terms[0]?.months;
+  S.term = S.term || meta.rto?.default_term || terms[0]?.months;
   const rtoNow = () => rtoCalc(cashPrice(), S.term, meta.rto, meta.tax_rate, Number($('#rOver')?.value) || null);
   const renderMoney = () => {
     if (S.sale_type === 'cash') {
@@ -186,6 +226,15 @@ async function wizard(reviseId = null) {
     $$('[data-custom]').forEach(i => { i.value = S.custom[i.dataset.custom] || ''; });
     renderSum();
   }
+  if (draft) {
+    for (const [id, v] of Object.entries(draft.inputs || {})) { const el = $('#' + id); if (el && v != null) el.value = v; }
+    if (!$('#sName').value && S.quote) { $('#sName').value = S.quote.customer.full_name || ''; $('#sEmail').value = $('#sEmail').value || S.quote.customer.email || ''; $('#sPhone').value = $('#sPhone').value || S.quote.customer.phone || ''; }
+    $$('[data-custom]').forEach(i => { i.value = S.custom[i.dataset.custom] || ''; });
+    if ($('#rOver')) $('#rOver').dispatchEvent(new Event('input'));
+    renderMoney(); renderSum();
+    if ($('#rOver') && draft.inputs) { $('#rOver').value = draft.inputs.rOver || ''; $('#rFirst').value = draft.inputs.rFirst || ''; $('#rOver').dispatchEvent(new Event('input')); }
+  }
+  if (qp.get('from3d')) toast(newDesign ? 'New 3D design loaded into the contract' : 'Back from the configurator: no changes saved');
 
   $('#wGo').onclick = async () => {
     const err = $('#wErr'); err.hidden = true;
@@ -220,6 +269,7 @@ async function wizard(reviseId = null) {
       step('Building the contract…');
       const k = await api('POST', '/api/pos/contracts', fd);
       toast(old ? `Revised contract ${k.number} is ready — send it to the customer` : `Contract ${k.number} is ready`);
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* */ }
       location.hash = `#/pos/contracts/${k.id}?new=1`;
     } catch (e) { fail(e.message); btn.disabled = false; $('#wBusy').hidden = true; }
   };
@@ -311,15 +361,19 @@ async function contractDetail(id) {
 async function templatesPage() {
   const list = await api('GET', '/api/pos/templates');
   const edit = can('pos.templates');
-  $('#main').innerHTML = head('Point of sale', 'Upload your contract PDFs for Cash and Rent-to-Own sales, then drag signature, initials, date and auto-filled boxes onto them.', edit ? '<button class="btn primary" id="tUp">+ Upload template (PDF)</button>' : '') + tabs('templates') + `
+  $('#main').innerHTML = head('Contract templates', 'Your contract PDFs for Cash and Rent-to-Own sales. Upload a PDF, then drag signature, initials, date and auto-filled boxes onto it.', `<a class="btn ghost" href="#/pos">Contracts</a>${edit ? '<button class="btn primary" id="tUp">+ Upload template (PDF)</button>' : ''}`) + `
+    ${edit ? `<div class="grid g3" style="margin-bottom:16px">
+      <div class="card card-pad"><div class="kgroup">Step 1</div><b>Save your contract as a PDF</b><p class="muted" style="margin:4px 0 0;font-size:13px">In Word or Google Docs: File → Save as / Download → PDF. Leave blank lines where people sign.</p></div>
+      <div class="card card-pad"><div class="kgroup">Step 2</div><b>Upload it</b><p class="muted" style="margin:4px 0 0;font-size:13px">Click <b>+ Upload template</b> and choose Cash, Rent to own or Both. Locked PDFs are fine.</p></div>
+      <div class="card card-pad"><div class="kgroup">Step 3</div><b>Place the boxes</b><p class="muted" style="margin:4px 0 0;font-size:13px">Drop signature, initials, date and auto-filled info (name, address, price, RTO payment…) where they go, then Save.</p></div></div>` : ''}
     <div class="tpl-cards">${list.map(t => {
       const sig = t.fields.filter(f => f.type === 'signature');
       return `<div class="card scard"><div class="body"><div class="row" style="justify-content:space-between"><b>${esc(t.name)}</b><span class="pill ${t.sale_type === 'any' ? '' : esc(t.sale_type)}">${saleTypeLabel(t.sale_type)}</span></div>
       <div class="muted" style="margin-top:6px;font-size:13px">${t.pages.length} page${t.pages.length === 1 ? '' : 's'} · ${t.fields.length} fields · ${sig.length} signature${sig.length === 1 ? '' : 's'}${t.append_drawings ? ' · drawings attached' : ''}</div>
       <div class="muted" style="font-size:12.5px;margin-top:4px">${t.used ? `Used on ${t.used} contract${t.used === 1 ? '' : 's'}` : 'Not used yet'}${t.active ? '' : ' · <b>archived</b>'}</div>
       ${!sig.some(f => f.role === 'customer') ? '<div class="err" style="margin-top:6px">No customer signature box yet</div>' : ''}</div>
-      <div class="foot"><a class="btn ${edit ? 'primary' : 'ghost'} sm" href="#/pos/templates/${t.id}">${edit ? 'Edit fields' : 'View'}</a><a class="btn link sm" href="/api/pos/templates/${t.id}/file.pdf" target="_blank">Original PDF ↗</a></div></div>`;
-    }).join('') || '<div class="empty">No templates yet.</div>'}</div>
+      <div class="foot"><a class="btn ${edit ? 'primary' : 'ghost'} sm" href="#/templates/${t.id}">${edit ? 'Edit fields' : 'View'}</a><a class="btn link sm" href="/api/pos/templates/${t.id}/file.pdf" target="_blank">Original PDF ↗</a></div></div>`;
+    }).join('') || `<div class="empty">No contract templates yet.${edit ? ' Click <b>+ Upload template (PDF)</b> to add your Cash and Rent-to-Own contracts.' : ''}</div>`}</div>
     <div class="callout" style="margin-top:16px">Tip: make your contract in Word or Google Docs and save it as a PDF. Leave blank lines where the customer signs — you'll drop the boxes on top. The two <b>Sample</b> templates show how it works; duplicate or delete them when your own are ready.</div>`;
   wireTabs();
   if ($('#tUp')) $('#tUp').onclick = () => openModal({
@@ -339,7 +393,7 @@ async function templatesPage() {
         $('#ugo', root).disabled = true; $('#ubusy', root).hidden = false;
         try {
           const t = await uploadPdf('/api/pos/templates', file, { name: f.name.value, sale_type: f.sale_type.value }, m => { $('#ubusyT', root).textContent = m; });
-          closeModal(); toast('Uploaded — now place the fields'); location.hash = `#/pos/templates/${t.id}`;
+          closeModal(); toast('Uploaded — now place the fields'); location.hash = `#/templates/${t.id}`;
         } catch (e) { err.textContent = e.message; err.hidden = false; $('#ugo', root).disabled = false; $('#ubusy', root).hidden = true; }
       };
     },
@@ -417,7 +471,7 @@ async function designer(id) {
   let sel = null, tool = null, dirty = false, role = 'customer', seq = Date.now() % 100000;
   const nid = () => 'f' + (++seq).toString(36);
   $('#main').innerHTML = `<div class="head"><div><h1>${esc(t.name)}</h1><p>Click a field type, then click on the page to drop it. Drag to move, drag the corner to resize.${edit ? '' : ' (view only)'}</p></div>
-    <div class="row"><span class="muted" id="dState"></span><a class="btn ghost" href="#/pos/templates">‹ Templates</a>${edit ? '<button class="btn primary" id="dSave">Save</button>' : ''}</div></div>
+    <div class="row"><span class="muted" id="dState"></span><a class="btn ghost" href="#/templates">‹ Contract templates</a>${edit ? '<button class="btn primary" id="dSave">Save</button>' : ''}</div></div>
   <div class="designer">
     <div class="card card-pad dz-tools" id="tools">
       <div class="section-t" style="margin:0 0 8px;border:0;padding:0">Signer fields</div>
@@ -477,8 +531,8 @@ async function designer(id) {
         <p class="muted" style="font-size:12px">Replacing the PDF keeps the boxes you placed — handy when you fix a typo in the contract.</p>` : ''}`;
       $('#tf').oninput = () => setDirty(true);
       if ($('#dRepl')) $('#dRepl').onchange = guard(async e => { if (dirty) await save(); await uploadPdf(`/api/pos/templates/${id}/file`, e.target.files[0]); toast('PDF replaced'); setDirty(false); designer(id); });
-      if ($('#dDup')) $('#dDup').onclick = guard(async () => { if (dirty) await save(); const r = await api('POST', `/api/pos/templates/${id}/duplicate`); toast('Duplicated'); location.hash = `#/pos/templates/${r.id}`; });
-      if ($('#dDel')) $('#dDel').onclick = guard(async () => { if (!confirmBox('Delete this template? (Templates already used on contracts are archived instead.)')) return; const r = await api('DELETE', `/api/pos/templates/${id}`); setDirty(false); toast(r?.archived ? 'Archived (it was used on contracts)' : 'Deleted'); location.hash = '#/pos/templates'; });
+      if ($('#dDup')) $('#dDup').onclick = guard(async () => { if (dirty) await save(); const r = await api('POST', `/api/pos/templates/${id}/duplicate`); toast('Duplicated'); location.hash = `#/templates/${r.id}`; });
+      if ($('#dDel')) $('#dDel').onclick = guard(async () => { if (!confirmBox('Delete this template? (Templates already used on contracts are archived instead.)')) return; const r = await api('DELETE', `/api/pos/templates/${id}`); setDirty(false); toast(r?.archived ? 'Archived (it was used on contracts)' : 'Deleted'); location.hash = '#/templates'; });
       return;
     }
     const ft = FIELD_TYPES[f.type];
@@ -584,7 +638,7 @@ async function posSettings() {
   const rto = { ...DEFAULT_RTO, ...(s.rto || {}) };
   let terms = (rto.terms || []).map(t => ({ ...t }));
   const T = (k, label, o = {}) => `<label class="fld ${o.full ? 'full' : ''}"><span>${label}</span>${o.area ? `<textarea name="${k}" style="min-height:${o.h || 90}px">${esc(s[k] ?? '')}</textarea>` : `<input name="${k}" type="${o.type || 'text'}" step="any" value="${esc(s[k] ?? '')}" placeholder="${esc(o.ph || '')}">`}${o.help ? `<small>${o.help}</small>` : ''}</label>`;
-  $('#main').innerHTML = head('Point of sale', 'Your rent-to-own rate sheet, deposits and the messages customers get.', '<button class="btn primary" id="psave">Save</button>') + tabs('settings') + `
+  $('#main').innerHTML = head('Point of sale settings', 'Your rent-to-own rate sheet, deposits, signing-link rules and the messages customers get with their contract. Company name, address and time zone are under Settings → Company.', '<button class="btn primary" id="psave">Save</button>') + `
   <div class="grid" style="gap:16px">
     <div class="card card-pad"><h2>Rent to own</h2><p class="muted" style="margin:2px 0 12px">Monthly rental = cash price (building + delivery, before tax) × term factor ÷ months. Enter the factors from your RTO company's rate sheet. Reps can override the monthly amount on a contract.</p>
       <div class="form"><label class="fld"><span>RTO company name</span><input id="rCo" value="${esc(rto.company || '')}" placeholder="e.g. ABC Rent-to-Own"></label>
@@ -595,7 +649,7 @@ async function posSettings() {
         <div class="fld full"><span>Terms</span><table class="mini" style="max-width:520px"><tr><th>Months</th><th>Factor</th><th>Example on $5,000</th><th></th></tr><tbody id="rRows"></tbody></table><button type="button" class="btn ghost sm" id="rAdd" style="margin-top:6px;justify-self:start">+ Add term</button></div></div></div>
     <div class="card card-pad"><h2>Contracts</h2><div class="form" style="margin-top:10px">
       ${T('cash_deposit_pct', 'Default cash deposit (% of total)', { type: 'number' })}${T('contract_link_days', 'Signing links expire after (days)', { type: 'number' })}
-      ${T('timezone', 'Time zone for dates on contracts', { ph: 'America/Chicago', help: 'e.g. America/Chicago, America/New_York, America/Denver' })}${T('company_address', 'Company address (for contracts)')}
+
       ${T('esign_consent_text', 'E-sign consent text (shown before signing)', { area: true, full: true, help: 'Leave blank for the standard ESIGN consent wording.' })}
       <label class="fld full"><label class="chk"><input type="checkbox" name="send_signed_copy" ${s.send_signed_copy !== false ? 'checked' : ''}>Email the signed PDF to the customer automatically (or text a download link if there's no email)</label></label></div></div>
     <div class="card card-pad"><h2>Messages</h2><p class="muted" style="margin:2px 0 10px">Merge tags: {{signer.first_name}}, {{link}}, {{contract.number}}, {{shed.description}}, {{company.name}}, {{company.phone}}, {{sales_rep.name}}, {{pricing.total}}, {{rto.monthly_total}}</p><div class="form">

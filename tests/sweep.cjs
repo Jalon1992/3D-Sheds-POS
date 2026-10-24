@@ -81,8 +81,8 @@ class C { constructor() { this.cookie = ''; } async r(m, u, b, raw) { const f = 
   const ids = { contact: contact.id, contract: k.id, template: tpl.id, quote: q.id };
   const order = (await A.r('GET', '/api/crm/orders')).d.data[0];
   const ROUTES = {
-    admin: ['dashboard', 'crm', `crm/contacts/${ids.contact}`, 'conversations', `conversations/${ids.contact}`, 'pipeline', 'tasks', 'pos', `pos/contracts/${ids.contract}`, `pos/new?quote=${ids.quote}`, `pos/revise/${k2.id}`, 'pos/templates', `pos/templates/${ids.template}`, 'pos/settings', 'quotes', `quotes/${ids.quote}`, 'orders', 'orders?view=schedule', 'styles', 'colors', 'pricing', 'options', 'integrations', 'messaging', 'settings', 'account'],
-    sales: ['crm', `crm/contacts/${ids.contact}`, 'conversations', 'pipeline', 'tasks', 'pos', `pos/contracts/${ids.contract}`, 'pos/templates', 'quotes', 'orders', 'account', 'dashboard', 'messaging'],
+    admin: ['dashboard', 'crm', `crm/contacts/${ids.contact}`, 'conversations', `conversations/${ids.contact}`, 'pipeline', 'tasks', 'pos', `pos/contracts/${ids.contract}`, `pos/new?quote=${ids.quote}`, `pos/revise/${k2.id}`, 'templates', `templates/${ids.template}`, 'pos-settings', 'pos/templates', 'pos/settings', 'quotes', `quotes/${ids.quote}`, 'orders', 'orders?view=schedule', 'styles', 'colors', 'pricing', 'options', 'integrations', 'messaging', 'settings', 'configurator-settings', 'account'],
+    sales: ['crm', `crm/contacts/${ids.contact}`, 'conversations', 'pipeline', 'tasks', 'pos', `pos/contracts/${ids.contract}`, `pos/revise/${k2.id}`, 'templates', 'quotes', 'orders', 'account', 'dashboard', 'messaging', 'pos-settings', 'configurator-settings'],
     production: ['orders', 'quotes', 'account', 'crm', 'pos'],
     delivery: ['orders', 'orders?view=schedule', 'account', 'quotes', 'crm'],
   };

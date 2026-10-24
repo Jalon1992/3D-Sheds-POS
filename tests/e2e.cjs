@@ -99,7 +99,7 @@ const watch = (page, who) => {
       const pdf = await PDFDocument.create(); const f = await pdf.embedFont(StandardFonts.Helvetica);
       const pg = pdf.addPage([612, 792]); pg.drawText('MY CASH SALE CONTRACT', { x: 60, y: 720, size: 18, font: f }); pg.drawText('Buyer signature: ____________________', { x: 60, y: 200, size: 12, font: f });
       const file = join(dir, 'My Cash Contract.pdf'); writeFileSync(file, await pdf.save());
-      await admin.goto(B + '/admin/#/pos/templates'); await admin.click('#tUp');
+      await admin.goto(B + '/admin/#/templates'); await admin.waitForSelector('#tUp'); await admin.click('#tUp');
       await admin.fill('#uf [name=name]', 'My Cash Contract'); await admin.setInputFiles('#uf [name=file]', file); await admin.click('#ugo');
       await admin.waitForSelector('.dz-layer', { timeout: 20000 }); await admin.waitForTimeout(500);
       const layer = admin.locator('.dz-layer').first(); const bb = await layer.boundingBox();
@@ -119,7 +119,7 @@ const watch = (page, who) => {
       const { execFileSync } = require('node:child_process');
       let locked = null; try { locked = join(dir, 'Locked RTO.pdf'); execFileSync('qpdf', ['--encrypt', '', 'owner', '256', '--', file, locked]); } catch { locked = null; }
       if (locked) {
-        await admin.goto(B + '/admin/#/pos/templates'); await admin.click('#tUp');
+        await admin.goto(B + '/admin/#/templates'); await admin.waitForSelector('#tUp'); await admin.click('#tUp');
         await admin.setInputFiles('#uf [name=file]', locked); await admin.selectOption('#uf [name=sale_type]', 'rto'); await admin.click('#ugo');
         await admin.waitForSelector('.dz-layer', { timeout: 30000 });
       }
@@ -209,7 +209,24 @@ const watch = (page, who) => {
       await sales.click('a:has-text("Edit & resend")'); await sales.waitForSelector('#wGo');
       assert(await sales.inputValue('#sName') === 'Mark Miller', 'customer prefilled');
       assert(await sales.inputValue('#cName') === 'Mary Miller', 'co-buyer prefilled');
-      await sales.click('label:has-text("Cash")'); await sales.fill('#wNote', 'Paying cash instead');
+      // open the design in the 3D configurator from the contract, save there, come straight back with the same customer
+      await sales.fill('#wNote', 'Paying cash instead'); await sales.click('label:has-text("Cash")');
+      const oldQuote = await sales.evaluate(async id => (await (await fetch('/api/pos/contracts/' + id)).json()).quote_id, contractId);
+      await sales.click('#w3d'); await sales.waitForSelector('#posBar', { timeout: 20000 });
+      assert(/Designing for Mark Miller/.test(await sales.innerText('#posBar')), 'configurator knows the customer');
+      await sales.waitForSelector('#loading.gone', { state: 'attached', timeout: 20000 }).catch(() => {});
+      await sales.screenshot({ path: join(OUT, '09b-configurator-pos.png') });
+      await sales.click('#posSave');
+      await sales.waitForFunction(() => location.pathname.startsWith('/admin') && /from3d=1.*quote=\d+/.test(location.hash), null, { timeout: 20000 });
+      await sales.waitForSelector('#w3d');
+      const newQuote = await sales.evaluate(() => Number(location.hash.match(/quote=(\d+)/)[1]));
+      assert(newQuote && newQuote !== oldQuote, 'a new design came back');
+      assert(await sales.inputValue('#sName') === 'Mark Miller', 'same customer after the configurator');
+      assert(await sales.inputValue('#wNote') === 'Paying cash instead', 'typed note kept');
+      assert(await sales.isChecked('input[name=sale][value=cash]'), 'sale type kept');
+      const nq = await sales.evaluate(async id => (await fetch('/api/v1/quotes/' + id)).json(), newQuote);
+      const k0 = await sales.evaluate(async id => (await fetch('/api/pos/contracts/' + id)).json(), contractId);
+      assert(nq.contact_id === k0.contact_id, 'new design is on the same contact');
       await sales.click('#wGo'); await sales.waitForFunction(id => { const m = location.hash.match(/contracts\/(\d+)/); return m && Number(m[1]) !== id; }, contractId, { timeout: 90000 });
       await sales.waitForSelector('h2:has-text("Versions")');
       const txt = await sales.innerText('#main');
@@ -218,6 +235,7 @@ const watch = (page, who) => {
       await sales.screenshot({ path: join(OUT, '10a-revision.png'), fullPage: true });
       await sales.goto(B + '/admin/#/pos'); await sales.waitForSelector('tr[data-id]');
       assert((await sales.$$eval('tr[data-id]', r => r.filter(x => x.innerText.includes('Mark Miller')).length)) === 1, 'one row per sale');
+      assert(await sales.$('tr[data-id]:has-text("Mark Miller") a:has-text("Edit")'), 'Edit button on the contracts list');
     });
 
     await step('owner dashboard shows sales, leads and quotes with MTD / YTD / year views', async () => {
@@ -226,6 +244,20 @@ const watch = (page, who) => {
       await admin.click('[data-metric=leads]'); await admin.waitForSelector('#vizA');
       const sales = await admin.innerText('.kpi:first-child .val'); assert(/\$/.test(sales), 'sales tile');
       await admin.screenshot({ path: join(OUT, '10b-dashboard.png'), fullPage: true });
+    });
+
+    await step('menus: contract templates, POS settings and configurator settings each have their own page', async () => {
+      const pages = { '#/templates': 'Contract templates', '#/pos-settings': 'Point of sale settings', '#/configurator-settings': 'Configurator settings', '#/settings': 'Company', '#/messaging': '' };
+      for (const [h, title] of Object.entries(pages)) {
+        await admin.goto(B + '/admin/' + h); await admin.waitForSelector('#main h1');
+        if (title) assert((await admin.innerText('#main h1')).includes(title), h + ' title');
+      }
+      await admin.goto(B + '/admin/#/pos/templates'); await admin.waitForFunction(() => location.hash === '#/templates');
+      await admin.goto(B + '/admin/#/configurator-settings'); await admin.waitForSelector('#main h1');
+      const txt = await admin.innerText('#main'); assert(/Sales tax/i.test(txt) && !/Twilio/i.test(txt), 'configurator settings only');
+      await admin.goto(B + '/admin/#/pos-settings'); await admin.waitForSelector('#main h1');
+      assert(!/Time zone for dates/i.test(await admin.innerText('#main')), 'company fields not on POS settings');
+      const nav = await admin.innerText('nav, .side'); assert(/Contract templates/.test(nav) && /Configurator settings/.test(nav), 'nav items');
     });
 
     await step('phone-size admin works for a rep on the lot', async () => {

@@ -92,6 +92,30 @@ test('every 3D quote lands in the CRM as a contact + deal, repeat quotes merge',
   const q = await admin.get('/api/v1/quotes/' + q1.id); assert.equal(q.data.contact_id, c.id);
 });
 
+test('POS: a design saved from the configurator for a contract goes on that contact, no new lead', async () => {
+  const q1 = await quote({ first_name: 'Zed', last_name: 'Park', email: 'zed@test.com', phone: '615-555-0777', address: '1 Main St', city: 'Town', state: 'TN', zip: '37000' });
+  const cid = (await admin.get('/api/v1/quotes/' + q1.id)).data.contact_id;
+  const leadsBefore = (await admin.get('/api/crm/notifications')).data.data.filter(x => x.title.includes('Zed')).length;
+  const st = cat.styles[0], sz = st.sizes[1] || st.sizes[0];
+  const r = await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: sz.id }, customer: {}, pos: true, contact_id: cid });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.customer.email, 'zed@test.com', 'customer filled from the contact');
+  assert.equal(r.data.customer.full_name, 'Zed Park');
+  const d = (await admin.get('/api/crm/contacts/' + cid)).data;
+  assert.equal(d.quotes.length, 2); assert.equal(d.opportunities.length, 1, 'same deal');
+  assert.equal(d.opportunities[0].quote_id, r.data.id, 'deal points at the new design');
+  assert.ok(d.timeline.some(t => t.type === 'quote' && /designed .* for a contract/.test(t.body)));
+  assert.equal((await admin.get('/api/v1/quotes/' + r.data.id)).data.contact_id, cid);
+  const leadsAfter = (await admin.get('/api/crm/notifications')).data.data.filter(x => x.title.includes('Zed')).length;
+  assert.equal(leadsAfter, leadsBefore, 'no "new lead" alert for a POS redesign');
+  // POS mode without a contact: a name plus email or mobile; customers can't use POS mode at all
+  assert.equal((await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: sz.id }, customer: { first_name: 'Walk' }, pos: true })).status, 400);
+  const walk = await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: sz.id }, customer: { first_name: 'Walk', last_name: 'In', phone: '615-555-0888' }, pos: true });
+  assert.equal(walk.status, 201, JSON.stringify(walk.data));
+  assert.equal((await anon.post('/api/v1/quotes', { config: { style_id: st.id, size_id: sz.id }, customer: { first_name: 'X' }, pos: true, contact_id: cid })).status, 400, 'public: email still required, contact_id ignored');
+  assert.equal((await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: sz.id }, customer: {}, pos: true, contact_id: 999999 })).status, 404);
+});
+
 test('manual leads: validation, duplicate detection, opportunity', async () => {
   assert.equal((await admin.post('/api/crm/contacts', {})).status, 400);
   assert.equal((await admin.post('/api/crm/contacts', { first_name: 'X', phone: '12' })).status, 400);

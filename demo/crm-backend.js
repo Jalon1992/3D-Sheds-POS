@@ -69,19 +69,23 @@ function upsert(c, source, dealer_id) {
     source, tags: c.tags || [], assigned_to: c.assigned_to || null, dealer_id: dealer_id || null, sms_consent: c.sms_consent ? 1 : 0, dnd_sms: 0, dnd_email: 0, unread: 0, last_message_at: null, last_activity_at: now(), created_at: now() };
   D().contacts.push(row); return { contact: row, created: true };
 }
-function onQuote(q, quiet = false) {
-  const { contact } = upsert(q, /dealer configurator/i.test(q.source || '') ? q.source : '3D configurator', q.dealer_id);
+function onQuote(q, quiet = false, opts = {}) {
+  const forced = opts.contact_id ? D().contacts.find(x => x.id === opts.contact_id) : null;
+  if (forced) for (const k of ['first_name', 'last_name', 'email', 'phone', 'address', 'city', 'state', 'zip']) if (!String(q[k] || '').trim() && forced[k]) q[k] = forced[k];
+  const { contact } = forced ? { contact: forced } : upsert(q, /dealer configurator/i.test(q.source || '') ? q.source : '3D configurator', q.dealer_id);
   q.contact_id = contact.id;
   const p = pipe('sales'), early = p.stages.slice(0, 3).map(s => s.id);
   let o = D().opps.find(x => x.contact_id === contact.id && x.pipeline_id === p.id && x.status === 'open' && early.includes(x.stage));
+  if (!o && opts.pos) o = [...D().opps].reverse().sort((a, b) => (b.status === 'open') - (a.status === 'open')).find(x => x.contact_id === contact.id && x.pipeline_id === p.id);
   const title = `${q.style_name} ${q.size_label}`;
   const status = { won: 'won', lost: 'lost' }[q.status] || 'open', stage = { contacted: 'contacted', quoted: 'quoted', won: 'sold' }[q.status] || p.stages[0].id;
   if (o) Object.assign(o, { quote_id: q.id, value: q.total, title });
   else { o = { id: nextId(), contact_id: contact.id, quote_id: q.id, pipeline_id: p.id, stage: quiet ? stage : p.stages[0].id, status: quiet ? status : 'open', title, value: q.total, dealer_id: q.dealer_id, stage_changed_at: q.created_at || now(), created_at: q.created_at || now() }; D().opps.push(o); }
+  if (opts.pos) { act(contact.id, 'quote', `${me()?.name || 'Sales'} designed ${q.number} for a contract: ${title} — ${usd(q.total)}`, o.id); return; }
   D().activities.push({ id: nextId(), contact_id: contact.id, opportunity_id: o.id, type: 'quote', body: `Submitted 3D design ${q.number}: ${title} — ${usd(q.total)}`, created_at: q.created_at || now() });
   if (!quiet) notify('lead', `New 3D lead: ${fullName(q) || q.email}`, `${title} · ${usd(q.total)}`, `#/crm/contacts/${contact.id}`, 'crm.view');
 }
-hooks.quoteCreated.push(q => { onQuote(q); save(); });
+hooks.quoteCreated.push((q, opts) => { onQuote(q, false, opts || {}); save(); });
 
 function logMsg(contact, channel, body, subject, contract_id) {
   const m = { id: nextId(), contact_id: contact?.id || null, channel, direction: 'out', to_addr: channel === 'sms' ? contact?.phone : contact?.email, subject, body, status: 'test', user_id: me()?.id, contract_id, created_at: now() };

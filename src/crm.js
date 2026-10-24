@@ -125,14 +125,17 @@ export async function messageContact(contact, { channel, body, subject, user, co
 }
 
 /** Called for every new quote from the 3D configurator / API → contact + opportunity in the Sales pipeline. */
-export async function onQuoteCreated(q, baseUrl, formatted) {
-  const { contact, created } = upsertContact(q, { source: q.source && /dealer configurator/i.test(q.source) ? q.source : '3D configurator', dealer_id: q.dealer_id });
+export async function onQuoteCreated(q, baseUrl, formatted, { contact_id = null, pos = false, user = null } = {}) {
+  const forced = contact_id ? get('SELECT * FROM contacts WHERE id = ?', Number(contact_id)) : null;
+  const { contact, created } = forced ? { contact: forced, created: false } : upsertContact(q, { source: q.source && /dealer configurator/i.test(q.source) ? q.source : '3D configurator', dealer_id: q.dealer_id });
   run('UPDATE quotes SET contact_id = ? WHERE id = ?', contact.id, q.id);
   const pipe = salesPipeline();
   const firstStage = pipe?.stages?.[0]?.id || 'new';
   const early = (pipe?.stages || []).slice(0, 3).map(st => st.id);
   // reuse an early-stage open deal so one customer doesn't pile up cards; otherwise start a new one
   let opp = pipe && get(`SELECT * FROM opportunities WHERE contact_id = ? AND pipeline_id = ? AND status = 'open' AND stage IN (${early.map(() => '?').join(',') || "''"}) ORDER BY id DESC LIMIT 1`, contact.id, pipe.id, ...early);
+  // POS redesign: keep it on the customer's current deal, whatever stage it's in
+  if (pos && pipe && !opp) opp = get("SELECT * FROM opportunities WHERE contact_id = ? AND pipeline_id = ? ORDER BY (status = 'open') DESC, id DESC LIMIT 1", contact.id, pipe.id);
   const title = `${q.style_name} ${q.size_label}`;
   if (opp) {
     run("UPDATE opportunities SET quote_id = ?, value = ?, title = ?, updated_at = datetime('now') WHERE id = ?", q.id, q.total || 0, title, opp.id);
@@ -140,6 +143,13 @@ export async function onQuoteCreated(q, baseUrl, formatted) {
     const r = run('INSERT INTO opportunities (contact_id, quote_id, pipeline_id, stage, title, value, dealer_id, assigned_to) VALUES (?,?,?,?,?,?,?,?)',
       contact.id, q.id, pipe.id, firstStage, title, q.total || 0, q.dealer_id || contact.dealer_id || null, contact.assigned_to || null);
     opp = { id: Number(r.lastInsertRowid) };
+  }
+  if (pos) { // design made while writing up a contract: log it, no "new lead" alert or auto-reply
+    addActivity(contact.id, 'quote', `${user?.name || user?.email || 'Sales'} designed ${q.number} for a contract: ${title} — $${Number(q.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`, user?.id || null, opp?.id);
+    run("UPDATE contacts SET last_activity_at = datetime('now') WHERE id = ?", contact.id);
+    broadcast('contact', { id: contact.id, created: false }, { perm: 'crm.view', dealer_id: contact.dealer_id });
+    broadcast('opportunity', { id: opp?.id }, { perm: 'crm.view', dealer_id: contact.dealer_id });
+    return { contact, opportunity_id: opp?.id };
   }
   addActivity(contact.id, 'quote', `Submitted 3D design ${q.number}: ${title} — $${Number(q.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}${q.notes ? `\nCustomer notes: ${q.notes}` : ''}`, null, opp?.id);
   broadcast('contact', { id: contact.id, created }, { perm: 'crm.view', dealer_id: contact.dealer_id });

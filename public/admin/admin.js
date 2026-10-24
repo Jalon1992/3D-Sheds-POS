@@ -144,11 +144,12 @@ $('#loginForm').onsubmit = async e => {
 $('#logout').onclick = async () => { await api('POST', '/api/auth/logout'); location.hash = ''; location.reload(); };
 
 const ROUTES = { dashboard, quotes, crm: crmContacts, conversations: crmConversations, pipeline: crmPipeline, tasks: crmTasks, pos: posPage, orders: ordersBoard,
-  styles, colors, options, pricing: pricingPage, integrations, messaging: messagingPage, settings: settingsPage, account };
+  templates: (arg, rest) => posPage('templates', ['templates', ...rest]), 'pos-settings': () => posPage('settings'),
+  styles, colors, options, pricing: pricingPage, integrations, messaging: messagingPage, settings: settingsPage, 'configurator-settings': configuratorSettingsPage, account };
 const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', production: 'Production', delivery: 'Delivery' };
 const isAdmin = () => (me?.role || 'admin') === 'admin';
 const canEditQuotes = () => ['admin', 'sales'].includes(me?.role || 'admin');
-const ROLE_PAGES = { sales: ['crm', 'conversations', 'pipeline', 'tasks', 'pos', 'quotes', 'orders', 'account'], production: ['orders', 'quotes', 'account'], delivery: ['orders', 'account'] };
+const ROLE_PAGES = { sales: ['crm', 'conversations', 'pipeline', 'tasks', 'pos', 'templates', 'quotes', 'orders', 'account'], production: ['orders', 'quotes', 'account'], delivery: ['orders', 'account'] };
 const HOME = { admin: 'dashboard', sales: 'crm', production: 'orders', delivery: 'orders' };
 const allowed = name => isAdmin() || (ROLE_PAGES[me.role] || []).includes(name);
 const can = perm => (me?.permissions || []).includes(perm);
@@ -944,40 +945,54 @@ window.addEventListener('message', function (e) {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
-const SETTINGS_FIELDS = [
-  { type: 'section', label: 'Branding' },
-  { key: 'company_name', label: 'Company name' }, { key: 'headline', label: 'Configurator headline' },
-  { key: 'logo_url', label: 'Logo', type: 'upload', accept: 'image/*' }, { key: 'brand_color', label: 'Brand color', type: 'color' },
-  { key: 'phone', label: 'Phone (shown in header)' }, { key: 'website', label: 'Website' },
-  { type: 'section', label: 'Pricing' },
-  { key: 'show_prices', label: 'Show prices to customers (customer-facing configurator)', type: 'checkbox', full: true, help: 'Off = customers see no prices anywhere: no totals, no option prices, and their PDF has no prices. Prices are not sent to their browser at all. The dealer-facing configurator, opened while signed in here (Open configurator), always shows prices.' }, { key: 'currency_symbol', label: 'Currency symbol' },
-  { key: 'delivery_fee', label: 'Delivery fee ($)', type: 'number', step: '0.01' }, { key: 'tax_rate', label: 'Sales tax (%)', type: 'number', step: '0.001' },
+// Company details are shared by the configurator, CRM, contracts and emails; configurator settings only affect the 3D builder.
+const COMPANY_FIELDS = [
+  { type: 'section', label: 'Your company' },
+  { key: 'company_name', label: 'Company name' }, { key: 'phone', label: 'Phone' },
+  { key: 'website', label: 'Website' }, { key: 'company_address', label: 'Address (printed on contracts)' },
+  { key: 'logo_url', label: 'Logo', type: 'upload', accept: 'image/*', help: 'Shown in the configurator, the customer signing page and emails.' }, { key: 'brand_color', label: 'Brand color', type: 'color' },
+  { type: 'section', label: 'Web address & time zone' },
+  { key: 'public_url', label: 'Public URL of this app', full: true, ph: 'https://builder.yourdomain.com', help: 'The address customers and Twilio use. Signing links, 3D links in emails and texts, and reply webhooks are built from it. Leave blank to auto-detect.' },
+  { key: 'timezone', label: 'Time zone', type: 'select', options: [['America/New_York', 'Eastern'], ['America/Chicago', 'Central'], ['America/Denver', 'Mountain'], ['America/Phoenix', 'Arizona'], ['America/Los_Angeles', 'Pacific'], ['America/Anchorage', 'Alaska'], ['Pacific/Honolulu', 'Hawaii']], help: 'Used for dates on contracts and for the dashboard.' },
+];
+const CONFIG_FIELDS = [
+  { type: 'section', label: 'Look' },
+  { key: 'headline', label: 'Configurator headline', full: true, ph: 'Design your shed in 3D' },
+  { type: 'section', label: 'Prices' },
+  { key: 'show_prices', label: 'Show prices to customers (customer-facing configurator)', type: 'checkbox', full: true, help: 'Off = customers see no prices anywhere: no totals, no option prices, and their PDF has no prices. Prices are not sent to their browser at all. The dealer-facing configurator, opened while signed in here, always shows prices.' }, { key: 'currency_symbol', label: 'Currency symbol' },
+  { key: 'delivery_fee', label: 'Delivery fee ($)', type: 'number', step: '0.01' }, { key: 'tax_rate', label: 'Sales tax (%)', type: 'number', step: '0.001', help: 'Also the default tax on rent-to-own payments (change it in Point of sale settings).' },
   { key: 'tax_delivery', label: 'Charge tax on delivery', type: 'checkbox' },
   { key: 'downgrade_credit', label: 'Lower the price when a customer swaps a standard item (door, window, roofing) for a cheaper one', type: 'checkbox', full: true },
   { key: 'remove_credit', label: 'Credit the price of a standard item when the customer removes it', type: 'checkbox', full: true },
   { type: 'section', label: 'Quote form' },
   { key: 'require_phone', label: 'Phone number is required', type: 'checkbox' },
-  { key: 'consent_text', label: 'SMS / call consent text (A2P)', type: 'textarea', full: true, help: 'Leave blank to hide the checkbox.' },
+  { key: 'consent_text', label: 'SMS / call consent text (A2P)', type: 'textarea', full: true, help: 'Leave blank to hide the checkbox. Instant replies by text only go to customers who tick it.' },
   { key: 'privacy_url', label: 'Privacy policy URL' }, { key: 'thank_you_url', label: 'Thank-you page URL (optional redirect)' },
   { key: 'success_message', label: 'Success message', type: 'textarea', full: true },
   { key: 'customer_pdf', label: 'Let customers download their quote PDF (prices + drawings) after submitting', type: 'checkbox', full: true },
   { key: 'quote_terms', label: 'Terms printed on the quote PDF', type: 'textarea', full: true, ph: 'e.g. Prices valid for 30 days. Delivery subject to site access. A 10% deposit is required to order.' },
-  { type: 'section', label: 'Advanced' },
-  { key: 'public_url', label: 'Public URL of this app', full: true, ph: 'https://builder.yourdomain.com', help: 'Used for links in webhooks/GHL. Leave blank to auto-detect.' },
 ];
-async function settingsPage() {
-  settings = await api('GET', '/api/admin/settings');
-  $('#main').innerHTML = head('Settings', 'Branding, pricing rules and the quote form.') + `<div class="card card-pad"><form class="form" id="setf">${SETTINGS_FIELDS.map(f => field(f, settings[f.key])).join('')}</form>
-    <div class="row" style="margin-top:18px"><button class="btn primary" id="ssave">Save settings</button></div></div>`;
-  wireInputs($('#main'));
-  $('#ssave').onclick = guard(async () => {
-    await api('PUT', '/api/admin/settings', readFields($('#setf'), SETTINGS_FIELDS));
+function settingsForm(title, sub, fields, extra = '') {
+  return async function page() {
     settings = await api('GET', '/api/admin/settings');
-    $('#sideName').textContent = settings.company_name || 'Shed Builder';
-    if (settings.brand_color) document.documentElement.style.setProperty('--brand', settings.brand_color);
-    toast('Settings saved');
-  });
+    $('#main').innerHTML = head(title, sub) + extra + `<div class="card card-pad"><form class="form" id="setf">${fields.map(f => field(f, settings[f.key])).join('')}</form>
+      <div class="row" style="margin-top:18px"><button class="btn primary" id="ssave">Save</button></div></div>`;
+    wireInputs($('#main'));
+    $('#ssave').onclick = guard(async () => {
+      await api('PUT', '/api/admin/settings', readFields($('#setf'), fields));
+      settings = await api('GET', '/api/admin/settings');
+      $('#sideName').textContent = settings.company_name || 'Shed Builder';
+      if (settings.brand_color) document.documentElement.style.setProperty('--brand', settings.brand_color);
+      toast('Saved');
+    });
+  };
 }
+const settingsLinks = `<div class="callout" style="margin-bottom:16px">Other settings: <a href="#/configurator-settings">3D configurator</a> · <a href="#/messaging">CRM &amp; messaging</a> (texting, email, alerts) · <a href="#/pos-settings">Point of sale</a> (rent to own, deposits, contract messages) · <a href="#/account">Users</a></div>`;
+const companyPage = settingsForm('Company', 'Details used everywhere: the 3D configurator, the CRM, contracts, the signing page and emails.', COMPANY_FIELDS, settingsLinks);
+const configPage = settingsForm('Configurator settings', 'How the customer-facing 3D builder looks, prices and collects quotes. Styles, sizes, colors and options are in the menu above.', CONFIG_FIELDS);
+// function declarations so the route table (built earlier in this file) can reference them
+function settingsPage() { return companyPage(); }
+function configuratorSettingsPage() { return configPage(); }
 
 // ---------------------------------------------------------------------------
 // Account

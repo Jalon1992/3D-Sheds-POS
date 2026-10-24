@@ -92,13 +92,27 @@ app.post('/api/v1/price', (req, res) => {
 // staff on a lot share one internet connection, so signed-in users aren't throttled
 const quoteLimit = rateLimit(8, 60000);
 app.post('/api/v1/quotes', (req, res, next) => (readSession(req) ? next() : quoteLimit(req, res, next)), wrap(async (req, res) => {
-  const { config: rawConfig, customer = {}, source: rawSource, utm } = req.body || {};
+  const { config: rawConfig, customer: rawCustomer = {}, source: rawSource, utm } = req.body || {};
   const viewer = dealerViewer(req);
+  let customer = rawCustomer && typeof rawCustomer === 'object' ? { ...rawCustomer } : {};
+  // Point of sale: a sales rep redesigning a building for a customer they are writing a contract for.
+  // The quote goes on that contact (no new lead, no auto-replies); blanks are filled from the contact.
+  let posContact = null;
+  const staffUser = viewer && ['admin', 'sales'].includes(viewer.role) ? readSession(req) : null;
+  if (staffUser && req.body?.contact_id) {
+    posContact = get('SELECT * FROM contacts WHERE id = ?', Number(req.body.contact_id));
+    if (!posContact || (staffUser.dealer_id && posContact.dealer_id && String(posContact.dealer_id) !== String(staffUser.dealer_id))) return bad(res, 'Contact not found', 404);
+    for (const k of ['first_name', 'last_name', 'email', 'phone', 'address', 'city', 'state', 'zip']) if (!String(customer[k] || '').trim() && posContact[k]) customer[k] = posContact[k];
+    if (!customer.first_name) customer.first_name = posContact.company || 'Customer';
+  }
   // dealer-facing configurator: lot staff always quote for their own lot
   const config = viewer?.dealer_id && rawConfig && typeof rawConfig === 'object' ? { ...rawConfig, dealer_id: viewer.dealer_id } : rawConfig;
   const source = viewer ? `Dealer configurator — ${viewer.name}` : rawSource;
-  if (!customer.first_name || !customer.email) return bad(res, 'first_name and email are required');
-  if (!/^\S+@\S+\.\S+$/.test(customer.email)) return bad(res, 'email looks invalid');
+  if (staffUser && req.body?.pos) { // staff writing up a sale: a name plus email or mobile is enough
+    if (!customer.first_name) return bad(res, 'first_name is required');
+    if (!posContact && !customer.email && !customer.phone) return bad(res, 'Enter the customer\'s email or mobile');
+  } else if (!customer.first_name || !customer.email) return bad(res, 'first_name and email are required');
+  if (customer.email && !/^\S+@\S+\.\S+$/.test(customer.email)) return bad(res, 'email looks invalid');
   const cat = getCatalog();
   let cfg, pricing;
   try { cfg = sanitizeConfig(cat, config); pricing = priceConfig(cat, cfg); } catch (e) { return bad(res, e.message); }
@@ -108,7 +122,7 @@ app.post('/api/v1/quotes', (req, res, next) => (readSession(req) ? next() : quot
   const token = crypto.randomBytes(16).toString('hex');
   const r = run(`INSERT INTO quotes (token, first_name, last_name, email, phone, address, city, state, zip, notes, sms_consent, source, utm, config, pricing, total, style_name, size_label, dealer_id, dealer_name, price_tier, pricing_zip)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    token, s(customer.first_name), s(customer.last_name), s(customer.email)?.toLowerCase(), s(customer.phone), s(customer.address), s(customer.city),
+    token, s(customer.first_name), s(customer.last_name), s(customer.email)?.toLowerCase() ?? null, s(customer.phone), s(customer.address), s(customer.city),
     s(customer.state), s(customer.zip), s(customer.notes), customer.sms_consent ? 1 : 0, s(source || req.get('referer') || 'configurator'),
     JSON.stringify(utm || {}), JSON.stringify(cfg), JSON.stringify(pricing), pricing.total, style.name, `${size.width}' x ${size.depth}'`,
     pricing.dealer ? String(pricing.dealer.id) : null, pricing.dealer?.name || null, pricing.tier_name || null, pricing.zip || null);
@@ -117,7 +131,7 @@ app.post('/api/v1/quotes', (req, res, next) => (readSession(req) ? next() : quot
   const q = get('SELECT * FROM quotes WHERE id = ?', id);
   emit('quote.created', q, baseUrl(req));
   const out = formatQuote(q, baseUrl(req));
-  onQuoteCreated(q, baseUrl(req), out).catch(e => console.error('CRM:', e)); // contact + deal are created synchronously; auto-replies finish in the background
+  onQuoteCreated(q, baseUrl(req), out, { contact_id: posContact?.id || null, pos: !!(staffUser && req.body?.pos), user: staffUser }).catch(e => console.error('CRM:', e)); // contact + deal are created synchronously; auto-replies finish in the background
   delete out.links.admin; delete out.integrations;
   res.status(201).json(viewer || pricesPublic() ? out : hideQuotePrices(out));
 }));

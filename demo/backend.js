@@ -56,7 +56,7 @@ const links = {
   admin: q => `admin.html#/quotes/${q.id}`,
 };
 const fmt = q => formatQuote(q, '', links);
-function createQuote(config, customer, source) {
+function createQuote(config, customer, source, opts = {}) {
   const cat = catalog(false);
   const cfg = sanitizeConfig(cat, config);
   const pricing = priceConfig(cat, cfg);
@@ -69,7 +69,7 @@ function createQuote(config, customer, source) {
     dealer_id: pricing.dealer ? String(pricing.dealer.id) : null, dealer_name: pricing.dealer?.name || null, price_tier: pricing.tier_name || null, pricing_zip: pricing.zip || null,
   };
   db.quotes.unshift(q); save();
-  for (const fn of hooks.quoteCreated) fn(q);
+  for (const fn of hooks.quoteCreated) fn(q, opts);
   return q;
 }
 export const hooks = { quoteCreated: [], fresh: [] };
@@ -114,7 +114,11 @@ on('GET', /^\/api\/v1\/shared\/([a-f0-9]+)$/, m => { const q = db.quotes.find(x 
 on('POST', /^\/api\/v1\/quotes$/, (m, b) => {
   const v = dealerViewer();
   const cfg = v?.dealer_id && b.config ? { ...b.config, dealer_id: v.dealer_id } : b.config;
-  try { const q = createQuote(cfg, b.customer || {}, v ? `Dealer configurator — ${v.name}` : b.source); logEvent('quote.created', q); return json(v || pricesPublic() ? fmt(q) : hideQuotePrices(fmt(q)), 201); }
+  const pos = v && ['admin', 'sales'].includes(v.role) && b.pos ? { contact_id: Number(b.contact_id) || null, pos: true } : {};
+  const cu = b.customer || {};
+  if (pos.pos) { if (!pos.contact_id && !cu.first_name) return err('first_name is required'); if (!pos.contact_id && !cu.email && !cu.phone) return err("Enter the customer's email or mobile"); }
+  else if (!cu.first_name || !cu.email) return err('first_name and email are required');
+  try { const q = createQuote(cfg, cu, v ? `Dealer configurator — ${v.name}` : b.source, pos); logEvent('quote.created', q); return json(v || pricesPublic() ? fmt(q) : hideQuotePrices(fmt(q)), 201); }
   catch (e) { return err(e.message); }
 });
 on('GET', /^\/api\/v1\/quotes$/, (m, b, url) => {
