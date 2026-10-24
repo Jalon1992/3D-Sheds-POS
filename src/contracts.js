@@ -242,7 +242,8 @@ export function posRouter({ baseUrl }) {
     if (!file) throw new Error('Choose a PDF file');
     if (!/\.pdf$/i.test(file.originalname) && file.mimetype !== 'application/pdf') throw new Error('Contract templates must be PDF files. In Word or Google Docs use File → Save/Download as PDF.');
     if (file.buffer.subarray(0, 5).toString() !== '%PDF-') throw new Error('That file is not a valid PDF');
-    try { return await inspectPdf(file.buffer); } catch (e) { throw new Error(/encrypt/i.test(e.message) ? 'That PDF is password-protected. Remove the password and upload it again.' : 'Could not read that PDF: ' + e.message); }
+    // LOCKED_PDF tells the admin screen to make an unlocked copy in the browser and try again
+    try { return await inspectPdf(file.buffer); } catch (e) { throw new Error(/encrypt/i.test(e.message) ? 'LOCKED_PDF: That PDF is locked (it has a password or editing restrictions).' : 'Could not read that PDF: ' + e.message); }
   };
   r.post('/templates', need('pos.templates'), pdfUpload.single('file'), wrap(async (req, res) => {
     let pages; try { pages = await readPdfUpload(req.file); } catch (e) { return bad(res, e.message); }

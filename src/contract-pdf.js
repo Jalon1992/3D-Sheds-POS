@@ -90,6 +90,8 @@ const dataUrlBytes = (u, kind) => { const m = String(u || '').match(new RegExp(`
 export async function preparePdf({ templateBytes, fields, data, rendering, floorplan, drawingsBytes, appendDrawings }) {
   const pdf = await PDFDocument.load(templateBytes);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
+  // fillable PDFs: bake the form fields into the page so nobody can edit them after signing
+  try { const form = pdf.getForm(); if (form.getFields().length) form.flatten(); } catch { /* unusual form — leave it */ }
   const pages = pdf.getPages();
   for (const f of fields) {
     const page = pages[f.page]; if (!page) continue;

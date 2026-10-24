@@ -107,8 +107,11 @@ async function wizard() {
   const tpl = () => meta.templates.find(t => t.id === S.template_id);
   const renderTpl = () => {
     const list = tplList();
-    if (!list.some(t => t.id === S.template_id)) S.template_id = list[0]?.id || null;
-    $('#wTpl').innerHTML = list.length ? `<div class="choice">${list.map(t => `<label><input type="radio" name="tpl" value="${t.id}" ${t.id === S.template_id ? 'checked' : ''}><b>${esc(t.name)}</b><small>${t.pages.length} page${t.pages.length === 1 ? '' : 's'}${t.append_drawings ? ' + drawings' : ''} · signers: ${t.roles.map(r => ROLE[r]).join(', ') || 'none'}</small></label>`).join('')}</div>`
+    const ready = t => t.roles.includes('customer');
+    if (!list.some(t => t.id === S.template_id && ready(t))) S.template_id = list.find(ready)?.id || null;
+    $('#wTpl').innerHTML = list.length ? `<div class="choice">${list.map(t => ready(t)
+      ? `<label><input type="radio" name="tpl" value="${t.id}" ${t.id === S.template_id ? 'checked' : ''}><b>${esc(t.name)}</b><small>${t.pages.length} page${t.pages.length === 1 ? '' : 's'}${t.append_drawings ? ' + drawings' : ''} · signers: ${t.roles.map(r => ROLE[r]).join(', ')}</small></label>`
+      : `<label style="opacity:.6;cursor:not-allowed"><input type="radio" disabled><b>${esc(t.name)}</b><small>Not ready — ${can('pos.templates') ? `<a href="#/pos/templates/${t.id}">add a customer signature box</a>` : 'needs a customer signature box'}</small></label>`).join('')}</div>`
       : `<div class="callout warn">No ${saleTypeLabel(S.sale_type)} template yet. ${can('pos.templates') ? '<a href="#/pos/templates">Upload one</a>.' : 'Ask your admin to upload one.'}</div>`;
     const t = tpl();
     const roles = t?.roles || [];
@@ -287,17 +290,60 @@ async function templatesPage() {
     title: 'Upload a contract template', narrow: true,
     body: `<form class="form" id="uf"><label class="fld full"><span>Name</span><input name="name" placeholder="e.g. Cash Purchase Agreement 2026"></label>
       <label class="fld full"><span>Used for</span><select name="sale_type"><option value="cash">Cash sales</option><option value="rto">Rent-to-own sales</option><option value="any">Both</option></select></label>
-      <label class="fld full"><span>PDF file</span><input type="file" name="file" accept="application/pdf,.pdf"></label><div class="err full" id="uerr" hidden></div></form>`,
+      <label class="fld full"><span>PDF file</span><input type="file" name="file" accept="application/pdf,.pdf"><small>Have a Word or Google Doc? Use File → Save as / Download → PDF first.</small></label><div class="err full" id="uerr" hidden></div>
+      <div class="busy full" id="ubusy" hidden><span class="spin"></span><span id="ubusyT">Uploading…</span></div></form>`,
     foot: '<span></span><button class="btn primary" id="ugo">Upload &amp; place fields</button>',
     onMount: root => {
+      const f = $('#uf', root);
+      f.file.onchange = () => { const n = f.file.files[0]?.name || ''; if (n && !f.name.value) f.name.value = n.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '); };
       $('#ugo', root).onclick = async () => {
-        const f = $('#uf', root); if (!f.file.files[0]) { $('#uerr', root).textContent = 'Choose a PDF'; $('#uerr', root).hidden = false; return; }
-        $('#ugo', root).disabled = true;
-        try { const t = await api('POST', '/api/pos/templates', new FormData(f)); closeModal(); toast('Uploaded — now place the fields'); location.hash = `#/pos/templates/${t.id}`; }
-        catch (e) { $('#uerr', root).textContent = e.message; $('#uerr', root).hidden = false; $('#ugo', root).disabled = false; }
+        const err = $('#uerr', root); err.hidden = true;
+        const file = f.file.files[0]; if (!file) { err.textContent = 'Choose a PDF'; err.hidden = false; return; }
+        if (/\.(docx?|pages|odt|rtf)$/i.test(file.name)) { err.textContent = 'That is a word-processor file. Open it in Word or Google Docs and save/download it as a PDF, then upload the PDF.'; err.hidden = false; return; }
+        $('#ugo', root).disabled = true; $('#ubusy', root).hidden = false;
+        try {
+          const t = await uploadPdf('/api/pos/templates', file, { name: f.name.value, sale_type: f.sale_type.value }, m => { $('#ubusyT', root).textContent = m; });
+          closeModal(); toast('Uploaded — now place the fields'); location.hash = `#/pos/templates/${t.id}`;
+        } catch (e) { err.textContent = e.message; err.hidden = false; $('#ugo', root).disabled = false; $('#ubusy', root).hidden = true; }
       };
     },
   });
+}
+
+/**
+ * Upload a contract PDF. Locked PDFs (password or "no editing" restrictions — common with contracts
+ * exported from form vendors, Adobe or DocuSign) are opened here in the browser and re-saved as an
+ * unlocked copy that looks exactly the same, then uploaded.
+ */
+async function uploadPdf(url, file, extra = {}, progress = () => {}) {
+  const send = blob => { const fd = new FormData(); for (const [k, v] of Object.entries(extra)) fd.append(k, v); fd.append('file', blob, file.name.replace(/\.pdf$/i, '') + '.pdf'); return api('POST', url, fd); };
+  try { return await send(file); }
+  catch (e) { if (!/LOCKED_PDF/.test(e.message)) throw e; }
+  progress('This PDF is locked — making an unlocked copy…');
+  const lib = await loadPdfjs();
+  const data = new Uint8Array(await file.arrayBuffer());
+  let doc;
+  for (let tries = 0; ; tries++) {
+    try { doc = await lib.getDocument({ data: data.slice(), password: tries ? prompt(tries === 1 ? 'This PDF needs a password to open. Enter it:' : 'Wrong password — try again:') || '' : undefined }).promise; break; }
+    catch (e) { if (e?.name !== 'PasswordException' || tries >= 3) throw new Error(e?.name === 'PasswordException' ? 'Could not open the PDF — the password was not accepted.' : 'Could not open the PDF: ' + e.message); }
+  }
+  const { jsPDF } = window.jspdf;
+  let out = null;
+  for (let i = 1; i <= doc.numPages; i++) {
+    progress(`Making an unlocked copy… page ${i} of ${doc.numPages}`);
+    const pg = await doc.getPage(i); const v1 = pg.getViewport({ scale: 1 });
+    const vp = pg.getViewport({ scale: 200 / 72 }); // 200 dpi keeps fine print sharp
+    const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+    const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+    const orient = v1.width > v1.height ? 'landscape' : 'portrait';
+    if (!out) out = new jsPDF({ unit: 'pt', format: [v1.width, v1.height], orientation: orient }); else out.addPage([v1.width, v1.height], orient);
+    out.addImage(cv.toDataURL('image/jpeg', 0.88), 'JPEG', 0, 0, v1.width, v1.height);
+  }
+  progress('Uploading…');
+  const r = await send(out.output('blob'));
+  toast('Your PDF was locked, so we uploaded an unlocked copy (it looks the same).');
+  return r;
 }
 
 let pdfjs = null;
@@ -394,7 +440,7 @@ async function designer(id) {
         ${edit ? `<div class="section-t" style="margin:16px 0 8px">More</div><div class="row"><label class="btn ghost sm">Replace PDF<input type="file" accept="application/pdf,.pdf" id="dRepl" hidden></label><button class="btn ghost sm" id="dDup">Duplicate</button><button class="btn danger sm" id="dDel">Delete</button></div>
         <p class="muted" style="font-size:12px">Replacing the PDF keeps the boxes you placed — handy when you fix a typo in the contract.</p>` : ''}`;
       $('#tf').oninput = () => setDirty(true);
-      if ($('#dRepl')) $('#dRepl').onchange = guard(async e => { const fd = new FormData(); fd.append('file', e.target.files[0]); if (dirty) await save(); await api('POST', `/api/pos/templates/${id}/file`, fd); toast('PDF replaced'); setDirty(false); designer(id); });
+      if ($('#dRepl')) $('#dRepl').onchange = guard(async e => { if (dirty) await save(); await uploadPdf(`/api/pos/templates/${id}/file`, e.target.files[0]); toast('PDF replaced'); setDirty(false); designer(id); });
       if ($('#dDup')) $('#dDup').onclick = guard(async () => { if (dirty) await save(); const r = await api('POST', `/api/pos/templates/${id}/duplicate`); toast('Duplicated'); location.hash = `#/pos/templates/${r.id}`; });
       if ($('#dDel')) $('#dDel').onclick = guard(async () => { if (!confirmBox('Delete this template? (Templates already used on contracts are archived instead.)')) return; const r = await api('DELETE', `/api/pos/templates/${id}`); setDirty(false); toast(r?.archived ? 'Archived (it was used on contracts)' : 'Deleted'); location.hash = '#/pos/templates'; });
       return;

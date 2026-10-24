@@ -360,3 +360,5 @@ pre.snip { background: #0f1715; color: #d3eadf; padding: 14px; border-radius: 10
 .pdf-pages { display: grid; gap: 12px; background: #e9ecea; border-radius: 12px; padding: 12px; max-height: 78vh; overflow-y: auto; }
 .pdf-pages canvas { width: 100%; height: auto; display: block; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
 @media (max-width: 960px) { .crm3 > .thread-wrap { order: -1; } }
+.inline-edit input[type=checkbox] { width: 17px; height: 17px; flex: none; padding: 0; }
+.inline-edit label.chk { font-size: 13px; color: var(--ink); font-weight: 600; }

@@ -115,6 +115,14 @@ const watch = (page, who) => {
       const id = await admin.evaluate(() => location.hash.split('/').pop());
       const t = await admin.evaluate(async id => (await fetch('/api/pos/templates/' + id)).json(), id);
       assert(t.fields.length === 3 && t.fields.some(x => x.type === 'signature' && x.role === 'customer'), 'fields saved ' + JSON.stringify(t.fields.map(x => x.type)));
+      // a locked contract PDF (editing restrictions, as many vendor/Adobe/DocuSign exports have) uploads via an unlocked copy
+      const { execFileSync } = require('node:child_process');
+      let locked = null; try { locked = join(dir, 'Locked RTO.pdf'); execFileSync('qpdf', ['--encrypt', '', 'owner', '256', '--', file, locked]); } catch { locked = null; }
+      if (locked) {
+        await admin.goto(B + '/admin/#/pos/templates'); await admin.click('#tUp');
+        await admin.setInputFiles('#uf [name=file]', locked); await admin.selectOption('#uf [name=sale_type]', 'rto'); await admin.click('#ugo');
+        await admin.waitForSelector('.dz-layer', { timeout: 30000 });
+      }
     });
 
     let contractId;
