@@ -1,6 +1,6 @@
 // Point of sale: contracts, the new-contract wizard (Cash / Rent to Own), contract detail (send by text/email,
 // sign in person, download), contract templates + the drag-and-drop field designer, and POS settings.
-import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, head, me, settings, can, isAdmin, onLive, hashQuery, loadCatalog, catalog, COPY, TRASH , planUrl } from './admin.js';
+import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, head, me, settings, can, isAdmin, onLive, hashQuery, loadCatalog, catalog, COPY, TRASH , planUrl , live } from './admin.js';
 import { buildDrawingPackage, render3D, floorPlanPNG } from '../js/drawings.js';
 import { FIELD_TYPES, SIGNER_ROLES, TAGS, tagLabel, rtoCalc, usd, saleTypeLabel, DEFAULT_RTO } from '../js/shared/contract.js';
 
@@ -36,7 +36,7 @@ async function contractsPage() {
   const render = async () => {
     const p = new URLSearchParams({ q: $('#kq').value, status: $('#ks').value, sale_type: $('#kt').value });
     const rows = await api('GET', '/api/pos/contracts?' + p);
-    $('#ktable').innerHTML = rows.length ? `<table class="tbl"><tr><th>Contract</th><th>Customer</th><th>Building</th><th>Type</th><th class="num">Price</th><th>Status</th><th>Latest version</th></tr>${rows.map(k => `<tr class="click" data-id="${k.id}">
+    live('#ktable').innerHTML = rows.length ? `<table class="tbl"><tr><th>Contract</th><th>Customer</th><th>Building</th><th>Type</th><th class="num">Price</th><th>Status</th><th>Latest version</th></tr>${rows.map(k => `<tr class="click" data-id="${k.id}">
       <td><b>${esc(k.number)}</b>${k.versions > 1 ? ` <span class="pill" title="${k.versions} versions on file">Rev ${k.revision} · latest</span>` : ''}<div class="muted" style="font-size:12px">${esc(k.template_name || '')}</div></td>
       <td>${esc(k.customer || fullName(k))}<div class="muted" style="font-size:12px">${esc(k.phone || k.email || '')}</div></td><td>${esc(k.shed || '')}</td>
       <td><span class="pill ${esc(k.sale_type)}">${k.sale_type === 'rto' ? 'Rent to own' : 'Cash'}</span>${k.monthly ? `<div class="muted" style="font-size:12px">${esc(k.monthly)}/mo</div>` : ''}</td>
@@ -111,12 +111,12 @@ async function wizard(reviseId = null) {
   const renderQuote = async () => {
     const q = S.quote;
     if (q) {
-      $('#wQuote').innerHTML = `<div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px"><div class="plan-prev" style="width:200px;flex:none"><img src="${planUrl(q.id)}" alt=""></div>
+      live('#wQuote').innerHTML = `<div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px"><div class="plan-prev" style="width:200px;flex:none"><img src="${planUrl(q.id)}" alt=""></div>
         <div style="flex:1;min-width:0"><b style="font-size:16px">${esc(q.shed.style)} ${esc(q.shed.size)}</b><div class="muted">${esc(q.number)} · ${esc(q.customer.full_name)} · ${fmt(q.pricing.total)}</div>
         <div class="muted" style="font-size:12.5px;margin-top:6px">${esc(q.options.filter(o => !o.name.startsWith('Removed')).map(o => o.name).join(', ') || 'No options')}</div>
         <div class="row" style="margin-top:10px"><a class="btn ghost sm" href="${esc(q.links.view_3d)}${old && q.links.view_3d.includes('?') ? '&revise=' + old.id : ''}" target="_blank" title="Opens the design in the dealer configurator. Change it and submit; then come back and pick the new design.">${old ? 'Change the 3D design ↗' : 'Open in 3D ↗'}</a><button class="btn ghost sm" id="wPick">Use a different design</button></div></div></div>`;
     } else {
-      $('#wQuote').innerHTML = `<p class="muted" style="margin:0 0 10px">Pick the customer's 3D design (quote). Designing a new one? Open the configurator, submit it, then come back.</p><div class="row"><button class="btn primary sm" id="wPick">Choose a design</button><a class="btn ghost sm" href="/" target="_blank">Open configurator ↗</a></div>`;
+      live('#wQuote').innerHTML = `<p class="muted" style="margin:0 0 10px">Pick the customer's 3D design (quote). Designing a new one? Open the configurator, submit it, then come back.</p><div class="row"><button class="btn primary sm" id="wPick">Choose a design</button><a class="btn ghost sm" href="/" target="_blank">Open configurator ↗</a></div>`;
     }
     $('#wPick').onclick = () => pickQuote(async q => { S.quote = await api('GET', `/api/v1/quotes/${q.id}`); if (!$('#sName').value) { $('#sName').value = S.quote.customer.full_name; $('#sEmail').value = S.quote.customer.email || ''; $('#sPhone').value = S.quote.customer.phone || ''; } renderQuote(); renderMoney(); renderSum(); });
   };
@@ -166,7 +166,7 @@ async function wizard(reviseId = null) {
   const renderSum = () => {
     const t = tpl(); const q = S.quote;
     const r = S.sale_type === 'rto' && $('#rTable') ? rtoNow() : null;
-    $('#wSum').innerHTML = `<dl class="kv"><dt>Customer</dt><dd>${esc($('#sName')?.value || '—')}</dd><dt>Building</dt><dd>${q ? esc(q.shed.style + ' ' + q.shed.size) : '<span class="err">Pick a design</span>'}</dd>
+    live('#wSum').innerHTML = `<dl class="kv"><dt>Customer</dt><dd>${esc($('#sName')?.value || '—')}</dd><dt>Building</dt><dd>${q ? esc(q.shed.style + ' ' + q.shed.size) : '<span class="err">Pick a design</span>'}</dd>
       <dt>Sale</dt><dd><span class="pill ${S.sale_type}">${saleTypeLabel(S.sale_type)}</span></dd><dt>Template</dt><dd>${t ? esc(t.name) : '—'}</dd>
       <dt>Total</dt><dd><b>${fmt(total())}</b></dd>${r ? `<dt>Monthly</dt><dd><b>${usd(r.monthly_total)}</b> × ${r.term_months}</dd><dt>At signing</dt><dd>${usd(r.deposit)}</dd>` : `<dt>Deposit</dt><dd>${fmt(S.deposit ?? Math.round(total() * (Number(meta.cash_deposit_pct) || 0)) / 100)}</dd>`}</dl>`;
   };
@@ -279,7 +279,7 @@ async function contractDetail(id) {
         ${can('contracts.download') ? `<a class="btn ghost sm" href="/api/pos/contracts/${v.id}/document.pdf?download=1">PDF</a>` : ''}</div>`).join('')}</div>` : ''}
       <div class="card card-pad"><h2>Activity</h2><div style="margin-top:8px">${k.events.slice().reverse().map(e => `<div class="task-row"><span><b style="font-weight:700">${esc(e.event)}</b>${e.detail ? ' — ' + esc(e.detail) : ''}<small>${fmtDate(e.created_at)}${e.user_name ? ' · ' + esc(e.user_name) : ''}${e.ip ? ' · IP ' + esc(e.ip) : ''}</small></span></div>`).join('')}</div></div>
     </div></div>`;
-  if ($('#kPdf')) previewPdf($('#kPdf'), pdfUrl).catch(e => { $('#kPdf').innerHTML = `<div class="muted">Preview unavailable (${esc(e.message)}). Use “Open in new tab”.</div>`; });
+  if ($('#kPdf')) previewPdf($('#kPdf'), pdfUrl).catch(e => { live('#kPdf').innerHTML = `<div class="muted">Preview unavailable (${esc(e.message)}). Use “Open in new tab”.</div>`; });
   const reload = () => contractDetail(id);
   const send = async (body, label) => { const r = await api('POST', `/api/pos/contracts/${id}/send`, body); const bad = r.results.filter(x => !x.ok); toast(bad.length ? `Sent, but: ${bad.map(x => x.error).join('; ')}` : label, !!bad.length); reload(); };
   if ($('#sendAll')) $('#sendAll').onclick = guard(async () => { await send({ sms: $('#viaSms').checked, email: $('#viaEmail').checked }, 'Signing link sent'); });

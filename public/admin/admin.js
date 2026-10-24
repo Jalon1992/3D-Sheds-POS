@@ -49,8 +49,13 @@ async function api(method, url, body) {
   if (!r.ok) throw new Error(data?.error || data || r.statusText);
   return data;
 }
+/** Page-bound element lookup: if the user already left the page, stop quietly instead of throwing a null error. */
+class PageGone extends Error { constructor() { super('page changed'); this.name = 'PageGone'; } }
+function live(sel) { const el = document.querySelector(sel); if (!el) throw new PageGone(); return el; }
+window.addEventListener('unhandledrejection', e => { if (e.reason instanceof PageGone) e.preventDefault(); });
+window.addEventListener('error', e => { if (e.error instanceof PageGone) e.preventDefault(); });
 function toast(msg, bad = false) { const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (bad ? ' bad' : ''); t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 3200); }
-const guard = fn => async (...a) => { try { return await fn(...a); } catch (e) { toast(e.message, true); } };
+const guard = fn => async (...a) => { try { return await fn(...a); } catch (e) { if (!(e instanceof PageGone)) toast(e.message, true); } };
 
 function field(f, v) {
   const full = f.full ? ' full' : '';
@@ -160,10 +165,11 @@ async function route() {
   if (!allowed(name)) name = home;
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === name));
   liveHandlers.clear();
+  if ($('#modal').open) closeModal(); // a dialog left open must not cover the next page (Back button, links)
   const seq = ++routeSeq;
   const old = $('#main'), fresh = old.cloneNode(false); old.replaceWith(fresh); // drop old listeners
   $('#main').innerHTML = '<div class="empty">Loading…</div>';
-  try { await ROUTES[name](arg, parts.slice(1)); } catch (e) { if (seq === routeSeq) $('#main').innerHTML = `<div class="card card-pad err">${esc(e.message)}</div>`; }
+  try { await ROUTES[name](arg, parts.slice(1)); } catch (e) { if (seq === routeSeq && !(e instanceof PageGone)) $('#main').innerHTML = `<div class="card card-pad err">${esc(e.message)}</div>`; }
 }
 // one live connection per tab: new leads, texts, signed contracts and board moves show up for everyone signed in
 // the demo has no server stream; its in-browser backend calls this instead
@@ -209,7 +215,7 @@ async function start() {
   try { me = await api('GET', '/api/auth/me'); start(); } catch { showLogin(); }
 })();
 
-export { planUrl, $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, field, readFields, wireInputs, loadCatalog, me, settings, catalog, can, isAdmin, onLive, hashQuery, ROLE_LABEL, CHECK, PENCIL, TRASH, COPY, downloadDrawings, quoteDetail, CONFIG_URL };
+export { live, PageGone, planUrl, $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, field, readFields, wireInputs, loadCatalog, me, settings, catalog, can, isAdmin, onLive, hashQuery, ROLE_LABEL, CHECK, PENCIL, TRASH, COPY, downloadDrawings, quoteDetail, CONFIG_URL };
 export function head(title, sub, actions = '') { return `<div class="head"><div><h1>${esc(title)}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="row">${actions}</div></div>`; }
 
 // ---------------------------------------------------------------------------

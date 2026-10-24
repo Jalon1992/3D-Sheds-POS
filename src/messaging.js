@@ -6,6 +6,42 @@ import nodemailer from 'nodemailer';
 import { get, run, getSettings } from './db.js';
 
 const testMode = () => process.env.MESSAGING_TEST_MODE === '1' || getSettings().messaging_test_mode === true;
+// overridable only so the test suite can point at stand-in servers
+const TWILIO = () => (process.env.TWILIO_API_BASE || 'https://api.twilio.com').replace(/\/$/, '');
+const GHL_BASE = () => (process.env.GHL_API_BASE || 'https://services.leadconnectorhq.com').replace(/\/$/, '');
+
+/** Provider error → what it means and what to do, in plain words. */
+const TWILIO_CODES = {
+  20003: 'Twilio rejected the Account SID or Auth Token. Copy both again from console.twilio.com (Account info).',
+  20404: 'Twilio could not find that account or number. Check the Account SID and the phone number.',
+  20429: 'Twilio is rate-limiting this account. Wait a minute and try again.',
+  21211: "That isn't a valid mobile number.",
+  21408: "Your Twilio account isn't allowed to text that country. Turn it on under Messaging → Settings → Geo permissions.",
+  21606: "The 'From' number isn't a text-capable number in this Twilio account. Use a number you bought in Twilio (Phone Numbers → Active numbers).",
+  21608: 'This is a Twilio trial account, which can only text numbers you have verified in Twilio. Verify the number or upgrade the account.',
+  21610: 'This person replied STOP to your number, so carriers block texts to them until they reply START.',
+  21612: "Twilio can't reach that number by text from your number.",
+  21614: "That number can't receive texts (it may be a landline).",
+  21659: "The 'From' number isn't a Twilio number in this account.",
+  30003: "The phone was unreachable (off or out of coverage).",
+  30005: "That number doesn't exist anymore.",
+  30006: "That number can't receive texts (landline or unreachable carrier).",
+  30007: 'The carrier filtered the text as possible spam. Make sure your A2P registration is approved and avoid link shorteners.',
+  30032: "Your toll-free number hasn't been verified yet. Finish toll-free verification in Twilio.",
+  30034: "Your number isn't registered for business texting (A2P 10DLC) yet, so carriers block it. Finish A2P registration in Twilio → Messaging → Regulatory compliance.",
+};
+export function friendlyTwilio(code, fallback) { return TWILIO_CODES[Number(code)] ? `${TWILIO_CODES[Number(code)]} (Twilio ${code})` : fallback || `Twilio error ${code}`; }
+export function friendlySmtp(e) {
+  const m = String(e?.message || e || ''); const code = e?.code || '';
+  if (code === 'EAUTH' || /535|534|auth/i.test(m)) return /gmail|google/i.test(m) || /5\.7\.8|5\.7\.9/.test(m)
+    ? 'Gmail rejected the login. Use a Google App Password (Google Account → Security → 2-Step Verification → App passwords), not your normal password.'
+    : 'The email server rejected the username or password. Check both; many providers (Gmail, Outlook, Yahoo) need an app password.';
+  if (code === 'ESOCKET' && /wrong version number|ssl3_get_record|SSL routines/i.test(m)) return 'Security setting mismatch: use port 587 with "Use SSL" off, or port 465 with it on.';
+  if (code === 'ECONNECTION' || code === 'ETIMEDOUT' || /ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|getaddrinfo|ENOTFOUND/i.test(m)) return "Couldn't reach the email server. Check the host name and port (usually 587, or 465 with SSL).";
+  if (/certificate|self.signed/i.test(m)) return "The email server's security certificate isn't trusted. Check the host name matches your provider's SMTP host.";
+  if (/sender|from address|not owned|553|550 5\.7\.1|5\.7\.60/i.test(m)) return 'The email server refused the From address. Send from an address your account owns (or verify it with your provider).';
+  return 'Email server said: ' + m.slice(0, 200);
+}
 
 /** US-friendly phone normaliser → E.164 (+15551234567). Returns null when it can't be a phone number. */
 export function toE164(raw) {
@@ -33,9 +69,15 @@ export function smsReady(s = getSettings()) {
   if (s.sms_provider === 'ghl') return !!(s.ghl_token && s.ghl_location_id);
   return false;
 }
+/** From address: the one entered, else "Company <smtp username>" when the username is an email. */
+export function fromAddress(s = getSettings()) {
+  if (s.email_from) return s.email_from;
+  if (/^\S+@\S+\.\S+$/.test(s.smtp_user || '')) return s.company_name ? `"${String(s.company_name).replace(/"/g, '')}" <${s.smtp_user}>` : s.smtp_user;
+  return '';
+}
 export function emailReady(s = getSettings()) {
   if (testMode()) return true;
-  if (s.email_provider === 'smtp') return !!(s.smtp_host && s.email_from);
+  if (s.email_provider === 'smtp') return !!(s.smtp_host && fromAddress(s));
   if (s.email_provider === 'ghl') return !!(s.ghl_token && s.ghl_location_id);
   return false;
 }
@@ -58,21 +100,20 @@ async function http(url, opt, timeoutMs = 15000) {
 }
 
 // ---- GoHighLevel transport -------------------------------------------------
-const GHL = 'https://services.leadconnectorhq.com';
 async function ghlContactId(s, contact) {
-  const r = await http(GHL + '/contacts/upsert', {
+  const r = await http(GHL_BASE() + '/contacts/upsert', {
     method: 'POST', headers: { Authorization: `Bearer ${s.ghl_token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ locationId: s.ghl_location_id, firstName: contact.first_name || undefined, lastName: contact.last_name || undefined, email: contact.email || undefined, phone: contact.phone_e164 || contact.phone || undefined, source: s.ghl_source || '3D Shed Builder' }),
   });
-  if (!r.ok) throw new Error(`GHL contact upsert ${r.status}: ${r.text.slice(0, 200)}`);
+  if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? 'GoHighLevel rejected the token. Check the Private Integration token and that it has the contacts.write scope.' : `GoHighLevel contact lookup failed (${r.status}): ${r.text.slice(0, 200)}`);
   return r.json?.contact?.id || r.json?.id;
 }
 async function ghlSend(s, payload) {
-  const r = await http(GHL + '/conversations/messages', {
+  const r = await http(GHL_BASE() + '/conversations/messages', {
     method: 'POST', headers: { Authorization: `Bearer ${s.ghl_token}`, Version: '2021-04-15', 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!r.ok) throw new Error(`GHL send ${r.status}: ${r.text.slice(0, 300)}`);
+  if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? 'GoHighLevel refused to send. Give the Private Integration token the conversations/message.write scope.' : `GoHighLevel couldn't send (${r.status}): ${(r.json?.message || r.text).toString().slice(0, 300)}`);
   return r.json?.messageId || r.json?.id || r.json?.conversationId || null;
 }
 
@@ -99,11 +140,11 @@ export async function sendSMS(o) {
       for (const m of o.mediaUrls || []) form.append('MediaUrl', m);
       const pub = (s.public_url || o.baseUrl || '').replace(/\/$/, '');
       if (/^https:\/\//.test(pub)) form.set('StatusCallback', pub + '/api/hooks/twilio/status');
-      const r = await http(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(s.twilio_sid)}/Messages.json`, {
+      const r = await http(`${TWILIO()}/2010-04-01/Accounts/${encodeURIComponent(s.twilio_sid)}/Messages.json`, {
         method: 'POST', body: form,
         headers: { Authorization: 'Basic ' + Buffer.from(`${s.twilio_sid}:${s.twilio_token}`).toString('base64'), 'Content-Type': 'application/x-www-form-urlencoded' },
       });
-      if (!r.ok) throw new Error(r.json?.message ? `Twilio: ${r.json.message}` : `Twilio ${r.status}: ${r.text.slice(0, 200)}`);
+      if (!r.ok) throw new Error(r.json?.code ? friendlyTwilio(r.json.code, `Twilio: ${r.json.message}`) : r.status === 401 ? friendlyTwilio(20003) : `Twilio ${r.status}: ${r.text.slice(0, 200)}`);
       provider_id = r.json?.sid; from = s.twilio_from || s.twilio_messaging_service_sid;
     } else if (s.sms_provider === 'ghl') {
       const contactId = await ghlContactId(s, o.contact || { phone: to });
@@ -158,18 +199,19 @@ export async function sendEmail(o) {
     const html = o.html || textToHtml(o.text, s);
     if (s.email_provider === 'smtp') {
       const info = await smtp(s).sendMail({
-        from: s.email_from, to, subject: o.subject || '(no subject)', text: o.text, html,
+        from: fromAddress(s), to, subject: o.subject || '(no subject)', text: o.text, html,
         replyTo: o.replyTo || s.email_reply_to || undefined, attachments: o.attachments || [],
         headers: o.contact_id ? { 'X-ShedBuilder-Contact': String(o.contact_id) } : undefined,
       });
       provider_id = info.messageId;
     } else if (s.email_provider === 'ghl') {
       const contactId = await ghlContactId(s, o.contact || { email: to });
-      provider_id = await ghlSend(s, { type: 'Email', contactId, subject: o.subject || '', html, message: o.text, ...(s.email_from ? { emailFrom: s.email_from } : {}) });
+      provider_id = await ghlSend(s, { type: 'Email', contactId, subject: o.subject || '', html, message: o.text, ...(fromAddress(s) ? { emailFrom: fromAddress(s) } : {}) });
     }
-    return { ok: true, status: 'sent', id: logMessage({ ...base, status: 'sent', provider: s.email_provider, provider_id, from: s.email_from }) };
+    return { ok: true, status: 'sent', id: logMessage({ ...base, status: 'sent', provider: s.email_provider, provider_id, from: fromAddress(s) }) };
   } catch (e) {
-    return { ok: false, status: 'failed', error: e.message, id: logMessage({ ...base, status: 'failed', provider: s.email_provider, error: e.message }) };
+    const error = s.email_provider === 'smtp' ? friendlySmtp(e) : e.message;
+    return { ok: false, status: 'failed', error, id: logMessage({ ...base, status: 'failed', provider: s.email_provider, error }) };
   }
 }
 
@@ -186,8 +228,79 @@ export function twilioSignatureOk(url, params, signature, token) {
   const a = Buffer.from(expected), b = Buffer.from(String(signature));
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
-export function updateDeliveryStatus(provider_id, status, error) {
+export function updateDeliveryStatus(provider_id, status, error, code) {
+  if (code) error = friendlyTwilio(code, error);
   const m = get('SELECT id FROM messages WHERE provider_id = ?', provider_id);
   if (m) run('UPDATE messages SET status = ?, error = COALESCE(?, error) WHERE id = ?', status, error || null, m.id);
   return m;
+}
+
+// ---------------------------------------------------------------------------
+// "Check connection": test the saved credentials without sending anything
+// ---------------------------------------------------------------------------
+const twAuth = s => ({ Authorization: 'Basic ' + Buffer.from(`${s.twilio_sid}:${s.twilio_token}`).toString('base64') });
+async function twilioNumber(s) {
+  const r = await http(`${TWILIO()}/2010-04-01/Accounts/${encodeURIComponent(s.twilio_sid)}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(toE164(s.twilio_from) || s.twilio_from)}`, { headers: twAuth(s) });
+  return r.ok ? (r.json?.incoming_phone_numbers || [])[0] || null : null;
+}
+/**
+ * @returns {{ok:boolean, checks:Array<{ok:boolean|null, label:string, detail?:string}>, account?:string}}
+ *   ok:null on a check = a warning (works, but something to fix)
+ */
+export async function verifyMessaging(channel, { webhookUrl } = {}) {
+  const s = getSettings(); const checks = []; const add = (ok, label, detail) => checks.push({ ok, label, detail });
+  try {
+    if (channel === 'sms') {
+      if (s.sms_provider === 'twilio') {
+        if (!s.twilio_sid || !s.twilio_token) { add(false, 'Account SID and Auth Token', 'Enter both, then Save.'); return { ok: false, checks }; }
+        if (!/^AC[0-9a-f]{32}$/i.test(s.twilio_sid)) add(false, 'Account SID format', 'It should start with AC followed by 32 letters/numbers.');
+        const a = await http(`${TWILIO()}/2010-04-01/Accounts/${encodeURIComponent(s.twilio_sid)}.json`, { headers: twAuth(s) });
+        if (!a.ok) { add(false, 'Log in to Twilio', a.json?.code ? friendlyTwilio(a.json.code) : friendlyTwilio(20003)); return { ok: false, checks }; }
+        add(true, 'Log in to Twilio', `Account "${a.json?.friendly_name || s.twilio_sid}" (${a.json?.status || 'active'})`);
+        if (a.json?.type === 'Trial') add(null, 'Trial account', 'Trial accounts only text numbers verified in Twilio and add "Sent from your Twilio trial account". Upgrade before texting customers.');
+        if (s.twilio_messaging_service_sid) {
+          add(true, 'Messaging Service', `${s.twilio_messaging_service_sid} — texts go out from the numbers in that service. Set its incoming-message webhook to the URL below so replies reach the CRM.`);
+        } else if (!s.twilio_from) add(false, 'Your Twilio number', 'Enter the Twilio phone number to text from.');
+        else {
+          const n = await twilioNumber(s);
+          if (!n) add(false, 'Your Twilio number', `${s.twilio_from} isn't in this Twilio account. Copy it from Phone Numbers → Active numbers.`);
+          else {
+            add(n.capabilities?.sms === false ? false : true, 'Your Twilio number', n.capabilities?.sms === false ? `${n.phone_number} can't send texts.` : `${n.friendly_name || n.phone_number} can send texts`);
+            if (webhookUrl) {
+              if (n.sms_url === webhookUrl) add(true, 'Customer replies', 'Replies come back into Conversations.');
+              else add(null, 'Customer replies', n.sms_url ? `Replies currently go to ${n.sms_url}, not to this app. Click "Connect replies for me".` : 'Replies are not connected yet. Click "Connect replies for me".');
+            }
+          }
+        }
+      } else if (s.sms_provider === 'ghl') {
+        if (!s.ghl_token || !s.ghl_location_id) { add(false, 'GoHighLevel token and Location ID', 'Enter them in Integrations → GoHighLevel first.'); return { ok: false, checks }; }
+        const r = await http(`${GHL_BASE()}/locations/${encodeURIComponent(s.ghl_location_id)}`, { headers: { Authorization: `Bearer ${s.ghl_token}`, Version: '2021-07-28', Accept: 'application/json' } });
+        add(r.ok, 'Log in to GoHighLevel', r.ok ? `Sub-account "${r.json?.location?.name || r.json?.name || s.ghl_location_id}"` : r.status === 401 || r.status === 403 ? 'The token was rejected or lacks the locations.readonly scope.' : `GoHighLevel answered ${r.status}.`);
+        add(null, 'Customer replies', 'To see replies here, add a GHL workflow: Customer Replied → Webhook (POST) to the GHL URL below.');
+      } else { add(false, 'Texting provider', 'Choose Twilio or GoHighLevel.'); }
+    } else {
+      if (s.email_provider === 'smtp') {
+        if (!s.smtp_host) { add(false, 'SMTP server', 'Pick your email provider (or enter the SMTP host), then Save.'); return { ok: false, checks }; }
+        if (!fromAddress(s)) add(false, 'From address', 'Enter the address emails come from.');
+        try { await smtp(s).verify(); add(true, 'Log in to the email server', `${s.smtp_host}:${Number(s.smtp_port) || 587} accepted ${s.smtp_user || 'the connection'}`); }
+        catch (e) { add(false, 'Log in to the email server', friendlySmtp(e)); }
+        if (fromAddress(s) && s.smtp_user && /@/.test(s.smtp_user)) {
+          const fromDomain = (fromAddress(s).match(/@([^>\s]+)/) || [])[1], userDomain = s.smtp_user.split('@')[1];
+          if (fromDomain && userDomain && fromDomain.toLowerCase() !== userDomain.toLowerCase() && /gmail|office365|outlook|yahoo/i.test(s.smtp_host)) add(null, 'From address', `You log in as ${s.smtp_user} but send from @${fromDomain}. ${/gmail/i.test(s.smtp_host) ? 'Gmail' : 'Your provider'} may replace or block that From address unless it is set up as an alias.`);
+        }
+      } else if (s.email_provider === 'ghl') {
+        add(!!(s.ghl_token && s.ghl_location_id), 'GoHighLevel', s.ghl_token && s.ghl_location_id ? 'Emails go out through your GHL sub-account (LC Email or your connected mailbox).' : 'Enter the token and Location ID in Integrations → GoHighLevel.');
+      } else add(false, 'Email provider', 'Choose your email provider.');
+    }
+  } catch (e) { add(false, 'Connection', e.name === 'AbortError' ? 'The provider did not answer in time. Try again.' : e.message); }
+  return { ok: checks.every(c => c.ok !== false), checks };
+}
+/** Point the Twilio number's "A message comes in" webhook at this app. */
+export async function connectTwilioReplies(webhookUrl) {
+  const s = getSettings();
+  if (!/^https:\/\//.test(webhookUrl)) throw new Error('Set Settings → Public URL to your https:// address first. Twilio can only send replies to a public https address.');
+  const n = await twilioNumber(s); if (!n) throw new Error(`${s.twilio_from} isn't in this Twilio account.`);
+  const r = await http(`${TWILIO()}/2010-04-01/Accounts/${encodeURIComponent(s.twilio_sid)}/IncomingPhoneNumbers/${n.sid}.json`, { method: 'POST', headers: { ...twAuth(s), 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ SmsUrl: webhookUrl, SmsMethod: 'POST' }) });
+  if (!r.ok) throw new Error(r.json?.code ? friendlyTwilio(r.json.code, r.json.message) : `Twilio answered ${r.status}`);
+  return { number: n.phone_number, sms_url: webhookUrl };
 }

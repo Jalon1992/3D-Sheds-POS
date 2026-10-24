@@ -512,24 +512,35 @@ export function hooksRouter({ baseUrl }) {
   const r = express.Router();
   r.use(express.urlencoded({ extended: false, limit: '5mb' }));
   const keyOk = req => { const k = getSettings().inbound_key; return !!k && req.params.key === k; };
+  // Twilio signs the exact URL it was configured with. Accept the Public URL form and the address the request
+  // actually arrived on (custom domain vs onrender.com), and remember why a text was refused so the
+  // Messaging page can explain it instead of replies silently disappearing.
   const twilioOk = req => {
     const s = getSettings();
     if (s.twilio_skip_signature === true) return true;
-    if (!s.twilio_token) return false;
-    const url = baseUrl(req) + req.originalUrl;
-    return twilioSignatureOk(url, req.body || {}, req.get('X-Twilio-Signature'), s.twilio_token);
+    const fail = reason => { setSettings({ inbound_last_error: { at: now(), channel: 'sms', reason } }); return false; };
+    if (!s.twilio_token) return fail('A text arrived, but the Twilio Auth Token isn\'t saved, so it could not be verified.');
+    if (!req.get('X-Twilio-Signature')) return fail('A request without a Twilio signature was refused.');
+    const fwdProto = String(req.get('x-forwarded-proto') || req.protocol).split(',')[0].trim();
+    const urls = new Set([baseUrl(req) + req.originalUrl, `${fwdProto}://${req.get('host')}${req.originalUrl}`, `https://${req.get('host')}${req.originalUrl}`]);
+    for (const u of urls) if (twilioSignatureOk(u, req.body || {}, req.get('X-Twilio-Signature'), s.twilio_token)) return true;
+    return fail(`A text arrived but its signature didn't match. Make sure Settings → Public URL is exactly the address Twilio uses (Twilio is sending to ${req.get('host')}), and that the Auth Token is current.`);
   };
   r.post('/twilio/sms', wrap(async (req, res) => {
     if (!twilioOk(req)) return res.status(403).type('text/plain').send('Bad signature');
     const b = req.body || {};
     const media = Object.keys(b).filter(k => /^MediaUrl\d+$/.test(k)).map(k => b[k]);
     await inboundMessage({ channel: 'sms', from: b.From, to: b.To, body: [b.Body, ...media].filter(Boolean).join('\n'), provider: 'twilio', provider_id: b.MessageSid }, baseUrl(req));
+    setSettings({ inbound_last_ok: { at: now(), channel: 'sms', from: b.From } });
     res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
   }));
   r.post('/twilio/status', (req, res) => {
     if (!twilioOk(req)) return res.status(403).send('Bad signature');
     const b = req.body || {};
-    if (b.MessageSid && b.MessageStatus) updateDeliveryStatus(b.MessageSid, b.MessageStatus === 'undelivered' ? 'failed' : b.MessageStatus, b.ErrorCode ? `Carrier error ${b.ErrorCode}` : null);
+    if (b.MessageSid && b.MessageStatus) {
+      const m = updateDeliveryStatus(b.MessageSid, b.MessageStatus === 'undelivered' ? 'failed' : b.MessageStatus, b.ErrorCode ? `Carrier error ${b.ErrorCode}` : null, b.ErrorCode || null);
+      if (m) { const row = get('SELECT contact_id FROM messages WHERE id = ?', m.id); if (row?.contact_id) broadcast('message', { contact_id: row.contact_id, status: b.MessageStatus }, { perm: 'crm.view' }); }
+    }
     res.sendStatus(204);
   });
   // Inbound email: Mailgun / SendGrid inbound parse / Postmark / any service that POSTs from + subject + text
@@ -541,6 +552,7 @@ export function hooksRouter({ baseUrl }) {
     if (!m) return res.status(400).json({ error: 'No sender address' });
     const name = (String(b.from || b.From || '').match(/^\s*"?([^"<]+?)"?\s*</) || [])[1] || b.FromName || '';
     const text = b['stripped-text'] || b['body-plain'] || b.TextBody || b.StrippedTextReply || b.text || b.body || '';
+    setSettings({ inbound_last_ok: { at: now(), channel: 'email', from: m[1] } });
     await inboundMessage({ channel: 'email', from: m[1], to: b.recipient || b.to || b.To || '', subject: b.subject || b.Subject || '', body: String(text).slice(0, 20000), provider: 'inbound-email', name }, baseUrl(req));
     res.json({ ok: true });
   }));

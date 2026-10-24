@@ -204,6 +204,17 @@ on('GET', /^\/api\/crm\/notifications$/, () => { const rows = D().notifications.
 on('POST', /^\/api\/crm\/notifications\/read$/, () => { for (const n of D().notifications) if (!n.read_by.includes(me().id)) n.read_by.push(me().id); save(); return json({ ok: true }); });
 on('GET', /^\/api\/crm\/orders$/, () => { const x = need('orders.view'); if (x) return x; const p = pipe('orders'); return json({ pipeline: p, data: D().opps.filter(o => o.pipeline_id === p.id && lotOk(o)).map(oppView), me: { production: can(me(), 'orders.production'), delivery: can(me(), 'orders.delivery'), message: can(me(), 'orders.message') } }); });
 on('POST', /^\/api\/admin\/messaging\/test$/, () => json({ ok: true, status: 'test' }));
+on('GET', /^\/api\/admin\/messaging\/status$/, () => {
+  const last = (ch, dir) => D().messages.filter(x => x.channel === ch && x.direction === dir).at(-1) || null;
+  const nm = id => { const c = D().contacts.find(x => x.id === id); return c ? { first_name: c.first_name, last_name: c.last_name } : {}; };
+  return json({ sms: true, email: true, test_mode: true, sms_provider: D().settings.sms_provider || '', email_provider: D().settings.email_provider || '', from: D().settings.email_from || '',
+    hooks: { twilio: 'https://your-app.onrender.com/api/hooks/twilio/sms', email: 'https://your-app.onrender.com/api/hooks/email/…', ghl: 'https://your-app.onrender.com/api/hooks/ghl/…', https: true, public_url_set: true },
+    last_sms: last('sms', 'out'), last_email: last('email', 'out'), last_sms_in: last('sms', 'in'), last_email_in: last('email', 'in'), inbound_last_ok: null, inbound_last_error: null,
+    recent: D().messages.slice(-25).reverse().map(x => ({ ...x, from_addr: x.direction === 'in' ? D().contacts.find(c => c.id === x.contact_id)?.phone : '', ...nm(x.contact_id) })) });
+});
+on('POST', /^\/api\/admin\/messaging\/verify$/, () => json({ ok: true, checks: [{ ok: null, label: 'Demo', detail: 'The demo never contacts Twilio, GoHighLevel or an email server. On your live app this button logs in with your saved details and tells you exactly what to fix.' }] }));
+on('POST', /^\/api\/admin\/messaging\/twilio-connect$/, () => err('The demo does not contact Twilio. On your live app this sets your number\'s reply webhook for you.'));
+on('POST', /^\/api\/admin\/messaging\/clear-inbound-error$/, () => json({ ok: true }));
 on('POST', /^\/api\/admin\/account$/, (m, b) => { const u = me(); for (const k of ['name', 'email', 'phone']) if (b[k] !== undefined && b[k] !== '') u[k] = b[k]; if ('notify_sms' in b) u.notify_sms = b.notify_sms ? 1 : 0; if ('notify_email' in b) u.notify_email = b.notify_email ? 1 : 0; save(); return json({ ok: true }); });
 
 // ---- Dashboard reports (demo: real demo activity + generated sample history so the charts have shape) ----

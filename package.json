@@ -11,8 +11,10 @@
     "start": "node --disable-warning=ExperimentalWarning server.js",
     "postinstall": "node scripts/copy-vendor.js",
     "build:demo": "node demo/build.mjs",
-    "test": "node --test tests/api.test.mjs",
-    "test:e2e": "node tests/e2e.cjs"
+    "test": "node --test tests/api.test.mjs tests/messaging.test.mjs",
+    "test:e2e": "node tests/e2e.cjs",
+    "test:messaging": "node --test tests/messaging.test.mjs",
+    "test:sweep": "node --disable-warning=ExperimentalWarning tests/sweep.cjs"
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -25,6 +27,8 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
-    "esbuild": "0.24.0"
+    "esbuild": "0.24.0",
+    "mailparser": "^3.7.2",
+    "smtp-server": "^3.13.6"
   }
 }

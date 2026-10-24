@@ -164,6 +164,7 @@ export async function renderReports(host) {
     });
     const mRows = P.all ? [] : MONTHS.map((mm, i) => ({ mm, i, r: sumRange(days, ymd(P.year, i + 1, 1), ymd(P.year, i + 1, 31)), p: sumRange(days, ymd(P.year - 1, i + 1, 1), ymd(P.year - 1, i + 1, 31)) }));
 
+    if (!document.body.contains(host)) return; // left the dashboard while it was loading
     host.innerHTML = `<div class="rep">
       <div class="rep-bar">
         <div class="seg" role="tablist" aria-label="Period">${[['mtd', 'Month to date'], ['ytd', 'Year to date'], ['month', 'Month'], ['year', 'Year'], ['all', 'All years']].map(([k, l]) => `<button role="tab" aria-selected="${st.mode === k}" class="${st.mode === k ? 'on' : ''}" data-mode="${k}">${l}</button>`).join('')}</div>

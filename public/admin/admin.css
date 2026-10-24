@@ -417,3 +417,16 @@ svg.viz-svg { width: 100%; height: auto; stroke: none; fill: none; stroke-width:
   .rep-bar .seg button { white-space: nowrap; }
   .viz-head .seg { overflow-x: auto; flex-wrap: nowrap; }
 }
+/* messaging setup */
+.ms-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ms-state { font-weight: 800; font-size: 13px; border-radius: 999px; padding: 4px 11px; }
+.ms-state.ok { background: #e7f6ec; color: #067647; } .ms-state.bad { background: #fdecea; color: #b42318; } .ms-state.warn { background: #fff6e5; color: #b54708; }
+.checks { display: grid; gap: 6px; margin-top: 12px; }
+.ck { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; border-radius: 10px; padding: 9px 11px; }
+.ck > span { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; font-size: 12px; flex: none; color: #fff; }
+.ck.ok { background: #f1faf4; } .ck.ok > span { background: #067647; }
+.ck.bad { background: #fdf2f1; } .ck.bad > span { background: #b42318; }
+.ck.warn { background: #fffaf0; } .ck.warn > span { background: #b54708; }
+.ck small { display: block; color: var(--ink-2); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
+.steps .step { font-size: 13.5px; color: var(--ink-2); background: #f6f8f7; border-radius: 10px; padding: 10px 12px; line-height: 1.5; }
+.steps .step b { color: var(--ink); }

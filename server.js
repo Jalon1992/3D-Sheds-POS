@@ -17,7 +17,7 @@ import { crmRouter, hooksRouter, seedCRM, backfillQuotes, onQuoteCreated } from 
 import { posRouter, signRouter, seedContracts } from './src/contracts.js';
 import { permissionsFor } from './src/permissions.js';
 import { dailyReport, localDay } from './public/js/shared/reports.js';
-import { toE164, sendEmail, sendSMS } from './src/messaging.js';
+import { toE164, sendEmail, sendSMS, messagingStatus, fromAddress, verifyMessaging, connectTwilioReplies } from './src/messaging.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -335,6 +335,15 @@ admin.put('/settings', (req, res) => {
   delete b._session_secret; delete b.inbound_key; delete b.crm_backfilled; delete b.sample_templates_seeded;
   for (const k of SECRET_SETTINGS) { delete b[k + '_set']; if (typeof b[k] === 'string' && b[k].startsWith('••••')) delete b[k]; } // unchanged
   for (const k of ['tax_rate', 'delivery_fee']) if (k in b) b[k] = Number(b[k]) || 0;
+  // pasted credentials often carry spaces; phone numbers get stored as +1XXXXXXXXXX
+  for (const k of ['twilio_sid', 'twilio_token', 'twilio_messaging_service_sid', 'smtp_host', 'smtp_user', 'email_from', 'email_reply_to', 'public_url']) if (typeof b[k] === 'string') b[k] = b[k].trim();
+  if (typeof b.smtp_pass === 'string' && !/\S\s\S/.test(b.smtp_pass.trim())) b.smtp_pass = b.smtp_pass.trim();
+  if (typeof b.smtp_pass === 'string' && /^([a-z]{4} ){3}[a-z]{4}$/.test(b.smtp_pass.trim())) b.smtp_pass = b.smtp_pass.replace(/ /g, ''); // Google app passwords are shown with spaces
+  if (b.twilio_from) { const e = toE164(b.twilio_from); if (!e) return bad(res, 'The Twilio phone number looks wrong. Enter it like (615) 555-0123 or +16155550123.'); b.twilio_from = e; }
+  if (b.notify_phones) { const bad1 = String(b.notify_phones).split(/[,;]+/).map(x => x.trim()).filter(x => x && !toE164(x)); if (bad1.length) return bad(res, `These alert numbers look wrong: ${bad1.join(', ')}`); }
+  if (b.email_from && !/@/.test(b.email_from)) return bad(res, 'The From address needs an email, like sales@yourcompany.com or "Trimline Barns" <sales@yourcompany.com>.');
+  if ('smtp_port' in b) b.smtp_port = Number(b.smtp_port) || '';
+  if (b.public_url) { b.public_url = String(b.public_url).replace(/\/+$/, ''); if (!/^https?:\/\/[^/\s]+$/.test(b.public_url)) return bad(res, 'Public URL should look like https://builder.yourcompany.com (no page path at the end).'); }
   setSettings(b); res.json({ ok: true });
 });
 admin.post('/ghl/test', wrap(async (req, res) => {
@@ -344,6 +353,27 @@ admin.post('/ghl/test', wrap(async (req, res) => {
   catch (e) { bad(res, e.message); }
 }));
 admin.get('/catalog', (req, res) => res.json(getCatalog({ includeInactive: true })));
+// Messaging setup helpers: status overview, "Check connection" (no message sent), connect Twilio replies automatically
+const hookUrls = req => { const b = baseUrl(req), k = getSettings().inbound_key || ''; return { twilio: b + '/api/hooks/twilio/sms', email: `${b}/api/hooks/email/${k}`, ghl: `${b}/api/hooks/ghl/${k}`, https: /^https:\/\//.test(b), public_url_set: !!getSettings().public_url }; };
+admin.get('/messaging/status', (req, res) => {
+  const s = getSettings();
+  const last = (channel, dir) => get(`SELECT id, to_addr, from_addr, status, error, created_at FROM messages WHERE channel = ? AND direction = ? ORDER BY id DESC LIMIT 1`, channel, dir) || null;
+  res.json({
+    ...messagingStatus(), from: fromAddress(s), hooks: hookUrls(req),
+    last_sms: last('sms', 'out'), last_email: last('email', 'out'), last_sms_in: last('sms', 'in'), last_email_in: last('email', 'in'),
+    inbound_last_ok: s.inbound_last_ok || null, inbound_last_error: s.inbound_last_error || null,
+    recent: all(`SELECT m.id, m.channel, m.direction, m.to_addr, m.from_addr, m.subject, substr(m.body, 1, 140) body, m.status, m.error, m.created_at, c.first_name, c.last_name
+      FROM messages m LEFT JOIN contacts c ON c.id = m.contact_id ORDER BY m.id DESC LIMIT 25`),
+  });
+});
+admin.post('/messaging/verify', wrap(async (req, res) => {
+  const channel = req.body?.channel === 'email' ? 'email' : 'sms';
+  res.json(await verifyMessaging(channel, { webhookUrl: hookUrls(req).twilio }));
+}));
+admin.post('/messaging/twilio-connect', wrap(async (req, res) => {
+  try { res.json(await connectTwilioReplies(hookUrls(req).twilio)); } catch (e) { bad(res, e.message); }
+}));
+admin.post('/messaging/clear-inbound-error', (req, res) => { setSettings({ inbound_last_error: null }); res.json({ ok: true }); });
 admin.post('/messaging/test', wrap(async (req, res) => {
   const { channel, to } = req.body || {};
   const company = getSettings().company_name || '3D Shed Builder';

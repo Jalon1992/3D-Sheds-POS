@@ -34,10 +34,12 @@ This puts the `v2-pos-crm` branch online at its own address so you can try every
 
 ## 4. Optional: real texts and emails
 
-**Messaging & alerts**:
-- **Email:** the fastest option is Gmail or Google Workspace. Choose SMTP with host `smtp.gmail.com`, port `587`, your address, and a Google **App Password** (Google Account → Security → App passwords). Click **Send test email**.
-- **Texts:** if your GoHighLevel number already sends texts, choose **GoHighLevel** (it uses the token in Integrations → GoHighLevel). Otherwise choose Twilio. A new Twilio number needs A2P 10DLC registration before carriers deliver texts, which can take days.
-- **Text/email alerts to:** add your number and email to get the "contract signed" alert.
-- **Test mode:** logs messages in the CRM without sending, for training staff.
+Go to **Messaging & alerts**:
+- **Email:** choose your provider (for example Gmail or Microsoft 365), enter the login and the password the help box describes, then click **Save** → **Check connection** → **Send a test**.
+- **Texts:**
+  - If your GoHighLevel number already sends texts, choose **GoHighLevel**.
+  - Otherwise choose **Twilio**: paste the SID, token and number, click **Check connection**, then **Connect replies for me**. A new Twilio number needs A2P 10DLC registration before carriers deliver texts, which can take days.
+- **Alerts:** add your number and email to get the "contract signed" alert.
+- **If something fails:** the cards and **Recent messages** say why, in plain words.
 
 Something not right? Note the page, what you clicked, and what you expected, and send it over.

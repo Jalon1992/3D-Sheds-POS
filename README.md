@@ -233,17 +233,24 @@ Admin → **Contacts / Conversations / Pipeline / Tasks**.
 
 ## Texting & email setup
 
-Admin → **Messaging & alerts**.
+Admin → **Messaging & alerts**. The two cards at the top show whether texting and email are **Ready**, the last message sent and the last reply received. Each card has **Check connection**, which logs in with your saved details without sending anything and lists what's fine (✓), what to fix (✕) and warnings (!), and **Send a test**.
 
-**Texting** — pick one:
-- **Twilio:** paste the Account SID, Auth Token and your (A2P 10DLC registered) Twilio number. In Twilio → Phone Numbers → your number → *A message comes in*, paste the webhook URL shown on the page (`https://your-app/api/hooks/twilio/sms`, HTTP POST). Replies then show up in Conversations. Requests are verified with Twilio's signature, so **set Settings → Public URL** to your exact https address.
-- **GoHighLevel:** texts go out through your GHL sub-account number using the Private Integration token from Integrations → GoHighLevel (add the *conversations/message.write* scope). To get replies back here, make a GHL workflow: *Customer Replied* → *Webhook* (POST) to the GHL inbound URL shown on the page.
+**Texting.** Pick one:
+- **Twilio.**
+  1. Paste the Account SID and Auth Token from console.twilio.com.
+  2. Enter your Twilio number. It's saved as +1…, and pasted spaces are removed.
+  3. Click **Save** → **Check connection**. It confirms the login, that the number belongs to the account and can text, and warns if it's a trial account.
+  4. Click **Connect replies for me**. It sets your number's *A message comes in* webhook, so customers' replies land in Conversations (or copy the URL shown into Twilio yourself).
+  In the US your number must be **A2P 10DLC registered** (or a verified toll-free number), or carriers block texts.
+- **GoHighLevel.** Texts go out through your GHL number using the token in Integrations → GoHighLevel (scopes: contacts.write, conversations/message.write, locations.readonly). For replies, create a GHL workflow: *Customer Replied* → *Webhook* (POST) to the URL shown.
 
-**Email** — **SMTP** (Gmail/Google Workspace with an App Password, Outlook/Microsoft 365, SendGrid, Mailgun, Postmark, Amazon SES…) or **GoHighLevel**. Replies go to the sending rep's own email unless you set a Reply-to. Optional: point Mailgun Routes / SendGrid Inbound Parse / Postmark inbound at the inbound email URL to see replies in Conversations.
+When something fails, the reason is shown in plain words wherever you see the message: in the conversation, on the contract's activity, and in **Recent messages** at the bottom of the page. That includes Twilio carrier codes such as unregistered A2P (30034), trial-account limits (21608), landlines and STOP. Delivery reports from Twilio update each text to delivered or failed.
 
-**Alerts** — phone numbers and emails to notify when a contract is fully signed (optionally attach the PDF), each time one signer finishes, a new 3D lead arrives, or a customer replies. **Instant reply** — optional auto text/email to every new 3D lead (texts only to customers who ticked SMS consent).
+If a customer's reply is refused, usually because Twilio's webhook address and **Settings → Public URL** differ, a warning at the top of the page says so and how to fix it. Both your custom domain and the onrender.com address are accepted.
 
-Use **Send test text / Send test email** to check, and **Test mode** to train staff without messaging real customers.
+**Email.** Choose your provider: **Gmail/Google Workspace, Microsoft 365/Outlook, Yahoo, SendGrid, Mailgun, Amazon SES**, other SMTP, or **GoHighLevel**. The server settings are filled in for you, and the help text says exactly which password to use (for example a Google App Password; pasting it with spaces is fine). The **From** address defaults to *Company name <your login>*. Replies go to the rep who sent the email unless you set one Reply-to address. Optional: point Mailgun/SendGrid/Postmark inbound at the inbound URL to see email replies in Conversations.
+
+**Alerts:** numbers and emails to notify when a contract is signed (optionally with the PDF), when one signer finishes, when a new 3D lead arrives, or when a customer replies. Each team member can also turn on their own alerts in **Account**. **Instant reply** sends an automatic text and/or email to new 3D leads. **Test mode** logs everything without sending, for training.
 
 ## GoHighLevel
 
@@ -349,8 +356,11 @@ Prices are always recalculated on the server, so a tampered browser can't submit
 ## Testing
 
 ```bash
-npm test            # API suite: CRM, messaging, webhooks, contracts & signing, roles, dealer lots, concurrency (≈2 s)
-npm run test:e2e    # browser suite (needs: npm i -D playwright && npx playwright install chromium)
+npm test            # API + provider suites: CRM, contracts & signing, revisions, reports, roles, lots, concurrency, and real
+                    # Twilio / GoHighLevel requests (stand-in API) and real email (local SMTP server)
+npm run test:e2e    # browser walkthrough: 4 roles at once, phone signing, revisions, dashboard (needs Playwright + Chromium)
+npm run test:sweep  # bug sweep: every page x every role x desktop/phone, script-injection attempts, accented PDFs,
+                    # double submits, expired links, oversized uploads, deleted users, restart
 ```
 Both start their own server on a throw-away database in messaging test mode. The browser suite signs in as Admin, Sales, Production and Delivery **at the same time**, has a customer sign on an iPhone and a co-buyer on an Android phone, and walks a lead from the 3D builder through contract, signature, production and delivery. It prints where it saved screenshots and the signed PDF.
 
