@@ -18,4 +18,9 @@ for (const [pkg, file] of [['jspdf', 'jspdf.umd.min.js'], ['svg2pdf.js', 'svg2pd
   const f = join(root, 'node_modules', pkg, 'dist', file);
   if (existsSync(f)) cpSync(f, join(pdfDst, file));
 }
+// pdf.js renders contract PDFs in the browser (template designer + customer signing page)
+const pdfjsSrc = join(root, 'node_modules', 'pdfjs-dist', 'build');
+const pdfjsDst = join(root, 'public', 'vendor', 'pdfjs');
+mkdirSync(pdfjsDst, { recursive: true });
+for (const f of ['pdf.min.mjs', 'pdf.worker.min.mjs']) if (existsSync(join(pdfjsSrc, f))) cpSync(join(pdfjsSrc, f), join(pdfjsDst, f));
 console.log('Copied three.js + PDF libraries to public/vendor');

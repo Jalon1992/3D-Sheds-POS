@@ -532,6 +532,7 @@ function renderDone() {
     <h2>Quote sent!</h2><p class="sub">${esc(S().success_message || 'Thanks! We will be in touch shortly.')}</p>
     <div class="qn">Quote ${esc(q.number)}${showPrices() && q.pricing && !q.pricing.hidden ? ' · ' + fmt(q.pricing.total) : ''}</div>
     <div class="stack">
+      ${state.dealer && q.id && ['admin', 'sales'].includes(state.dealer.role) ? `<a class="btn primary block" href="/admin/#/pos/new?quote=${encodeURIComponent(q.id)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 17l2-2 2 1 4-4"/></svg>Write it up — start a contract</a>` : ''}
       <button class="btn ghost block" data-dl="glb"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/></svg>Download 3D model (.glb)</button>
       ${S().customer_pdf !== false ? `<button class="btn primary block" data-dl="quotepdf"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M12 18v-6m0 6-3-3m3 3 3-3"/></svg>${showPrices() ? 'Download quote PDF' : 'Download design PDF'}</button>` : ''}
       <button class="btn ghost block" data-dl="plan"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3zM3 12h7M14 3v7M14 14v7"/></svg>View / print floor plan</button>

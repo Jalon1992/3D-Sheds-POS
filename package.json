@@ -1,7 +1,7 @@
 {
   "name": "3d-sheds",
-  "version": "1.0.0",
-  "description": "3D shed configurator with admin, Open API, webhooks and GoHighLevel integration",
+  "version": "2.0.0",
+  "description": "3D shed configurator with built-in CRM, point of sale & e-signature, production/delivery boards, admin, Open API, webhooks and GoHighLevel integration",
   "type": "module",
   "main": "server.js",
   "engines": {
@@ -10,12 +10,17 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server.js",
     "postinstall": "node scripts/copy-vendor.js",
-    "build:demo": "node demo/build.mjs"
+    "build:demo": "node demo/build.mjs",
+    "test": "node --test tests/api.test.mjs",
+    "test:e2e": "node tests/e2e.cjs"
   },
   "dependencies": {
     "express": "^4.21.2",
     "jspdf": "^2.5.2",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.16",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
     "svg2pdf.js": "^2.2.4",
     "three": "^0.169.0"
   },

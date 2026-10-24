@@ -75,6 +75,88 @@ CREATE TABLE IF NOT EXISTS webhook_log (
 CREATE TABLE IF NOT EXISTS api_keys (
   id INTEGER PRIMARY KEY, name TEXT, prefix TEXT, key_hash TEXT UNIQUE,
   scopes TEXT DEFAULT 'full', last_used TEXT, created_at TEXT DEFAULT (datetime('now')));
+
+-- ===== CRM =====
+CREATE TABLE IF NOT EXISTS contacts (
+  id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, email TEXT, phone TEXT, phone_e164 TEXT,
+  address TEXT, city TEXT, state TEXT, zip TEXT, company TEXT,
+  source TEXT, tags TEXT DEFAULT '[]', assigned_to INTEGER, dealer_id TEXT,
+  sms_consent INTEGER DEFAULT 0, dnd_sms INTEGER DEFAULT 0, dnd_email INTEGER DEFAULT 0,
+  unread INTEGER DEFAULT 0, last_message_at TEXT, last_activity_at TEXT DEFAULT (datetime('now')),
+  created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS ix_contacts_email ON contacts(email);
+CREATE INDEX IF NOT EXISTS ix_contacts_phone ON contacts(phone_e164);
+
+CREATE TABLE IF NOT EXISTS pipelines (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT DEFAULT 'sales',   -- sales | orders
+  stages TEXT NOT NULL DEFAULT '[]', sort INTEGER DEFAULT 0);
+
+CREATE TABLE IF NOT EXISTS opportunities (
+  id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  quote_id INTEGER, pipeline_id INTEGER, stage TEXT, title TEXT, value REAL DEFAULT 0,
+  status TEXT DEFAULT 'open',                 -- open | won | lost
+  sale_type TEXT, assigned_to INTEGER, dealer_id TEXT,
+  delivery_date TEXT, delivery_window TEXT, delivery_driver INTEGER, delivery_notes TEXT, production_notes TEXT,
+  serial_number TEXT, contract_id INTEGER, order_number TEXT,
+  stage_changed_at TEXT DEFAULT (datetime('now')),
+  created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS ix_opps_contact ON opportunities(contact_id);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+  channel TEXT NOT NULL,                      -- sms | email
+  direction TEXT NOT NULL,                    -- out | in
+  to_addr TEXT, from_addr TEXT, subject TEXT, body TEXT,
+  status TEXT,                                -- sent | delivered | failed | received | test
+  error TEXT, provider TEXT, provider_id TEXT, user_id INTEGER, contract_id INTEGER,
+  created_at TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS ix_msgs_contact ON messages(contact_id);
+
+CREATE TABLE IF NOT EXISTS activities (
+  id INTEGER PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE, opportunity_id INTEGER,
+  type TEXT NOT NULL,                         -- note | call | stage | quote | contract | task | system
+  body TEXT, user_id INTEGER, created_at TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS ix_act_contact ON activities(contact_id);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE, opportunity_id INTEGER,
+  title TEXT NOT NULL, due_at TEXT, assigned_to INTEGER, done_at TEXT, created_by INTEGER,
+  created_at TEXT DEFAULT (datetime('now')));
+
+CREATE TABLE IF NOT EXISTS snippets (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, channel TEXT DEFAULT 'sms', subject TEXT, body TEXT,
+  created_at TEXT DEFAULT (datetime('now')));
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY, user_id INTEGER, roles TEXT, type TEXT, title TEXT, body TEXT, link TEXT,
+  read_by TEXT DEFAULT '[]', created_at TEXT DEFAULT (datetime('now')));
+
+-- ===== Point of sale =====
+CREATE TABLE IF NOT EXISTS contract_templates (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, sale_type TEXT DEFAULT 'cash',  -- cash | rto | any
+  file TEXT, file_name TEXT, pages TEXT DEFAULT '[]', fields TEXT DEFAULT '[]',
+  append_drawings INTEGER DEFAULT 1, initial_drawings INTEGER DEFAULT 1, active INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+
+CREATE TABLE IF NOT EXISTS contracts (
+  id INTEGER PRIMARY KEY, number TEXT UNIQUE, quote_id INTEGER, contact_id INTEGER, opportunity_id INTEGER,
+  template_id INTEGER, template_name TEXT, sale_type TEXT, status TEXT DEFAULT 'draft',  -- draft | sent | viewed | partial | completed | void
+  data TEXT DEFAULT '{}', fields TEXT DEFAULT '[]', pages TEXT DEFAULT '[]',
+  prepared_file TEXT, prepared_hash TEXT, signed_file TEXT, signed_hash TEXT,
+  total REAL, dealer_id TEXT, created_by INTEGER,
+  sent_at TEXT, completed_at TEXT, voided_at TEXT, void_reason TEXT, expires_at TEXT,
+  created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+
+CREATE TABLE IF NOT EXISTS contract_signers (
+  id INTEGER PRIMARY KEY, contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,                         -- customer | cobuyer | company
+  name TEXT, email TEXT, phone TEXT, token TEXT UNIQUE, status TEXT DEFAULT 'pending',  -- pending | viewed | signed
+  user_id INTEGER, values_json TEXT DEFAULT '{}', viewed_at TEXT, signed_at TEXT, consent_at TEXT, ip TEXT, user_agent TEXT,
+  created_at TEXT DEFAULT (datetime('now')));
+
+CREATE TABLE IF NOT EXISTS contract_events (
+  id INTEGER PRIMARY KEY, contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE, signer_id INTEGER,
+  event TEXT, detail TEXT, ip TEXT, user_agent TEXT, user_id INTEGER, created_at TEXT DEFAULT (datetime('now')));
 `);
 
 // ---- Migrations for databases created by earlier versions (safe to re-run)
@@ -111,10 +193,16 @@ for (const sql of [
   'ALTER TABLE sizes ADD COLUMN upper_len REAL',
   'ALTER TABLE options ADD COLUMN package_items TEXT',
   'ALTER TABLE options ADD COLUMN package_only INTEGER DEFAULT 0',
+  'ALTER TABLE quotes ADD COLUMN contact_id INTEGER',
+  'ALTER TABLE users ADD COLUMN phone TEXT',
+  'ALTER TABLE users ADD COLUMN notify_sms INTEGER DEFAULT 0',
+  'ALTER TABLE users ADD COLUMN notify_email INTEGER DEFAULT 0',
+  'ALTER TABLE users ADD COLUMN active INTEGER DEFAULT 1',
 ]) { try { db.exec(sql); } catch { /* column already exists */ } }
 
 // ---- JSON column helpers -----------------------------------------------------
-export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm']);
+export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
+  'tags', 'stages', 'pages', 'fields', 'data', 'values_json', 'roles', 'read_by']);
 
 export function parseRow(row) {
   if (!row) return row;

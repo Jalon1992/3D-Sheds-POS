@@ -3,6 +3,8 @@ import { ShedScene, BUILTIN_KINDS } from '../js/shed3d.js';
 import { defaultConfig, money, WALLS, DEFAULT_ROOFING, MAX_TIERS, roofingList } from '../js/shared/pricing.js';
 import { shedGeometry, roofSections } from '../js/shared/geometry.js';
 import { buildDrawingPackage } from '../js/drawings.js';
+import { crmContacts, crmConversations, crmPipeline, crmTasks, ordersBoard, messagingPage } from './crm.js';
+import { posPage } from './pos.js';
 const roofing = () => (Array.isArray(settings.roofing) && settings.roofing.length ? settings.roofing : DEFAULT_ROOFING);
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -135,20 +137,50 @@ $('#loginForm').onsubmit = async e => {
 };
 $('#logout').onclick = async () => { await api('POST', '/api/auth/logout'); location.hash = ''; location.reload(); };
 
-const ROUTES = { dashboard, quotes, styles, colors, options, pricing: pricingPage, integrations, settings: settingsPage, account };
-const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', production: 'Production' };
+const ROUTES = { dashboard, quotes, crm: crmContacts, conversations: crmConversations, pipeline: crmPipeline, tasks: crmTasks, pos: posPage, orders: ordersBoard,
+  styles, colors, options, pricing: pricingPage, integrations, messaging: messagingPage, settings: settingsPage, account };
+const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', production: 'Production', delivery: 'Delivery' };
 const isAdmin = () => (me?.role || 'admin') === 'admin';
 const canEditQuotes = () => ['admin', 'sales'].includes(me?.role || 'admin');
-const ROLE_PAGES = { sales: ['quotes', 'account'], production: ['quotes', 'account'] };
+const ROLE_PAGES = { sales: ['crm', 'conversations', 'pipeline', 'tasks', 'pos', 'quotes', 'orders', 'account'], production: ['orders', 'quotes', 'account'], delivery: ['orders', 'account'] };
+const HOME = { admin: 'dashboard', sales: 'crm', production: 'orders', delivery: 'orders' };
 const allowed = name => isAdmin() || (ROLE_PAGES[me.role] || []).includes(name);
+const can = perm => (me?.permissions || []).includes(perm);
+/** Live updates: pages register handlers here; they're dropped on every route change. */
+const liveHandlers = new Set();
+function onLive(fn) { liveHandlers.add(fn); }
+const hashQuery = () => new URLSearchParams(location.hash.split('?')[1] || '');
+let routeSeq = 0;
 async function route() {
-  const [r, arg] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
-  let name = ROUTES[r] ? r : (isAdmin() ? 'dashboard' : 'quotes');
-  if (!allowed(name)) name = 'quotes';
+  const parts = location.hash.replace(/^#\/?/, '').split('?')[0].split('/').map(decodeURIComponent);
+  const r = parts[0], arg = parts[1];
+  const home = HOME[me?.role || 'admin'] || 'quotes';
+  let name = ROUTES[r] ? r : home;
+  if (!allowed(name)) name = home;
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === name));
+  liveHandlers.clear();
+  const seq = ++routeSeq;
   const old = $('#main'), fresh = old.cloneNode(false); old.replaceWith(fresh); // drop old listeners
   $('#main').innerHTML = '<div class="empty">Loading…</div>';
-  try { await ROUTES[name](arg); } catch (e) { $('#main').innerHTML = `<div class="card card-pad err">${esc(e.message)}</div>`; }
+  try { await ROUTES[name](arg, parts.slice(1)); } catch (e) { if (seq === routeSeq) $('#main').innerHTML = `<div class="card card-pad err">${esc(e.message)}</div>`; }
+}
+// one live connection per tab: new leads, texts, signed contracts and board moves show up for everyone signed in
+function connectLive() {
+  if (!window.EventSource || window.__noLive) return;
+  const es = new EventSource('/api/crm/stream');
+  for (const type of ['contact', 'message', 'opportunity', 'contract', 'notification']) es.addEventListener(type, ev => {
+    let data = {}; try { data = JSON.parse(ev.data); } catch { /* */ }
+    if (type === 'notification') { refreshBell(); toast(data.title + (data.body ? ' — ' + data.body : '')); }
+    if (type === 'message' && data.direction === 'in') refreshBell();
+    for (const fn of [...liveHandlers]) { try { fn(type, data); } catch (e) { console.error(e); } }
+  });
+}
+async function refreshBell() {
+  try {
+    const n = await api('GET', '/api/crm/notifications');
+    $('#bellCount').textContent = n.unread > 99 ? '99+' : n.unread; $('#bellCount').hidden = !n.unread;
+    $('#bellList').innerHTML = n.data.length ? n.data.map(x => `<a class="bell-item ${x.read ? '' : 'unread'}" href="${esc(x.link || '#')}"><b>${esc(x.title)}</b>${x.body ? `<span>${esc(x.body)}</span>` : ''}<small>${fmtDate(x.created_at)}</small></a>`).join('') : '<div class="empty" style="padding:20px">Nothing yet</div>';
+  } catch { /* offline */ }
 }
 async function loadCatalog() { catalog = await api('GET', '/api/admin/catalog'); return catalog; }
 async function start() {
@@ -157,6 +189,9 @@ async function start() {
   $$('#nav a').forEach(a => { a.hidden = !allowed(a.dataset.r); });
   $$('#nav .nav-h').forEach(h => { let n = h.nextElementSibling, any = false; while (n && !n.classList.contains('nav-h')) { if (n.tagName === 'A' && !n.hidden) any = true; n = n.nextElementSibling; } h.hidden = !any; });
   if (!isAdmin()) $('#sideName').insertAdjacentHTML('afterend', `<span class="pill" style="margin-left:6px">${ROLE_LABEL[me.role]}</span>`);
+  $('#bellBtn').onclick = e => { e.stopPropagation(); const open = $('#bellPanel').hidden; $('#bellPanel').hidden = !open; if (open) { refreshBell(); api('POST', '/api/crm/notifications/read').then(() => { $('#bellCount').hidden = true; }).catch(() => {}); } };
+  document.addEventListener('click', e => { if (!e.target.closest('#bellPanel')) $('#bellPanel').hidden = true; });
+  refreshBell(); connectLive();
   settings = await api('GET', '/api/admin/settings');
   $('#sideName').textContent = settings.company_name || 'Shed Builder';
   if (settings.brand_color) document.documentElement.style.setProperty('--brand', settings.brand_color);
@@ -167,7 +202,8 @@ async function start() {
   try { me = await api('GET', '/api/auth/me'); start(); } catch { showLogin(); }
 })();
 
-function head(title, sub, actions = '') { return `<div class="head"><div><h1>${esc(title)}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="row">${actions}</div></div>`; }
+export { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, field, readFields, wireInputs, loadCatalog, me, settings, catalog, can, isAdmin, onLive, hashQuery, ROLE_LABEL, CHECK, PENCIL, TRASH, COPY, downloadDrawings, quoteDetail, CONFIG_URL };
+export function head(title, sub, actions = '') { return `<div class="head"><div><h1>${esc(title)}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="row">${actions}</div></div>`; }
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -262,7 +298,9 @@ async function quoteDetail(id, refresh) {
         <a class="btn ghost sm" target="_blank" href="${esc(x.links.download_3d_model)}">Download 3D model (.glb)</a>
         <button class="btn ghost sm" id="qPlanDl">Download floor plan</button>
         ${canEditQuotes() ? '<button class="btn primary sm" id="qQuotePdf">Quote PDF (prices + drawings)</button>' : ''}
-        <button class="btn ${canEditQuotes() ? 'ghost' : 'primary'} sm" id="qDraw">Drawings PDF (no prices)</button></div>
+        <button class="btn ${canEditQuotes() ? 'ghost' : 'primary'} sm" id="qDraw">Drawings PDF (no prices)</button>
+        ${can('pos.create') ? `<a class="btn primary sm" href="#/pos/new?quote=${x.id}" data-close>Start contract</a>` : ''}
+        ${can('crm.view') && x.contact_id ? `<a class="btn ghost sm" href="#/crm/contacts/${x.contact_id}" data-close>Open in CRM</a>` : ''}</div>
       <div class="plan-prev"><img src="${planUrl(x.id)}" alt="Floor plan"></div>
       <h3 style="margin:18px 0 6px">Line items</h3><div class="lines">${x.pricing_lines.map(l => `<div class="ln"><div>${esc(l.label)}${l.note ? `<small>${esc(l.note)}</small>` : ''}${l.wall ? `<small>${esc(l.wall)}</small>` : ''}</div><div>${fmt(l.amount)}</div></div>`).join('')}
       ${x.pricing.delivery ? `<div class="ln"><div>Delivery</div><div>${fmt(x.pricing.delivery)}</div></div>` : ''}${x.pricing.tax ? `<div class="ln"><div>Tax</div><div>${fmt(x.pricing.tax)}</div></div>` : ''}
@@ -290,6 +328,7 @@ async function quoteDetail(id, refresh) {
         saveFile(new Blob([await r.text()], { type: 'image/svg+xml' }), `${x.number}-floor-plan.svg`);
       });
       $('#qDraw', root).onclick = () => downloadDrawings(x.id, $('#qDraw', root));
+      $$('[data-close]', root).forEach(a => a.addEventListener('click', () => closeModal()));
       if ($('#qQuotePdf', root)) $('#qQuotePdf', root).onclick = () => downloadDrawings(x.id, $('#qQuotePdf', root), true);
       if ($('#qSave', root)) $('#qSave', root).onclick = guard(async () => { await api('PATCH', `/api/v1/quotes/${id}`, { status: $('#qStatus').value, internal_notes: $('#qNotes').value }); toast('Saved'); refresh && refresh(); });
       if ($('#qResend', root)) $('#qResend', root).onclick = guard(async () => { await api('POST', `/api/v1/quotes/${id}/resend`); toast('Queued — check Integrations → Delivery log'); });
@@ -944,10 +983,17 @@ async function account() {
       <label class="fld"><span>Email</span><input name="email" type="email" value="${esc(me.email)}"></label>
       <label class="fld"><span>Current password *</span><input name="current_password" type="password" autocomplete="current-password"></label>
       <label class="fld"><span>New password</span><input name="new_password" type="password" autocomplete="new-password" placeholder="8+ characters"></label></form>
-      <button class="btn primary" id="asave" style="margin-top:14px">Update</button></div>`;
+      <button class="btn primary" id="asave" style="margin-top:14px">Update</button>
+      <div class="section-t" style="margin:22px 0 10px">My alerts</div>
+      <p class="muted" style="margin:0 0 10px">Get a text and/or email when a contract is signed, a new lead comes in or a customer replies (whichever your admin has switched on in Messaging &amp; alerts).</p>
+      <form class="form" id="nf"><label class="fld"><span>My mobile number</span><input name="phone" type="tel" value="${esc(me.phone || '')}" placeholder="(555) 555-5555"></label><div></div>
+        <label class="chk"><input type="checkbox" name="notify_sms" ${me.notify_sms ? 'checked' : ''}>Text me</label><label class="chk"><input type="checkbox" name="notify_email" ${me.notify_email ? 'checked' : ''}>Email me</label></form>
+      <button class="btn ghost" id="nsave" style="margin-top:12px">Save alerts</button></div>`;
+  const saveAlerts = guard(async () => { const f = $('#nf'); await api('POST', '/api/admin/account', { phone: f.phone.value, notify_sms: f.notify_sms.checked, notify_email: f.notify_email.checked }); me = await api('GET', '/api/auth/me'); toast('Alerts saved'); });
   if (!isAdmin()) {
     $('#main').innerHTML = head('Your account') + `<div class="grid g2">${yours}</div>`;
     $('#asave').onclick = guard(async () => { const d = Object.fromEntries(new FormData($('#af'))); await api('POST', '/api/admin/account', d); me = await api('GET', '/api/auth/me'); toast('Account updated'); account(); });
+    $('#nsave').onclick = saveAlerts;
     return;
   }
   const users = await api('GET', '/api/admin/users');
@@ -956,21 +1002,25 @@ async function account() {
   const lotSel = (v, attrs) => `<select class="in" ${attrs}><option value="">All dealer lots</option>${dealers.map(d => `<option value="${esc(d.id)}" ${String(d.id) === String(v) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`;
   $('#main').innerHTML = head('Account & users') + `<div class="grid g2">${yours}
     <div class="card card-pad"><h2>Team members</h2>
-      <p class="muted" style="margin:2px 0 8px"><b>Admin</b>: everything. <b>Sales</b>: quotes (status & notes) and drawings. <b>Production</b>: view quotes and download drawings (floor plan + elevations PDF). Sales and Production can be limited to one dealer lot.</p>
-      <div class="tbl-wrap"><table class="tbl" style="margin:6px 0 14px"><tr><th>Name</th><th>Role</th><th>Dealer lot</th><th></th></tr>${users.map(u => `<tr><td><b>${esc(u.name || '')}</b><div class="muted" style="font-size:12.5px">${esc(u.email)}</div></td>
+      <p class="muted" style="margin:2px 0 8px"><b>Admin</b>: everything. <b>Sales</b>: CRM, texting &amp; email, quotes and contracts (point of sale). <b>Production</b>: the build board and drawings. <b>Delivery</b>: the delivery schedule, customer address &amp; phone, and drawings. Everyone can be signed in at the same time. Non-admins can be limited to one dealer lot.</p>
+      <div class="tbl-wrap"><table class="tbl" style="margin:6px 0 14px"><tr><th>Name</th><th>Role</th><th>Dealer lot</th><th>Login</th><th></th></tr>${users.map(u => `<tr><td><b>${esc(u.name || '')}</b><div class="muted" style="font-size:12.5px">${esc(u.email)}${u.phone ? ' · ' + esc(u.phone) : ''}</div></td>
         <td>${u.id === me.id ? `<span class="pill">${ROLE_LABEL[u.role]} (you)</span>` : roleSel(u.role, `data-ur="${u.id}"`)}</td>
         <td>${u.role === 'admin' ? '<span class="muted">—</span>' : lotSel(u.dealer_id, `data-ul="${u.id}"`)}</td>
+        <td>${u.id === me.id ? '<span class="pill on">On</span>' : `<label class="chk" title="Turn a login off without deleting it"><input type="checkbox" data-ua="${u.id}" ${u.active ? 'checked' : ''}>${u.active ? 'On' : 'Off'}</label>`}</td>
         <td class="num">${u.id === me.id ? '' : `<button class="icon-btn" data-del="${u.id}">${TRASH}</button>`}</td></tr>`).join('')}</table></div>
       <form class="form" id="uf"><label class="fld"><span>Name</span><input name="name"></label><label class="fld"><span>Email</span><input name="email" type="email"></label>
-      <label class="fld"><span>Role</span>${roleSel('production', 'name="role"')}</label><label class="fld"><span>Dealer lot</span>${lotSel('', 'name="dealer_id"')}</label>
-      <label class="fld full"><span>Temporary password</span><input name="password" type="text" placeholder="8+ characters"></label></form>
+      <label class="fld"><span>Role</span>${roleSel('sales', 'name="role"')}</label><label class="fld"><span>Dealer lot</span>${lotSel('', 'name="dealer_id"')}</label>
+      <label class="fld"><span>Mobile (optional)</span><input name="phone" type="tel"></label>
+      <label class="fld"><span>Temporary password</span><input name="password" type="text" placeholder="8+ characters"></label></form>
       <button class="btn ghost" id="uadd" style="margin-top:12px">+ Add team member</button></div></div>`;
   $('#asave').onclick = guard(async () => { const d = Object.fromEntries(new FormData($('#af'))); await api('POST', '/api/admin/account', d); me = await api('GET', '/api/auth/me'); toast('Account updated'); account(); });
+  $('#nsave').onclick = saveAlerts;
   $('#uadd').onclick = guard(async () => { await api('POST', '/api/admin/users', Object.fromEntries(new FormData($('#uf')))); toast('User added'); account(); });
   $('#main').onchange = guard(async e => {
     const t = e.target;
     if (t.dataset.ur) { await api('PATCH', `/api/admin/users/${t.dataset.ur}`, { role: t.value }); toast('Role updated'); account(); }
     if (t.dataset.ul) { await api('PATCH', `/api/admin/users/${t.dataset.ul}`, { dealer_id: t.value }); toast('Dealer lot updated'); }
+    if (t.dataset.ua) { await api('PATCH', `/api/admin/users/${t.dataset.ua}`, { active: t.checked }); toast(t.checked ? 'Login turned on' : 'Login turned off'); account(); }
   });
   $('#main').onclick = guard(async e => { const b = e.target.closest('[data-del]'); if (b && confirmBox('Remove this user?')) { await api('DELETE', `/api/admin/users/${b.dataset.del}`); account(); } });
 }
