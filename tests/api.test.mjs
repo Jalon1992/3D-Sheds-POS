@@ -35,7 +35,8 @@ const anon = new Client(), admin = new Client();
 let cat;
 async function quote(customer, extra = {}) {
   const st = cat.styles[0], sz = st.sizes[0];
-  const r = await anon.post('/api/v1/quotes', { config: { style_id: st.id, size_id: sz.id, ...extra }, customer });
+  // submitted as signed-in staff (dealer configurator) so the public 8-per-minute limit doesn't throttle the suite
+  const r = await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: sz.id, ...extra }, customer });
   assert.equal(r.status, 201, JSON.stringify(r.data)); return r.data;
 }
 async function makeContract(c, payload, files = {}) {
@@ -327,4 +328,68 @@ test('settings: secrets masked and kept when re-saved', async () => {
   assert.match((await admin.get('/api/admin/settings')).data.smtp_pass, /pass$/);
   const t = await admin.post('/api/admin/messaging/test', { channel: 'sms', to: '6155550123' }); assert.equal(t.status, 200);
   assert.equal((await admin.post('/api/admin/messaging/test', { channel: 'sms', to: 'abc' })).status, 502);
+});
+
+test('edit a sale: revisions keep every version, old links point to the new one, order is updated not duplicated', async () => {
+  const q = await quote({ first_name: 'Vera', last_name: 'Version', email: 'vera@test.com', phone: '6155550050' });
+  const meta = (await admin.get('/api/pos/meta')).data;
+  const cashT = meta.templates.find(t => t.sale_type === 'cash' && /Sample/.test(t.name)), rtoT = meta.templates.find(t => t.sale_type === 'rto' && /Sample/.test(t.name));
+  const k1 = (await makeContract(admin, { quote_id: q.id, template_id: cashT.id, sale_type: 'cash', signers: { customer: { name: 'Vera Version', phone: '6155550050' } }, cash: { deposit: 300 } })).data;
+  assert.equal(k1.revision, 1); assert.deepEqual(k1.payload.cash, { deposit: 300 });
+  await admin.post(`/api/pos/contracts/${k1.id}/send`, { sms: true });
+  // everyone signs the original → order on the board
+  for (const s of k1.signers) assert.equal((await signAll(tok(s.link))).status, 200);
+  const ordersBefore = (await admin.get('/api/crm/orders')).data.data.filter(o => o.contact_id === k1.contact_id);
+  assert.equal(ordersBefore.length, 1);
+  // revise: switch to rent to own
+  const k2r = await makeContract(admin, { quote_id: q.id, template_id: rtoT.id, sale_type: 'rto', signers: { customer: { name: 'Vera Version', phone: '6155550050' } }, rto: { term_months: 48 }, revise_of: k1.id, change_note: 'Switched to rent to own' });
+  assert.equal(k2r.status, 201, JSON.stringify(k2r.data)); const k2 = k2r.data;
+  assert.equal(k2.number, k1.number + '-R2'); assert.equal(k2.revision, 2); assert.equal(k2.versions.length, 2); assert.equal(k2.latest_id, k2.id);
+  const old = (await admin.get('/api/pos/contracts/' + k1.id)).data;
+  assert.equal(old.status, 'superseded'); assert.equal(old.superseded_by, k2.id); assert.ok(old.completed_at, 'signed original keeps its signed date');
+  assert.ok(old.events.some(e => e.event === 'Replaced by a revised version'));
+  assert.equal((await admin.get(`/api/pos/contracts/${k1.id}/document.pdf`, { raw: true })).status, 200, 'signed original still downloadable');
+  // revising an old version is refused; sending an old version is refused
+  assert.equal((await makeContract(admin, { quote_id: q.id, template_id: cashT.id, sale_type: 'cash', signers: { customer: { name: 'V', phone: '6155550050' } }, revise_of: k1.id })).status, 400);
+  assert.equal((await admin.post(`/api/pos/contracts/${k1.id}/send`, { sms: true })).status, 400);
+  // list shows one row per sale: the latest version
+  const list = (await admin.get('/api/pos/contracts?q=Vera')).data; assert.equal(list.length, 1); assert.equal(list[0].id, k2.id); assert.equal(list[0].versions, 2);
+  // the customer's old link says it was replaced and points to the new link
+  const oldCust = k1.signers.find(s => s.role === 'customer'), newCust = k2.signers.find(s => s.role === 'customer');
+  const info = (await anon.get('/api/sign/' + tok(oldCust.link))).data;
+  assert.equal(info.contract.status, 'superseded'); assert.equal(info.contract.replaced_by.link, '/sign/' + tok(newCust.link));
+  assert.equal((await signAll(tok(newCust.link), {})).status, 200);
+  // sending the revision says it's updated
+  const sent = await admin.post(`/api/pos/contracts/${k2.id}/send`, { sms: true, email: false });
+  assert.equal(sent.status, 400, 'customer already signed, only the company is left');
+  for (const s of k2.signers.filter(s => s.role !== 'customer')) assert.equal((await signAll(tok(s.link))).status, 200);
+  const ordersAfter = (await admin.get('/api/crm/orders')).data.data.filter(o => o.contact_id === k1.contact_id);
+  assert.equal(ordersAfter.length, 1, 'still one order'); assert.equal(ordersAfter[0].contract_id, k2.id); assert.equal(ordersAfter[0].sale_type, 'rto');
+  // a third revision deleted while still a draft brings revision 2 back as the latest
+  const k3 = (await makeContract(admin, { quote_id: q.id, template_id: rtoT.id, sale_type: 'rto', signers: { customer: { name: 'Vera Version', phone: '6155550050' } }, rto: { term_months: 36 }, revise_of: k2.id })).data;
+  assert.equal(k3.number, k1.number + '-R3');
+  assert.equal((await admin.del('/api/pos/contracts/' + k3.id)).status, 204);
+  const back = (await admin.get('/api/pos/contracts/' + k2.id)).data; assert.equal(back.status, 'completed'); assert.equal(back.latest_id, k2.id);
+  assert.equal((await admin.del('/api/pos/contracts/' + k1.id)).status, 400, 'old versions are kept');
+  // revision message in the text log
+  const k4 = (await makeContract(admin, { quote_id: q.id, template_id: rtoT.id, sale_type: 'rto', signers: { customer: { name: 'Vera Version', phone: '6155550050' } }, rto: { term_months: 36 }, revise_of: k2.id, change_note: 'Added a loft' })).data;
+  await admin.post(`/api/pos/contracts/${k4.id}/send`, { sms: true, email: false });
+  const msgs = (await admin.get('/api/crm/contacts/' + k4.contact_id)).data.timeline.filter(t => t.kind === 'message' && t.contract_id === k4.id);
+  assert.match(msgs.at(-1).body, /^UPDATED CONTRACT/);
+});
+
+test('dashboard reports: daily rows count leads, quotes and each sale once', async () => {
+  const r = (await admin.get('/api/admin/reports')).data;
+  assert.match(r.today, /^\d{4}-\d\d-\d\d$/);
+  const tot = r.days.reduce((a, d) => ({ leads: a.leads + d.leads, quotes: a.quotes + d.quotes, sales: a.sales + d.sales, cash: a.cash + d.cash, rto: a.rto + d.rto }), { leads: 0, quotes: 0, sales: 0, cash: 0, rto: 0 });
+  assert.equal(tot.leads, (await admin.get('/api/crm/contacts?limit=1')).data.total);
+  assert.equal(tot.quotes, (await admin.get('/api/v1/quotes?limit=1')).data.total);
+  // a sale = a contract (all revisions) signed at least once whose latest version isn't void — a pending revision doesn't undo it
+  const every = (await admin.get('/api/pos/contracts?all_versions=1')).data;
+  const groups = {}; for (const k of every) (groups[k.number.split('-R')[0]] ||= []).push(k);
+  const expected = Object.values(groups).filter(g => g.some(k => k.completed_at) && g.sort((a, b) => b.revision - a.revision)[0].status !== 'void').length;
+  assert.equal(tot.sales, expected, 'one sale per contract, revisions counted once');
+  assert.equal(tot.cash + tot.rto, tot.sales);
+  const sales = new Client(); await sales.login('sales@test.com', 'password-123');
+  assert.equal((await sales.get('/api/admin/reports')).status, 403);
 });

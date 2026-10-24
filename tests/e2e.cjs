@@ -204,6 +204,30 @@ const watch = (page, who) => {
       await drv.screenshot({ path: join(OUT, '09-delivery.png') });
     });
 
+    await step('sales edits the signed sale (switch to cash), resends it; every version is kept', async () => {
+      await sales.goto(B + `/admin/#/pos/contracts/${contractId}`); await sales.waitForSelector('a:has-text("Edit & resend")');
+      await sales.click('a:has-text("Edit & resend")'); await sales.waitForSelector('#wGo');
+      assert(await sales.inputValue('#sName') === 'Mark Miller', 'customer prefilled');
+      assert(await sales.inputValue('#cName') === 'Mary Miller', 'co-buyer prefilled');
+      await sales.click('label:has-text("Cash")'); await sales.fill('#wNote', 'Paying cash instead');
+      await sales.click('#wGo'); await sales.waitForFunction(id => { const m = location.hash.match(/contracts\/(\d+)/); return m && Number(m[1]) !== id; }, contractId, { timeout: 90000 });
+      await sales.waitForSelector('h2:has-text("Versions")');
+      const txt = await sales.innerText('#main');
+      assert(/-R2/.test(txt) && /Latest/.test(txt) && /Signed, then replaced/.test(txt) && /Paying cash instead/.test(txt), 'versions card');
+      await sales.click('#sendAll'); await sales.waitForFunction(() => document.body.innerText.includes('Signing link'), null, { timeout: 8000 });
+      await sales.screenshot({ path: join(OUT, '10a-revision.png'), fullPage: true });
+      await sales.goto(B + '/admin/#/pos'); await sales.waitForSelector('tr[data-id]');
+      assert((await sales.$$eval('tr[data-id]', r => r.filter(x => x.innerText.includes('Mark Miller')).length)) === 1, 'one row per sale');
+    });
+
+    await step('owner dashboard shows sales, leads and quotes with MTD / YTD / year views', async () => {
+      await admin.goto(B + '/admin/#/dashboard'); await admin.waitForSelector('.kpis');
+      for (const m of ['ytd', 'month', 'year', 'all', 'mtd']) { await admin.click(`[data-mode=${m}]`); await admin.waitForSelector('#vizA'); }
+      await admin.click('[data-metric=leads]'); await admin.waitForSelector('#vizA');
+      const sales = await admin.innerText('.kpi:first-child .val'); assert(/\$/.test(sales), 'sales tile');
+      await admin.screenshot({ path: join(OUT, '10b-dashboard.png'), fullPage: true });
+    });
+
     await step('phone-size admin works for a rep on the lot', async () => {
       const ctx = await browser.newContext({ ...devices['iPhone 13'] }); const p = await ctx.newPage(); watch(p, 'mobile admin');
       await p.goto(B + '/admin/'); await p.fill('input[name=email]', 'sam@test.com'); await p.fill('input[name=password]', 'password-123'); await p.click('button:has-text("Log in")');

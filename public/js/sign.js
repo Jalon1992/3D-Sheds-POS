@@ -26,6 +26,8 @@ async function boot() {
   if (c.logo_url) { $('#logo').src = c.logo_url; $('#logo').hidden = false; } else $('#co').textContent = c.name;
   $('#num').textContent = k.number;
   const dl = info.signed_pdf ? `<p style="margin-top:18px"><a class="btn" href="${esc(info.signed_pdf)}">Download your signed contract (PDF)</a></p>` : '';
+  if (k.status === 'superseded') return message('<h1>Your contract was updated</h1>', `${esc(c.name)} sent you a newer version of this contract${k.replaced_by ? ` (${esc(k.replaced_by.number)})` : ''}. This older version can no longer be signed.`,
+    k.replaced_by ? `<p style="margin-top:18px"><a class="btn" href="${esc(k.replaced_by.link)}">Open the updated contract</a></p>` : `<p class="sub">Use the newest link you received${c.phone ? ', or call ' + esc(c.phone) : ''}.</p>`);
   if (k.status === 'void') return message('<h1>This contract was cancelled</h1>', `${esc(c.name)} voided contract ${esc(k.number)}${k.void_reason ? ': ' + esc(k.void_reason) : ''}. Contact them${c.phone ? ' at ' + esc(c.phone) : ''} if you have questions.`);
   if (me.status === 'signed') return message('<div class="big-ok">✓</div><h1>You already signed</h1>', k.status === 'completed' ? 'Everyone has signed. Your copy is ready.' : "We'll send you the signed copy as soon as everyone has signed.", dl);
   if (k.expired) return message('<h1>This link has expired</h1>', `Ask ${esc(c.name)}${c.phone ? ' (' + esc(c.phone) + ')' : ''} to send you a new signing link.`);

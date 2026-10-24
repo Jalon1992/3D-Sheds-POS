@@ -5,6 +5,7 @@ import { shedGeometry, roofSections } from '../js/shared/geometry.js';
 import { buildDrawingPackage } from '../js/drawings.js';
 import { crmContacts, crmConversations, crmPipeline, crmTasks, ordersBoard, messagingPage } from './crm.js';
 import { posPage } from './pos.js';
+import { renderReports } from './reports.js';
 const roofing = () => (Array.isArray(settings.roofing) && settings.roofing.length ? settings.roofing : DEFAULT_ROOFING);
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -216,31 +217,23 @@ export function head(title, sub, actions = '') { return `<div class="head"><div>
 // ---------------------------------------------------------------------------
 async function dashboard() {
   const [s, keys, hooks] = await Promise.all([api('GET', '/api/admin/stats'), api('GET', '/api/admin/api-keys'), api('GET', '/api/v1/webhooks')]);
-  const days = []; for (let i = 29; i >= 0; i--) { const d = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10); days.push([d, s.daily.find(x => x.d === d)?.n || 0]); }
-  const max = Math.max(1, ...days.map(d => d[1]));
-  const won = s.byStatus.find(x => x.status === 'won')?.n || 0;
   const checks = [
     [settings.company_name && settings.company_name !== 'Your Shed Co.', 'Add your company name, logo and brand color', '#/settings'],
     [me.email !== 'admin@example.com', 'Change the default admin login', '#/account'],
-    [settings.ghl_enabled || settings.ghl_inbound_webhook_url, 'Connect GoHighLevel', '#/integrations'],
-    [hooks.length > 0 || keys.length > 0, 'Add a webhook or API key for other software', '#/integrations/webhooks'],
+    [settings.sms_provider || settings.email_provider, 'Connect texting and email', '#/messaging'],
+    [settings.ghl_enabled || settings.ghl_inbound_webhook_url, 'Connect GoHighLevel (optional)', '#/integrations'],
     [true, 'Review styles, sizes and prices', '#/styles'],
   ];
   $('#main').innerHTML = head('Dashboard', `Welcome back${me.name ? ', ' + esc(me.name) : ''}.`, `<a class="btn ghost" href="${CONFIG_URL}" target="_blank" title="Opens the dealer-facing configurator: prices always shown">Open configurator (dealer mode) ↗</a>`) + `
-  <div class="grid g4">
-    <div class="card card-pad stat"><div class="lbl">Quotes (30 days)</div><div class="val">${s.last30}</div></div>
-    <div class="card card-pad stat"><div class="lbl">Quoted value (30 days)</div><div class="val">${fmt(s.value30)}</div></div>
-    <div class="card card-pad stat"><div class="lbl">All-time quotes</div><div class="val">${s.total}</div></div>
-    <div class="card card-pad stat"><div class="lbl">Won</div><div class="val">${won}</div></div>
-  </div>
+  <div id="reports"><div class="empty">Loading reports…</div></div>
   <div class="grid g2" style="margin-top:16px">
-    <div class="card card-pad"><h2>Quotes per day</h2><p class="muted" style="margin:0">Last 30 days</p>
-      <div class="bars">${days.map(([d, n]) => `<div style="height:${(n / max) * 100}%" title="${d}: ${n}"></div>`).join('')}</div></div>
     <div class="card card-pad"><h2>Getting set up</h2>${checks.map(([ok, t, href]) => `<a class="check ${ok ? 'done' : ''}" href="${href}" style="color:inherit;text-decoration:none"><span class="dot">${ok ? CHECK : ''}</span><span>${t}</span></a>`).join('')}</div>
-  </div>
-  <div class="card" style="margin-top:16px"><div class="card-pad" style="padding-bottom:6px"><h2>Popular styles</h2></div>
-    ${s.byStyle.length ? `<table class="tbl"><tr><th>Style</th><th class="num">Quotes</th><th class="num">Avg. price</th></tr>${s.byStyle.map(r => `<tr><td>${esc(r.style_name)}</td><td class="num">${r.n}</td><td class="num">${fmt(r.avg)}</td></tr>`).join('')}</table>` : '<div class="empty">No quotes yet.</div>'}
+    <div class="card"><div class="card-pad" style="padding-bottom:6px"><h2>Popular styles</h2></div>
+    ${s.byStyle.length ? `<table class="tbl"><tr><th>Style</th><th class="num">Quotes</th><th class="num">Avg. price</th></tr>${s.byStyle.map(r => `<tr><td>${esc(r.style_name)}</td><td class="num">${r.n}</td><td class="num">${fmt(r.avg)}</td></tr>`).join('')}</table>` : '<div class="empty">No quotes yet.</div>'}</div>
   </div>`;
+  void keys; void hooks;
+  const rep = await renderReports($('#reports'));
+  let t; onLive(type => { if (['contact', 'contract'].includes(type)) { clearTimeout(t); t = setTimeout(() => rep.reload().catch(() => {}), 800); } });
 }
 
 // ---------------------------------------------------------------------------

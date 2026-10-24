@@ -16,6 +16,7 @@ import { floorPlanSVG } from './public/js/shared/floorplan.js';
 import { crmRouter, hooksRouter, seedCRM, backfillQuotes, onQuoteCreated } from './src/crm.js';
 import { posRouter, signRouter, seedContracts } from './src/contracts.js';
 import { permissionsFor } from './src/permissions.js';
+import { dailyReport, localDay } from './public/js/shared/reports.js';
 import { toE164, sendEmail, sendSMS } from './src/messaging.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -365,6 +366,17 @@ admin.get('/stats', (req, res) => {
     byStyle: all('SELECT style_name, COUNT(*) n, ROUND(AVG(total)) avg FROM quotes GROUP BY style_name ORDER BY n DESC'),
     daily: all("SELECT date(created_at) d, COUNT(*) n FROM quotes WHERE created_at >= datetime('now','-30 days') GROUP BY d ORDER BY d"),
   });
+});
+// Dashboard reports: one row per local day with leads, quotes and signed sales (client groups by month/year, MTD/YTD, YoY)
+admin.get('/reports', (req, res) => {
+  const tz = getSettings().timezone || 'America/Chicago';
+  const days = dailyReport({
+    contacts: all('SELECT created_at, source, dealer_id FROM contacts'),
+    quotes: all('SELECT created_at, total, dealer_id FROM quotes'),
+    contracts: all('SELECT id, group_id, revision, status, sale_type, total, completed_at, dealer_id FROM contracts'),
+    tz, dealer: String(req.query.dealer || ''),
+  });
+  res.json({ tz, today: localDay(new Date().toISOString(), tz), days, dealers: (getSettings().dealers || []).map(d => ({ id: d.id, name: d.name })) });
 });
 admin.post('/duplicate/:table/:id', (req, res) => {
   const t = req.params.table;

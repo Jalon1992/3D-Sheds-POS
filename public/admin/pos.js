@@ -4,7 +4,9 @@ import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, 
 import { buildDrawingPackage, render3D, floorPlanPNG } from '../js/drawings.js';
 import { FIELD_TYPES, SIGNER_ROLES, TAGS, tagLabel, rtoCalc, usd, saleTypeLabel, DEFAULT_RTO } from '../js/shared/contract.js';
 
-const STATUS = { draft: 'Draft', sent: 'Sent', viewed: 'Opened', partial: 'Partly signed', completed: 'Signed', void: 'Void' };
+const STATUS = { draft: 'Draft', sent: 'Sent', viewed: 'Opened', partial: 'Partly signed', completed: 'Signed', void: 'Void', superseded: 'Replaced' };
+const verLabel = v => (v.revision || 1) > 1 ? `Revision ${v.revision}` : 'Original';
+const verStatus = v => v.status === 'superseded' ? (v.completed_at ? 'Signed, then replaced' : `Replaced (was ${(STATUS[v.prev_status] || 'draft').toLowerCase()})`) : (STATUS[v.status] || v.status);
 const ROLE = Object.fromEntries(SIGNER_ROLES);
 const fullName = c => [c?.first_name, c?.last_name].filter(Boolean).join(' ');
 const tabs = active => `<div class="tabs"><button data-tab="#/pos" class="${active === 'contracts' ? 'on' : ''}">Contracts</button><button data-tab="#/pos/templates" class="${active === 'templates' ? 'on' : ''}">Templates</button>${isAdmin() ? `<button data-tab="#/pos/settings" class="${active === 'settings' ? 'on' : ''}">Rent-to-own &amp; contract settings</button>` : ''}</div>`;
@@ -12,6 +14,7 @@ const wireTabs = () => $$('[data-tab]').forEach(b => (b.onclick = () => { locati
 
 export async function posPage(arg, rest = []) {
   if (arg === 'new') return wizard();
+  if (arg === 'revise' && rest[1]) return wizard(Number(rest[1]));
   if (arg === 'contracts' && rest[1]) return contractDetail(Number(rest[1]));
   if (arg === 'templates' && rest[1]) return designer(Number(rest[1]));
   if (arg === 'templates') return templatesPage();
@@ -33,8 +36,8 @@ async function contractsPage() {
   const render = async () => {
     const p = new URLSearchParams({ q: $('#kq').value, status: $('#ks').value, sale_type: $('#kt').value });
     const rows = await api('GET', '/api/pos/contracts?' + p);
-    $('#ktable').innerHTML = rows.length ? `<table class="tbl"><tr><th>Contract</th><th>Customer</th><th>Building</th><th>Type</th><th class="num">Price</th><th>Status</th><th>Created</th></tr>${rows.map(k => `<tr class="click" data-id="${k.id}">
-      <td><b>${esc(k.number)}</b><div class="muted" style="font-size:12px">${esc(k.template_name || '')}</div></td>
+    $('#ktable').innerHTML = rows.length ? `<table class="tbl"><tr><th>Contract</th><th>Customer</th><th>Building</th><th>Type</th><th class="num">Price</th><th>Status</th><th>Latest version</th></tr>${rows.map(k => `<tr class="click" data-id="${k.id}">
+      <td><b>${esc(k.number)}</b>${k.versions > 1 ? ` <span class="pill" title="${k.versions} versions on file">Rev ${k.revision} · latest</span>` : ''}<div class="muted" style="font-size:12px">${esc(k.template_name || '')}</div></td>
       <td>${esc(k.customer || fullName(k))}<div class="muted" style="font-size:12px">${esc(k.phone || k.email || '')}</div></td><td>${esc(k.shed || '')}</td>
       <td><span class="pill ${esc(k.sale_type)}">${k.sale_type === 'rto' ? 'Rent to own' : 'Cash'}</span>${k.monthly ? `<div class="muted" style="font-size:12px">${esc(k.monthly)}/mo</div>` : ''}</td>
       <td class="num"><b>${fmt(k.total)}</b></td>
@@ -52,21 +55,34 @@ async function contractsPage() {
 // ---------------------------------------------------------------------------
 // New contract wizard
 // ---------------------------------------------------------------------------
-async function wizard() {
+/** New contract, or (reviseId) a revised version of an existing one, prefilled from what was used last time. */
+async function wizard(reviseId = null) {
   const qp = hashQuery();
   const meta = await api('GET', '/api/pos/meta');
   const staff = (await api('GET', '/api/crm/users')).filter(u => ['admin', 'sales'].includes(u.role));
   const S = { quote: null, contact: null, sale_type: 'cash', template_id: null, cob: false, custom: {} };
-  if (qp.get('quote')) S.quote = await api('GET', `/api/v1/quotes/${Number(qp.get('quote'))}`);
-  const cid = qp.get('contact') || S.quote?.contact_id;
+  const old = reviseId ? await api('GET', `/api/pos/contracts/${reviseId}`) : null;
+  if (old && old.latest_id !== old.id) { toast('That is an older version. Editing the latest one instead.'); location.hash = `#/pos/revise/${old.latest_id}`; return; }
+  const P = old?.payload || {};
+  if (old) {
+    Object.assign(S, { sale_type: old.sale_type, template_id: old.template_id, custom: { ...(P.custom || old.custom || {}) }, cob: !!P.signers?.cobuyer });
+    if (P.rto?.term_months) S.term = Number(P.rto.term_months);
+    if (P.cash?.deposit != null) S.deposit = Number(P.cash.deposit);
+  }
+  const quoteId = qp.get('quote') || P.quote_id || old?.quote_id;
+  if (quoteId) S.quote = await api('GET', `/api/v1/quotes/${Number(quoteId)}`).catch(() => null);
+  const cid = qp.get('contact') || P.contact_id || old?.contact_id || S.quote?.contact_id;
   if (cid && can('crm.view')) S.contact = await api('GET', `/api/crm/contacts/${Number(cid)}`).catch(() => null);
   if (!S.quote && S.contact?.quotes?.length) S.quote = await api('GET', `/api/v1/quotes/${S.contact.quotes[0].id}`);
   if (!meta.templates.some(t => t.sale_type === 'cash' || t.sale_type === 'any') && meta.templates.some(t => t.sale_type === 'rto')) S.sale_type = 'rto';
 
-  const cust = S.quote?.customer || S.contact || {};
+  const cust = P.signers?.customer ? { full_name: P.signers.customer.name, phone: P.signers.customer.phone, email: P.signers.customer.email } : (S.quote?.customer || S.contact || {});
   const total = () => Number(S.quote?.pricing?.total) || 0;
   const cashPrice = () => (Number(S.quote?.pricing?.subtotal) || 0) + (Number(S.quote?.pricing?.delivery) || 0) || total();
-  $('#main').innerHTML = head('New contract', 'Pick the design, Cash or Rent to Own, and the template. We build the contract with the 3D rendering, floor plan and elevations attached.', '<a class="btn ghost" href="#/pos">Cancel</a>') + `
+  $('#main').innerHTML = (old
+    ? head(`Edit contract ${old.number}`, `Change the design, sale type, template, signers or payment terms. This makes revision ${(old.versions[0]?.revision || old.revision || 1) + 1}: ${esc(old.number)} is kept as a record and its signing links stop working once you prepare the new version.`, `<a class="btn ghost" href="#/pos/contracts/${old.id}">Cancel</a>`)
+      + (old.status === 'completed' ? '<div class="callout warn" style="margin-bottom:16px">This contract is already signed. Everyone will need to sign the revised version; the signed original stays on file. The order on the production board is updated when the new version is signed.</div>' : '')
+    : head('New contract', 'Pick the design, Cash or Rent to Own, and the template. We build the contract with the 3D rendering, floor plan and elevations attached.', '<a class="btn ghost" href="#/pos">Cancel</a>')) + `
   <div class="grid" style="grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start" id="wz">
     <div class="grid" style="gap:16px">
       <div class="card card-pad"><h2>1 · Design</h2><div id="wQuote" style="margin-top:10px"></div></div>
@@ -85,8 +101,9 @@ async function wizard() {
       <div class="card card-pad" id="wCustom" hidden></div>
     </div>
     <div class="card card-pad" style="position:sticky;top:12px"><h2>Summary</h2><div id="wSum" style="margin-top:8px"></div>
+      ${old ? '<label class="fld" style="margin-top:12px"><span>What changed? (shown to the customer)</span><input id="wNote" maxlength="200" placeholder="e.g. Changed to 12x24, added a loft"></label>' : ''}
       <div class="err" id="wErr" hidden style="margin-top:10px"></div>
-      <button class="btn primary block" id="wGo" style="margin-top:14px">Prepare contract</button>
+      <button class="btn primary block" id="wGo" style="margin-top:14px">${old ? 'Prepare revised contract' : 'Prepare contract'}</button>
       <div class="busy" id="wBusy" hidden style="margin-top:12px"><span class="spin"></span><span id="wBusyT">Working…</span></div>
       <p class="muted" style="font-size:12.5px;margin:10px 0 0">You'll see the finished contract before anything is sent.</p></div>
   </div>`;
@@ -97,7 +114,7 @@ async function wizard() {
       $('#wQuote').innerHTML = `<div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px"><div class="plan-prev" style="width:200px;flex:none"><img src="${planUrl(q.id)}" alt=""></div>
         <div style="flex:1;min-width:0"><b style="font-size:16px">${esc(q.shed.style)} ${esc(q.shed.size)}</b><div class="muted">${esc(q.number)} · ${esc(q.customer.full_name)} · ${fmt(q.pricing.total)}</div>
         <div class="muted" style="font-size:12.5px;margin-top:6px">${esc(q.options.filter(o => !o.name.startsWith('Removed')).map(o => o.name).join(', ') || 'No options')}</div>
-        <div class="row" style="margin-top:10px"><a class="btn ghost sm" href="${esc(q.links.view_3d)}" target="_blank">Open in 3D ↗</a><button class="btn ghost sm" id="wPick">Use a different design</button></div></div></div>`;
+        <div class="row" style="margin-top:10px"><a class="btn ghost sm" href="${esc(q.links.view_3d)}${old && q.links.view_3d.includes('?') ? '&revise=' + old.id : ''}" target="_blank" title="Opens the design in the dealer configurator. Change it and submit; then come back and pick the new design.">${old ? 'Change the 3D design ↗' : 'Open in 3D ↗'}</a><button class="btn ghost sm" id="wPick">Use a different design</button></div></div></div>`;
     } else {
       $('#wQuote').innerHTML = `<p class="muted" style="margin:0 0 10px">Pick the customer's 3D design (quote). Designing a new one? Open the configurator, submit it, then come back.</p><div class="row"><button class="btn primary sm" id="wPick">Choose a design</button><a class="btn ghost sm" href="/" target="_blank">Open configurator ↗</a></div>`;
     }
@@ -157,6 +174,18 @@ async function wizard() {
   $('#wTpl').onchange = e => { if (e.target.name === 'tpl') { S.template_id = Number(e.target.value); renderTpl(); } };
   $('#wz').addEventListener('input', e => { if (e.target.dataset.custom) S.custom[e.target.dataset.custom] = e.target.value; if (e.target.id === 'sName') renderSum(); });
   await renderQuote(); renderTpl(); renderMoney(); renderSum();
+  if (old) { // fill in what was used on the previous version
+    const cb = P.signers?.cobuyer;
+    if (cb && $('#cName')) { $('#cName').value = cb.name || ''; $('#cPhone').value = cb.phone || ''; $('#cEmail').value = cb.email || ''; }
+    if (P.company_signer_id && $('#coSigner')) $('#coSigner').value = String(P.company_signer_id);
+    if (S.sale_type === 'rto' && $('#rOver')) {
+      if (P.rto?.monthly_override) $('#rOver').value = P.rto.monthly_override;
+      const fp = P.rto?.first_payment_date && new Date(P.rto.first_payment_date); if (fp && !isNaN(fp)) $('#rFirst').value = fp.toISOString().slice(0, 10);
+      $('#rOver').dispatchEvent(new Event('input'));
+    }
+    $$('[data-custom]').forEach(i => { i.value = S.custom[i.dataset.custom] || ''; });
+    renderSum();
+  }
 
   $('#wGo').onclick = async () => {
     const err = $('#wErr'); err.hidden = true;
@@ -175,6 +204,7 @@ async function wizard() {
         company_signer_id: $('#coSigner') ? Number($('#coSigner').value) : null, custom: S.custom,
         rto: S.sale_type === 'rto' ? { term_months: S.term, monthly_override: Number($('#rOver').value) || null, first_payment_date: $('#rFirst').value ? new Date($('#rFirst').value + 'T12:00:00').toLocaleDateString('en-US') : '' } : null,
         cash: S.sale_type === 'cash' ? { deposit: Number($('#cDep').value) || 0 } : null,
+        ...(old ? { revise_of: old.id, change_note: $('#wNote')?.value.trim() || '' } : {}),
       };
       fd.append('payload', JSON.stringify(payload));
       if (S.quote) {
@@ -189,7 +219,7 @@ async function wizard() {
       }
       step('Building the contract…');
       const k = await api('POST', '/api/pos/contracts', fd);
-      toast(`Contract ${k.number} is ready`);
+      toast(old ? `Revised contract ${k.number} is ready — send it to the customer` : `Contract ${k.number} is ready`);
       location.hash = `#/pos/contracts/${k.id}?new=1`;
     } catch (e) { fail(e.message); btn.disabled = false; $('#wBusy').hidden = true; }
   };
@@ -213,14 +243,16 @@ function pickQuote(done) {
 // ---------------------------------------------------------------------------
 async function contractDetail(id) {
   const k = await api('GET', `/api/pos/contracts/${id}`);
-  const open = !['completed', 'void'].includes(k.status);
+  const open = !['completed', 'void', 'superseded'].includes(k.status);
   const pdfUrl = `/api/pos/contracts/${id}/document.pdf`;
   const outside = k.signers.filter(s => s.role !== 'company');
   const isNew = hashQuery().get('new');
   $('#main').innerHTML = `<div class="head"><div><h1>Contract ${esc(k.number)} <span class="pill ${esc(k.status)}" style="vertical-align:middle">${esc(STATUS[k.status] || k.status)}</span></h1><p>${esc(k.summary.customer || '')} · ${esc(k.summary.shed || '')} · ${saleTypeLabel(k.sale_type)} · ${fmt(k.total)}${k.summary.rto?.monthly_total ? ` · ${esc(k.summary.rto.monthly_total)}/mo × ${esc(k.summary.rto.term_months)}` : ''}</p></div>
     <div class="row"><a class="btn ghost" href="#/pos">‹ All contracts</a>${can('contracts.download') ? `<a class="btn ${k.status === 'completed' ? 'primary' : 'ghost'}" href="${pdfUrl}?download=1">${k.status === 'completed' ? 'Download signed PDF' : 'Download PDF'}</a>` : ''}
       ${k.contact_id && can('crm.view') ? `<a class="btn ghost" href="#/crm/contacts/${k.contact_id}">Contact</a>` : ''}
-      ${k.status !== 'void' && (k.status !== 'completed' || isAdmin()) ? '<button class="btn danger" id="kVoid">Void</button>' : ''}${k.status === 'draft' || (isAdmin() && k.status !== 'completed') ? `<button class="icon-btn" id="kDel" title="Delete">${TRASH}</button>` : ''}</div></div>
+      ${k.id === k.latest_id && can('pos.create') ? `<a class="btn primary" href="#/pos/revise/${k.id}" title="Make a new version with changes and send it again. This version is kept.">Edit &amp; resend</a>` : ''}
+      ${k.status !== 'void' && k.status !== 'superseded' && (k.status !== 'completed' || isAdmin()) ? '<button class="btn danger" id="kVoid">Void</button>' : ''}${k.status === 'draft' || (isAdmin() && k.status !== 'completed') ? `<button class="icon-btn" id="kDel" title="Delete">${TRASH}</button>` : ''}</div></div>
+  ${k.status === 'superseded' ? (() => { const l = k.versions.find(v => v.id === k.latest_id); return `<div class="callout warn" style="margin-bottom:16px">This is an earlier version (${esc(verLabel(k))}), kept as a record. It was replaced ${fmtDate(k.superseded_at)} and its signing links no longer work. <a href="#/pos/contracts/${l.id}"><b>Open the latest: ${esc(l.number)}</b> (${fmtDate(l.created_at)})</a></div>`; })() : ''}
   ${k.status === 'void' ? `<div class="callout warn" style="margin-bottom:16px">Voided ${fmtDate(k.voided_at)}${k.void_reason ? ': ' + esc(k.void_reason) : ''}. The signing links no longer work.</div>` : ''}
   ${k.status === 'completed' ? `<div class="callout" style="margin-bottom:16px">✅ Signed by everyone ${fmtDate(k.completed_at)}. The signed PDF (with the 3D rendering, floor plan, elevations and the certificate of completion) was ${outside.some(s => s.email) ? 'emailed to the customer' : 'sent to the customer'}, and the order is on the <a href="#/orders">production board</a>.</div>` : ''}
   <div class="grid" style="grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start">
@@ -241,6 +273,10 @@ async function contractDetail(id) {
         <dt>Total</dt><dd>${fmt(k.total)}</dd>${k.summary.rto?.monthly_total ? `<dt>Monthly</dt><dd>${esc(k.summary.rto.monthly_total)} × ${esc(k.summary.rto.term_months)} mo</dd><dt>At signing</dt><dd>${esc(k.summary.rto.deposit)}</dd>` : `<dt>Deposit</dt><dd>${fmt(k.raw?.deposit)}</dd>`}
         ${k.quote_id ? `<dt>3D design</dt><dd><a href="#/quotes/${k.quote_id}">View quote</a></dd>` : ''}<dt>Created</dt><dd>${fmtDate(k.created_at)}</dd>${k.sent_at ? `<dt>Sent</dt><dd>${fmtDate(k.sent_at)}</dd>` : ''}${k.expires_at && open ? `<dt>Links expire</dt><dd>${fmtDate(k.expires_at)}</dd>` : ''}
         ${k.signed_hash ? `<dt>Fingerprint</dt><dd><code style="font-size:10.5px;word-break:break-all">${esc(k.signed_hash)}</code></dd>` : ''}</dl></div>
+      ${k.versions.length > 1 ? `<div class="card card-pad"><h2>Versions</h2><p class="muted" style="margin:2px 0 8px">Every version is kept. Newest first.</p>${k.versions.map(v => `<div class="signer-row" style="padding:9px 0">
+        <div class="grow"><a href="#/pos/contracts/${v.id}" style="color:inherit;text-decoration:none"><b>${esc(v.number)}</b></a> ${v.id === k.latest_id ? '<span class="pill on">Latest</span>' : ''} ${v.id === k.id ? '<span class="pill">Viewing</span>' : ''}
+          <div class="muted" style="font-size:12.5px">${esc(verLabel(v))} · ${fmtDate(v.created_at)} · ${esc(verStatus(v))} · ${fmt(v.total)}${v.change_note ? `<br>“${esc(v.change_note)}”` : ''}</div></div>
+        ${can('contracts.download') ? `<a class="btn ghost sm" href="/api/pos/contracts/${v.id}/document.pdf?download=1">PDF</a>` : ''}</div>`).join('')}</div>` : ''}
       <div class="card card-pad"><h2>Activity</h2><div style="margin-top:8px">${k.events.slice().reverse().map(e => `<div class="task-row"><span><b style="font-weight:700">${esc(e.event)}</b>${e.detail ? ' — ' + esc(e.detail) : ''}<small>${fmtDate(e.created_at)}${e.user_name ? ' · ' + esc(e.user_name) : ''}${e.ip ? ' · IP ' + esc(e.ip) : ''}</small></span></div>`).join('')}</div></div>
     </div></div>`;
   if ($('#kPdf')) previewPdf($('#kPdf'), pdfUrl).catch(e => { $('#kPdf').innerHTML = `<div class="muted">Preview unavailable (${esc(e.message)}). Use “Open in new tab”.</div>`; });

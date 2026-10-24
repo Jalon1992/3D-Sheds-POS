@@ -198,11 +198,18 @@ for (const sql of [
   'ALTER TABLE users ADD COLUMN notify_sms INTEGER DEFAULT 0',
   'ALTER TABLE users ADD COLUMN notify_email INTEGER DEFAULT 0',
   'ALTER TABLE users ADD COLUMN active INTEGER DEFAULT 1',
+  'ALTER TABLE contracts ADD COLUMN group_id INTEGER',
+  'ALTER TABLE contracts ADD COLUMN revision INTEGER DEFAULT 1',
+  'ALTER TABLE contracts ADD COLUMN superseded_by INTEGER',
+  'ALTER TABLE contracts ADD COLUMN superseded_at TEXT',
+  'ALTER TABLE contracts ADD COLUMN prev_status TEXT',
+  'ALTER TABLE contracts ADD COLUMN change_note TEXT',
+  "ALTER TABLE contracts ADD COLUMN payload TEXT DEFAULT '{}'",
 ]) { try { db.exec(sql); } catch { /* column already exists */ } }
 
 // ---- JSON column helpers -----------------------------------------------------
 export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
-  'tags', 'stages', 'pages', 'fields', 'data', 'values_json', 'roles', 'read_by']);
+  'tags', 'stages', 'pages', 'fields', 'data', 'values_json', 'roles', 'read_by', 'payload']);
 
 export function parseRow(row) {
   if (!row) return row;

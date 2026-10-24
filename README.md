@@ -202,9 +202,23 @@ Drag to move, drag the corner to resize, arrow keys nudge, *Replace PDF* keeps y
 
 **4. Done.** When everyone has signed: the signed PDF (contract + signatures + drawings + **certificate of completion** with timestamps, IP addresses, devices and a SHA-256 fingerprint) is emailed to the customer, you get a text/email alert (Messaging & alerts), the deal moves to **Sold**, the quote is marked won, and an order card lands on the **Production & delivery** board. Download the signed PDF any time from the contract page.
 
+**Edit a sale & resend:** open the contract → **Edit & resend**. The wizard comes back filled in with everything used last time. Change the design (*Change the 3D design* opens it in the dealer configurator; submit, then *Update the contract with this design*), Cash ↔ Rent to own, template, signers, deposit or term, and add a short *What changed?* note. This creates the next version (`C-10012-R2`, `-R3`…). Every version is kept with its date and PDF, and the newest is marked **Latest**. Older versions' signing links stop working and point customers to the new link. The resent text and email say it's an updated contract. If the sale was already signed, the signed original stays on file and the order on the production board is updated (not duplicated) once the new version is signed. Deleting an unsent revision brings the previous version back as the latest.
+
 Statuses: *Draft → Sent → Opened → Partly signed → Signed*, or *Void* (links stop working). Links expire after 30 days (configurable); resend any time.
 
 **Rent-to-own setup:** Point of sale → *Rent-to-own & contract settings*. Enter your RTO company's rate sheet as **term factors** (monthly rental = cash price before tax × factor ÷ months), the number of payments due at signing, damage-waiver (LDW) per month and the rental tax rate. The defaults are placeholders — replace them with your RTO company's numbers. The same page holds the default cash deposit %, link expiry, time zone and the wording of every contract text/email.
+
+## Dashboard reports
+
+Admin → **Dashboard**. Sales, leads and quotes for **Month to date**, **Year to date**, any **Month**, any **Year**, or **All years**, with **Compare with last year** (same dates last year). Shows:
+- **Tiles:** sales $ (cash vs rent-to-own count), leads, quotes, close rate (sales ÷ quotes) and average sale, each with the change against last year.
+- **Month by month:** this year vs last year, switchable between sales $, sales count, leads, quotes and quoted $. Hover for exact numbers.
+- **Running total:** by day for a month, by month for a year, with last year dashed for comparison.
+- **Sales mix** (cash vs rent to own) and **where leads came from** (3D builder, walk-in/phone/manual, texts & emails).
+- **Year-over-year** and **by-month** tables.
+- A dealer-lot filter when you have lots.
+
+A sale counts once, on the day its contract was first fully signed, at the value of its latest signed version. Dates use the time zone in Point of sale settings.
 
 ## CRM
 

@@ -7,6 +7,7 @@ import { FIELD_TYPES, TAGS, DEFAULT_RTO, rtoCalc, saleTypeLabel, usd, DRAWING_IN
 import { buildData, signerFirst } from '../public/js/shared/contract-data.js';
 import { inspectPdf, preparePdf, finalizePdf, sha256, buildSampleTemplate } from '../src/contract-pdf.js';
 import { DEFAULT_SALES_STAGES, DEFAULT_ORDER_STAGES } from '../public/js/shared/stages.js';
+import { dailyReport, localDay } from '../public/js/shared/reports.js';
 
 const { on, json, err, save, nextId, now, tok, fmt } = api;
 const D = () => api.db;
@@ -205,6 +206,29 @@ on('GET', /^\/api\/crm\/orders$/, () => { const x = need('orders.view'); if (x) 
 on('POST', /^\/api\/admin\/messaging\/test$/, () => json({ ok: true, status: 'test' }));
 on('POST', /^\/api\/admin\/account$/, (m, b) => { const u = me(); for (const k of ['name', 'email', 'phone']) if (b[k] !== undefined && b[k] !== '') u[k] = b[k]; if ('notify_sms' in b) u.notify_sms = b.notify_sms ? 1 : 0; if ('notify_email' in b) u.notify_email = b.notify_email ? 1 : 0; save(); return json({ ok: true }); });
 
+// ---- Dashboard reports (demo: real demo activity + generated sample history so the charts have shape) ----
+function sampleHistory(today) {
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const season = [0.55, 0.65, 0.95, 1.25, 1.35, 1.2, 1.05, 1.0, 0.95, 0.9, 0.7, 0.5];
+  const out = []; const [ty] = today.split('-').map(Number);
+  for (let d = new Date(Date.UTC(ty - 1, 0, 1)); d.toISOString().slice(0, 10) < today; d = new Date(d.getTime() + 864e5)) {
+    const m = season[d.getUTCMonth()] * (d.getUTCFullYear() === ty ? 1.15 : 1);
+    const r = { d: d.toISOString().slice(0, 10), leads: 0, leads_3d: 0, leads_manual: 0, leads_msg: 0, quotes: 0, quote_value: 0, sales: 0, sales_value: 0, cash: 0, cash_value: 0, rto: 0, rto_value: 0 };
+    for (let i = Math.round(rnd() * 4 * m); i > 0; i--) { r.leads++; const x = rnd(); r[x < 0.68 ? 'leads_3d' : x < 0.9 ? 'leads_manual' : 'leads_msg']++; }
+    for (let i = Math.round(rnd() * 3 * m); i > 0; i--) { r.quotes++; r.quote_value += Math.round(4000 + rnd() * 9000); }
+    if (rnd() < 0.42 * m) { const v = Math.round(4500 + rnd() * 10000), t = rnd() < 0.45 ? 'rto' : 'cash'; r.sales++; r.sales_value += v; r[t]++; r[t + '_value'] += v; }
+    out.push(r);
+  }
+  return out;
+}
+on('GET', /^\/api\/admin\/reports$/, (m, b, url) => {
+  const tz = D().settings.timezone || 'America/Chicago', today = localDay(new Date().toISOString(), tz), dealer = url.searchParams.get('dealer') || '';
+  const real = dailyReport({ contacts: D().contacts, quotes: D().quotes, contracts: D().contracts, tz, dealer });
+  const map = new Map(dealer ? [] : sampleHistory(today).map(r => [r.d, r]));
+  for (const r of real) { const x = map.get(r.d); if (!x) map.set(r.d, r); else for (const k of Object.keys(r)) if (k !== 'd') x[k] += r[k]; }
+  return json({ tz, today, days: [...map.values()].sort((a, c) => a.d.localeCompare(c.d)), dealers: (D().settings.dealers || []).map(d => ({ id: d.id, name: d.name })) });
+});
+
 // ---- Point of sale ----------------------------------------------------------------
 const customTags = f => [...new Set((f || []).filter(x => x.type === 'data' && String(x.tag).startsWith('custom:')).map(x => String(x.tag).slice(7)))];
 const signLink = t => `sign.html#${t}`;
@@ -243,18 +267,24 @@ on('POST', /^\/api\/pos\/templates\/(\d+)\/duplicate$/, m => { const t = D().tem
 on('DELETE', /^\/api\/pos\/templates\/(\d+)$/, m => { const t = D().templates.find(y => y.id === +m[1]); if (!t) return err('Not found', 404); if (D().contracts.some(k => k.template_id === t.id)) { t.active = 0; save(); return json({ archived: true }); } D().templates = D().templates.filter(y => y !== t); save(); return json(null, 204); });
 
 const ev = (k, event, detail = '', signer_id = null) => k.events.push({ id: nextId(), event, detail, signer_id, user_id: me()?.id, user_name: signer_id ? null : me()?.name, ip: 'demo', created_at: now() });
-const kView = k => ({ ...k, data: undefined, raw: k.data?.raw, summary: { customer: k.data?.customer?.full_name, shed: k.data?.shed?.description, total: k.data?.pricing?.total, rto: k.data?.rto }, custom: k.data?.custom, signers: k.signers.map(s => ({ ...s, values_json: undefined, link: signLink(s.token) })) });
+const groupOf = k => k.group_id || k.id;
+const versions = k => D().contracts.filter(x => groupOf(x) === groupOf(k)).sort((a, c) => (c.revision || 1) - (a.revision || 1))
+  .map(v => ({ id: v.id, number: v.number, revision: v.revision || 1, status: v.status, prev_status: v.prev_status, created_at: v.created_at, sent_at: v.sent_at, completed_at: v.completed_at, superseded_at: v.superseded_at, change_note: v.change_note, total: v.total, superseded_by: v.superseded_by }));
+const kView = k => ({ ...k, versions: versions(k), latest_id: (versions(k).find(v => !v.superseded_by) || versions(k)[0]).id, revision: k.revision || 1, data: undefined, raw: k.data?.raw, summary: { customer: k.data?.customer?.full_name, shed: k.data?.shed?.description, total: k.data?.pricing?.total, rto: k.data?.rto }, custom: k.data?.custom, signers: k.signers.map(s => ({ ...s, values_json: undefined, link: signLink(s.token) })) });
 on('GET', /^\/api\/pos\/contracts$/, (m, b, url) => {
   const x = need('pos.view'); if (x) return x;
   const q = url.searchParams, s = (q.get('q') || '').toLowerCase();
-  return json(D().contracts.filter(k => lotOk(k) && (!q.get('status') || k.status === q.get('status')) && (!q.get('sale_type') || k.sale_type === q.get('sale_type')) && (!s || [k.number, k.data?.customer?.full_name, k.data?.customer?.email].join(' ').toLowerCase().includes(s)))
-    .slice().reverse().map(k => ({ id: k.id, number: k.number, status: k.status, sale_type: k.sale_type, total: k.total, template_name: k.template_name, created_at: k.created_at, customer: k.data?.customer?.full_name, phone: k.data?.customer?.phone, email: k.data?.customer?.email, shed: k.data?.shed?.description, monthly: k.data?.rto?.monthly_total, created_by_name: userName(k.created_by), signers: k.signers.length, signed: k.signers.filter(z => z.status === 'signed').length })));
+  return json(D().contracts.filter(k => lotOk(k) && (q.get('all_versions') || !k.superseded_by) && (!q.get('status') || k.status === q.get('status')) && (!q.get('sale_type') || k.sale_type === q.get('sale_type')) && (!s || [k.number, k.data?.customer?.full_name, k.data?.customer?.email].join(' ').toLowerCase().includes(s)))
+    .slice().reverse().map(k => ({ id: k.id, number: k.number, status: k.status, sale_type: k.sale_type, total: k.total, template_name: k.template_name, created_at: k.created_at, customer: k.data?.customer?.full_name, phone: k.data?.customer?.phone, email: k.data?.customer?.email, shed: k.data?.shed?.description, monthly: k.data?.rto?.monthly_total, created_by_name: userName(k.created_by), revision: k.revision || 1, versions: versions(k).length, completed_at: k.completed_at, signers: k.signers.length, signed: k.signers.filter(z => z.status === 'signed').length })));
 });
 on('GET', /^\/api\/pos\/contracts\/(\d+)$/, m => { const k = D().contracts.find(y => y.id === +m[1]); return k && lotOk(k) ? json({ ...kView(k), events: k.events }) : err('Not found', 404); });
-on('GET', /^\/api\/pos\/contracts\/(\d+)\/document\.pdf$/, (m, b, url) => { const k = D().contracts.find(y => y.id === +m[1]); if (!k) return err('Not found', 404); const signed = k.status === 'completed' && url.searchParams.get('which') !== 'prepared'; return pdfResp(signed ? k.signed_file : k.prepared_file, `${k.number}${signed ? '-signed' : ''}.pdf`); });
+on('GET', /^\/api\/pos\/contracts\/(\d+)\/document\.pdf$/, (m, b, url) => { const k = D().contracts.find(y => y.id === +m[1]); if (!k) return err('Not found', 404); const signed = k.completed_at && k.signed_file && url.searchParams.get('which') !== 'prepared'; return pdfResp(signed ? k.signed_file : k.prepared_file, `${k.number}${signed ? '-signed' : ''}.pdf`); });
 on('POST', /^\/api\/pos\/contracts$/, async (m, b) => {
   const x = need('pos.create'); if (x) return x;
   const p = JSON.parse(b.get('payload') || '{}'); const s = D().settings;
+  const prev = p.revise_of ? D().contracts.find(y => y.id === +p.revise_of) : null;
+  if (p.revise_of && !prev) return err('The contract you are revising was not found', 404);
+  if (prev?.superseded_by) return err('That version was already replaced. Open the latest version and edit that one.');
   const t = D().templates.find(y => y.id === +p.template_id && y.active); if (!t) return err('Pick a contract template');
   const sale_type = p.sale_type === 'rto' ? 'rto' : 'cash';
   if (t.sale_type !== 'any' && t.sale_type !== sale_type) return err(`"${t.name}" is a ${saleTypeLabel(t.sale_type)} template`);
@@ -269,7 +299,9 @@ on('POST', /^\/api\/pos\/contracts$/, async (m, b) => {
   const pr = q?.pricing || {}, total = Number(pr.total ?? q?.total) || 0;
   const rto = sale_type === 'rto' ? { ...rtoCalc((+pr.subtotal || 0) + (+pr.delivery || 0) || total, p.rto?.term_months, s.rto || DEFAULT_RTO, s.tax_rate, +p.rto?.monthly_override || null), first_payment_date: p.rto?.first_payment_date || '' } : null;
   const cash = { deposit: p.cash?.deposit ?? Math.round(total * (+s.cash_deposit_pct || 0)) / 100 };
-  const id = nextId(), number = 'C-' + (10000 + D().contracts.length + 1);
+  const id = nextId();
+  const revision = prev ? Math.max(...versions(prev).map(v => v.revision)) + 1 : 1;
+  const number = prev ? `${D().contracts.find(y => y.id === groupOf(prev)).number}-R${revision}` : 'C-' + (10000 + D().contracts.filter(y => !y.group_id).length + 1);
   const data = buildData({ q, fq: q ? fmt(q) : null, contact, sale_type, signers: { customer: cust, cobuyer: cob }, rto, cash, custom, user: me(), number, s });
   const getBytes = async k => { const f = b.get(k); return f ? new Uint8Array(await f.arrayBuffer()) : null; };
   let prep; const drawings = await getBytes('drawings');
@@ -281,20 +313,23 @@ on('POST', /^\/api\/pos\/contracts$/, async (m, b) => {
   const signers = [{ id: nextId(), role: 'customer', name: cust.name, email: cust.email, phone: cust.phone, token: tok(), status: 'pending' }];
   if (cob && roles.has('cobuyer')) signers.push({ id: nextId(), role: 'cobuyer', name: cob.name, email: cob.email, phone: cob.phone, token: tok(), status: 'pending' });
   if (roles.has('company')) { const rep = D().users.find(u => u.id === +p.company_signer_id) || me(); signers.push({ id: nextId(), role: 'company', name: rep.name || rep.email, email: rep.email, token: tok(), status: 'pending', user_id: rep.id }); }
-  const k = { id, number, quote_id: q?.id || null, contact_id: contact.id, opportunity_id: opp?.id || null, template_id: t.id, template_name: t.name, sale_type, status: 'draft', data, fields, pages: prep.pages, prepared_file: putFile(prep.bytes), prepared_hash: sha256(prep.bytes), total, dealer_id: q?.dealer_id || null, created_by: me().id, created_at: now(), expires_at: now(-30 * 864e5), signers, events: [] };
-  ev(k, 'Created', `${t.name} · ${saleTypeLabel(sale_type)} · ${usd(total)}`);
+  const k = { id, number, quote_id: q?.id || null, contact_id: contact.id, opportunity_id: opp?.id || null, template_id: t.id, template_name: t.name, sale_type, status: 'draft', data, fields, pages: prep.pages, prepared_file: putFile(prep.bytes), prepared_hash: sha256(prep.bytes), total, dealer_id: q?.dealer_id || null, created_by: me().id, created_at: now(), expires_at: now(-30 * 864e5), signers, events: [],
+    group_id: prev ? groupOf(prev) : null, revision, change_note: prev ? (p.change_note || '') : null,
+    payload: { quote_id: q?.id || null, contact_id: contact.id, template_id: t.id, sale_type, signers: { customer: cust, cobuyer: cob }, company_signer_id: p.company_signer_id || null, custom, rto: p.rto || null, cash: p.cash || null } };
+  ev(k, prev ? `Created as revision ${revision} of ${prev.number}` : 'Created', `${t.name} · ${saleTypeLabel(sale_type)} · ${usd(total)}${prev && p.change_note ? ' · ' + p.change_note : ''}`);
+  if (prev) { prev.prev_status = prev.status; prev.status = 'superseded'; prev.superseded_by = id; prev.superseded_at = now(); ev(prev, 'Replaced by a revised version', `${number}${p.change_note ? ' · ' + p.change_note : ''} — this version's signing links no longer work`); }
   act(contact.id, 'contract', `Contract ${number} prepared (${saleTypeLabel(sale_type)}, ${usd(total)})`, opp?.id);
   D().contracts.push(k); save(); return json(kView(k), 201);
 });
 function moveSales(oppId, stage, status) { const o = D().opps.find(x => x.id === oppId); if (!o || (o.stage === stage && (!status || o.status === status))) return; o.stage = stage; if (status) o.status = status; o.stage_changed_at = now(); act(o.contact_id, 'stage', `Moved to "${stageOf(pipe('sales'), stage)?.name}"`, o.id); }
 on('POST', /^\/api\/pos\/contracts\/(\d+)\/send$/, (m, b) => {
   const k = D().contracts.find(y => y.id === +m[1]); if (!k) return err('Not found', 404);
-  if (['completed', 'void'].includes(k.status)) return err('This contract is ' + (k.status === 'void' ? 'void' : 'already signed'));
+  if (['completed', 'void', 'superseded'].includes(k.status)) return err(k.status === 'superseded' ? 'This version was replaced. Send the latest version instead.' : 'This contract is ' + (k.status === 'void' ? 'void' : 'already signed'));
   const contact = D().contacts.find(c => c.id === k.contact_id);
   const results = [];
   for (const s of k.signers.filter(z => z.status !== 'signed' && (b.signer_ids ? b.signer_ids.includes(z.id) : z.role !== 'company'))) {
     const ctx = { ...k.data, signer: { first_name: signerFirst(s.name) }, link: signLink(s.token) };
-    if (b.sms !== false && s.phone) { logMsg(s.role === 'customer' ? contact : null, 'sms', fill(D().settings.contract_sms || 'Hi {{signer.first_name}}, your {{company.name}} contract for your {{shed.description}} is ready to sign: {{link}}', ctx), null, k.id); ev(k, 'Signing link texted', `${s.name} · ${s.phone} (demo: not actually sent)`, s.id); results.push({ channel: 'sms', ok: true }); }
+    if (b.sms !== false && s.phone) { logMsg(s.role === 'customer' ? contact : null, 'sms', ((k.revision || 1) > 1 ? 'UPDATED CONTRACT — please use this new link. ' : '') + fill(D().settings.contract_sms || 'Hi {{signer.first_name}}, your {{company.name}} contract for your {{shed.description}} is ready to sign: {{link}}', ctx), null, k.id); ev(k, 'Signing link texted', `${s.name} · ${s.phone} (demo: not actually sent)`, s.id); results.push({ channel: 'sms', ok: true }); }
     if (b.email !== false && s.email) { logMsg(s.role === 'customer' ? contact : null, 'email', `Hi ${signerFirst(s.name)},\n\nYour contract is ready to sign:\n${signLink(s.token)}`, `Please sign: contract ${k.number}`, k.id); ev(k, 'Signing link emailed', `${s.name} · ${s.email} (demo: not actually sent)`, s.id); results.push({ channel: 'email', ok: true }); }
   }
   if (!results.length) return json({ ok: false, results, error: 'Nobody left to send to' }, 400);
@@ -304,26 +339,35 @@ on('POST', /^\/api\/pos\/contracts\/(\d+)\/send$/, (m, b) => {
 });
 on('POST', /^\/api\/pos\/contracts\/(\d+)\/sign-in-person$/, (m, b) => { const k = D().contracts.find(y => y.id === +m[1]); const s = k?.signers.find(z => z.id === +b.signer_id); if (!s) return err('Signer not found', 404); if (k.status === 'draft') k.status = 'sent'; ev(k, 'In-person signing started', `${s.name} (${s.role})`); if (k.opportunity_id && s.role !== 'company') moveSales(k.opportunity_id, 'contract'); save(); return json({ url: signLink(s.token) }); });
 on('PATCH', /^\/api\/pos\/contracts\/(\d+)\/signers\/(\d+)$/, (m, b) => { const k = D().contracts.find(y => y.id === +m[1]); const s = k?.signers.find(z => z.id === +m[2]); if (!s) return err('Signer not found', 404); if (b.email) s.email = b.email; if (b.phone) s.phone = b.phone; save(); return json({ ok: true }); });
-on('POST', /^\/api\/pos\/contracts\/(\d+)\/void$/, (m, b) => { const k = D().contracts.find(y => y.id === +m[1]); if (!k) return err('Not found', 404); k.status = 'void'; k.voided_at = now(); k.void_reason = b.reason || ''; ev(k, 'Voided', b.reason || ''); save(); return json({ ok: true }); });
-on('DELETE', /^\/api\/pos\/contracts\/(\d+)$/, m => { const k = D().contracts.find(y => y.id === +m[1]); if (k?.status === 'completed') return err("Signed contracts can't be deleted. Void it instead."); D().contracts = D().contracts.filter(y => y !== k); save(); return json(null, 204); });
+on('POST', /^\/api\/pos\/contracts\/(\d+)\/void$/, (m, b) => { const k = D().contracts.find(y => y.id === +m[1]); if (!k) return err('Not found', 404); if (k.status === 'superseded') return err('This version was already replaced by a newer one.'); k.status = 'void'; k.voided_at = now(); k.void_reason = b.reason || ''; ev(k, 'Voided', b.reason || ''); save(); return json({ ok: true }); });
+on('DELETE', /^\/api\/pos\/contracts\/(\d+)$/, m => {
+  const k = D().contracts.find(y => y.id === +m[1]); if (!k) return err('Not found', 404);
+  if (k.completed_at) return err("Signed contracts can't be deleted. Void it instead.");
+  if (k.status === 'superseded') return err('Earlier versions are kept as a record and cannot be deleted.');
+  D().contracts = D().contracts.filter(y => y !== k);
+  const r = D().contracts.find(y => y.superseded_by === k.id); if (r) { r.status = r.prev_status || 'draft'; r.superseded_by = null; r.superseded_at = null; ev(r, 'Revision deleted', `${k.number} was deleted, so this version is the latest again`); }
+  save(); return json(null, 204);
+});
 
 // ---- public signing API (sign.html#token) ------------------------------------------
 const bySigner = t => { for (const k of D().contracts) { const s = k.signers.find(z => z.token === t); if (s) return { k, s }; } return null; };
 on('GET', /^\/api\/sign\/([\w-]+)$/, m => {
   const x = bySigner(m[1]); if (!x) return err('This signing link is not valid.', 404); const { k, s } = x; const st = D().settings;
   return json({ company: { name: st.company_name, logo_url: st.logo_url, brand_color: st.brand_color, phone: st.phone },
-    contract: { number: k.number, status: k.status, sale_type: k.sale_type, template_name: k.template_name, shed: k.data?.shed?.description, total: k.data?.pricing?.total, rto: k.sale_type === 'rto' ? k.data?.rto : null, expired: false, void_reason: k.void_reason },
+    contract: { number: k.number, status: k.status, sale_type: k.sale_type, template_name: k.template_name, shed: k.data?.shed?.description, total: k.data?.pricing?.total, rto: k.sale_type === 'rto' ? k.data?.rto : null, expired: false, void_reason: k.void_reason,
+      replaced_by: (() => { if (k.status !== 'superseded') return null; const l = D().contracts.find(y => groupOf(y) === groupOf(k) && !y.superseded_by); const sg = l && l.status !== 'void' && l.signers.find(z => z.role === s.role); return sg ? { number: l.number, link: signLink(sg.token) } : null; })() },
     signer: { role: s.role, name: s.name, status: s.status, signed_at: s.signed_at }, others: k.signers.filter(z => z !== s).map(z => ({ role: z.role, name: z.name, status: z.status })), pages: k.pages,
     fields: k.fields.filter(f => FIELD_TYPES[f.type]?.signer).map(f => ({ ...f, mine: f.role === s.role })),
     consent_text: `I agree to use electronic records and signatures for this agreement with ${st.company_name || 'the seller'}, and that my electronic signature is the legal equivalent of my handwritten signature.`,
     signed_pdf: k.status === 'completed' ? `/api/sign/${s.token}/signed.pdf` : null });
 });
-on('GET', /^\/api\/sign\/([\w-]+)\/document\.pdf$/, m => { const x = bySigner(m[1]); if (!x) return err('Not found', 404); return pdfResp(x.k.status === 'completed' ? x.k.signed_file : x.k.prepared_file, x.k.number + '.pdf'); });
+on('GET', /^\/api\/sign\/([\w-]+)\/document\.pdf$/, m => { const x = bySigner(m[1]); if (!x) return err('Not found', 404); return pdfResp(x.k.completed_at && x.k.signed_file ? x.k.signed_file : x.k.prepared_file, x.k.number + '.pdf'); });
 on('GET', /^\/api\/sign\/([\w-]+)\/signed\.pdf$/, m => { const x = bySigner(m[1]); if (!x || x.k.status !== 'completed') return err('Not everyone has signed yet', 409); return pdfResp(x.k.signed_file, x.k.number + '-signed.pdf'); });
 on('POST', /^\/api\/sign\/([\w-]+)\/viewed$/, m => { const x = bySigner(m[1]); if (x && !x.s.viewed_at && x.s.status !== 'signed') { x.s.viewed_at = now(); x.s.status = 'viewed'; if (x.k.status === 'sent' || x.k.status === 'draft') x.k.status = 'viewed'; ev(x.k, 'Viewed', `${x.s.name} (${x.s.role})`, x.s.id); save(); } return json({ ok: true }); });
 on('POST', /^\/api\/sign\/([\w-]+)\/sign$/, async (m, b) => {
   const x = bySigner(m[1]); if (!x) return err('Not found', 404); const { k, s } = x;
   if (k.status === 'void') return err('This contract was voided and can no longer be signed.', 410);
+  if (k.status === 'superseded') return err('This contract was replaced by an updated version. Please use the newest link you were sent.', 410);
   if (s.status === 'signed') return err('You already signed this contract.', 409);
   if (b.consent !== true) return err('Please agree to sign electronically.');
   for (const f of k.fields.filter(f => FIELD_TYPES[f.type]?.signer && f.role === s.role && f.required && f.type !== 'date_signed')) if (!b.values?.[f.id]) return err('Please complete every highlighted box.');
@@ -337,8 +381,11 @@ on('POST', /^\/api\/sign\/([\w-]+)\/sign$/, async (m, b) => {
   k.signed_file = putFile(bytes); k.signed_hash = sha256(bytes);
   if (k.opportunity_id) moveSales(k.opportunity_id, 'sold', 'won');
   const q = D().quotes.find(y => y.id === k.quote_id); if (q) q.status = 'won';
-  const op = pipe('orders'); const oid = nextId();
-  D().opps.push({ id: oid, order_number: 'O-' + (10000 + D().opps.filter(o => o.pipeline_id === op.id).length + 1), contact_id: k.contact_id, quote_id: k.quote_id, contract_id: k.id, pipeline_id: op.id, stage: op.stages[0].id, status: 'won', title: k.data?.shed?.description || k.template_name, value: k.total, sale_type: k.sale_type, serial_number: k.data?.custom?.serial_number || '', stage_changed_at: now(), created_at: now() });
+  const op = pipe('orders');
+  const prevOrder = D().opps.find(o => o.pipeline_id === op.id && D().contracts.some(c => c.id === o.contract_id && groupOf(c) === groupOf(k)));
+  if (prevOrder) { Object.assign(prevOrder, { contract_id: k.id, title: k.data?.shed?.description || k.template_name, value: k.total, sale_type: k.sale_type }); act(k.contact_id, 'system', `Order ${prevOrder.order_number} updated to revised contract ${k.number}`, prevOrder.id); }
+  const oid = nextId();
+  if (!prevOrder) D().opps.push({ id: oid, order_number: 'O-' + (10000 + D().opps.filter(o => o.pipeline_id === op.id).length + 1), contact_id: k.contact_id, quote_id: k.quote_id, contract_id: k.id, pipeline_id: op.id, stage: op.stages[0].id, status: 'won', title: k.data?.shed?.description || k.template_name, value: k.total, sale_type: k.sale_type, serial_number: k.data?.custom?.serial_number || '', stage_changed_at: now(), created_at: now() });
   act(k.contact_id, 'contract', `Contract ${k.number} signed by all parties`, k.opportunity_id);
   notify('contract', `Contract signed: ${k.data?.customer?.full_name} — ${k.number}`, `${k.data?.shed?.description} · ${saleTypeLabel(k.sale_type)} · ${k.data?.pricing?.total}`, `#/pos/contracts/${k.id}`, 'pos.view');
   ev(k, 'Signed copy emailed', `${k.data?.customer?.full_name} (demo: not actually sent)`);
