@@ -165,6 +165,12 @@ async function route() {
   try { await ROUTES[name](arg, parts.slice(1)); } catch (e) { if (seq === routeSeq) $('#main').innerHTML = `<div class="card card-pad err">${esc(e.message)}</div>`; }
 }
 // one live connection per tab: new leads, texts, signed contracts and board moves show up for everyone signed in
+// the demo has no server stream; its in-browser backend calls this instead
+window.__liveEmit = (type, data = {}) => {
+  if (type === 'notification') { refreshBell(); toast(data.title + (data.body ? ' — ' + data.body : '')); }
+  if (type === 'message' && data.direction === 'in') refreshBell();
+  for (const fn of [...liveHandlers]) { try { fn(type, data); } catch (e) { console.error(e); } }
+};
 function connectLive() {
   if (!window.EventSource || window.__noLive) return;
   const es = new EventSource('/api/crm/stream');
@@ -202,7 +208,7 @@ async function start() {
   try { me = await api('GET', '/api/auth/me'); start(); } catch { showLogin(); }
 })();
 
-export { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, field, readFields, wireInputs, loadCatalog, me, settings, catalog, can, isAdmin, onLive, hashQuery, ROLE_LABEL, CHECK, PENCIL, TRASH, COPY, downloadDrawings, quoteDetail, CONFIG_URL };
+export { planUrl, $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, field, readFields, wireInputs, loadCatalog, me, settings, catalog, can, isAdmin, onLive, hashQuery, ROLE_LABEL, CHECK, PENCIL, TRASH, COPY, downloadDrawings, quoteDetail, CONFIG_URL };
 export function head(title, sub, actions = '') { return `<div class="head"><div><h1>${esc(title)}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="row">${actions}</div></div>`; }
 
 // ---------------------------------------------------------------------------

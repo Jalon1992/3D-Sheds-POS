@@ -370,6 +370,6 @@ render.yaml, Dockerfile      Deployment
 
 ## Notes
 - E-signatures: each signer gets a unique link, agrees to an ESIGN/UETA consent, and every view/sign is logged with time, IP and device on the certificate. This is the standard approach for e-signing sales contracts, but it is not legal advice — have your attorney approve your templates and your rent-to-own disclosures for your state.
-- The try-it-now demo covers the 3D builder and catalog only; the CRM, point of sale and messaging need the real server.
+- The try-it-now demo (`npm run build:demo`) runs everything in the browser, CRM and point of sale included (`demo/dist/artifact/` is the claude.ai artifact bundle). Data stays in that browser; texts and emails are only logged.
 - Prices shown are a quote, not a contract — tax and delivery are configurable in Settings; hide prices entirely with *Show prices to customers* off.
 - The GoHighLevel native push uses the LeadConnector API v2 (`/contacts/upsert`, `/opportunities/`, `/contacts/{id}/notes`, header `Version: 2021-07-28`). If GHL changes scopes or endpoints, check **Integrations → Delivery log** for the exact response.

@@ -3,7 +3,8 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const token = decodeURIComponent(location.pathname.split('/sign/')[1] || '').replace(/\/.*$/, '');
+// the live app uses /sign/<token>; the demo uses sign.html#<token>
+const token = decodeURIComponent(location.pathname.split('/sign/')[1] || location.hash.slice(1) || '').replace(/\/.*$/, '');
 const API = `/api/sign/${encodeURIComponent(token)}`;
 const ROLE = { customer: 'Customer', cobuyer: 'Co-buyer', company: 'Seller' };
 let info, values = {}, sigPng = null, initPng = null;
@@ -49,8 +50,9 @@ async function boot() {
 }
 
 async function renderPages() {
-  const lib = await import('/vendor/pdfjs/pdf.min.mjs');
-  lib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+  const pf = window.__pdfjsFiles || { lib: '/vendor/pdfjs/pdf.min.mjs', worker: '/vendor/pdfjs/pdf.worker.min.mjs' };
+  const lib = await import(/* webpackIgnore: true */ pf.lib);
+  lib.GlobalWorkerOptions.workerSrc = pf.worker;
   const buf = await (await fetch(API + '/document.pdf')).arrayBuffer();
   const doc = await lib.getDocument({ data: buf }).promise;
   const host = $('#pages'); host.innerHTML = '';

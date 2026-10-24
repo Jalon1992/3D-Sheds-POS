@@ -16,18 +16,8 @@ const now = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 // ---------------------------------------------------------------------------
 // Pipelines
 // ---------------------------------------------------------------------------
-export const DEFAULT_SALES_STAGES = [
-  { id: 'new', name: 'New lead' }, { id: 'contacted', name: 'Contacted' }, { id: 'quoted', name: 'Quote sent' },
-  { id: 'contract', name: 'Contract sent' }, { id: 'sold', name: 'Sold' },
-];
-export const DEFAULT_ORDER_STAGES = [
-  { id: 'sold', name: 'Sold – waiting to build', group: 'production' },
-  { id: 'in_production', name: 'In production', group: 'production' },
-  { id: 'built', name: 'Built – ready to deliver', group: 'production', handoff: true },
-  { id: 'scheduled', name: 'Delivery scheduled', group: 'delivery' },
-  { id: 'out', name: 'Out for delivery', group: 'delivery' },
-  { id: 'delivered', name: 'Delivered', group: 'delivery' },
-];
+import { DEFAULT_SALES_STAGES, DEFAULT_ORDER_STAGES } from '../public/js/shared/stages.js';
+export { DEFAULT_SALES_STAGES, DEFAULT_ORDER_STAGES };
 export function seedCRM() {
   if (!get('SELECT id FROM pipelines LIMIT 1')) {
     run("INSERT INTO pipelines (name, kind, stages, sort) VALUES ('Sales', 'sales', ?, 0)", JSON.stringify(DEFAULT_SALES_STAGES));

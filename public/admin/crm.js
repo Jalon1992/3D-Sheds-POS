@@ -1,6 +1,6 @@
 // CRM pages: contacts, contact record (two-way text/email), conversations inbox, pipeline board,
 // tasks, the production & delivery board, and Messaging & alerts settings.
-import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, head, me, settings, can, isAdmin, onLive, hashQuery, downloadDrawings, CONFIG_URL, TRASH, COPY } from './admin.js';
+import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, head, me, settings, can, isAdmin, onLive, hashQuery, downloadDrawings, CONFIG_URL, TRASH, COPY , planUrl } from './admin.js';
 
 const SOURCES = ['Manual', 'Walk-in', 'Phone call', 'Website', 'Facebook', 'Google', 'Referral', 'Repeat customer', 'Other'];
 const initials = c => (((String(c.first_name || c.email || c.phone || '?').trim()[0]) || '?') + ((String(c.last_name || '').trim()[0]) || '')).toUpperCase();
@@ -479,7 +479,7 @@ function orderModal(o, pipe, all, done) {
         ${o.phone ? `<a class="btn ghost sm" href="tel:${esc(tel(o.phone))}">Call ${esc(o.first_name || '')}</a>` : ''}
         ${addr ? `<a class="btn ghost sm" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}">Directions ↗</a>` : ''}
         ${can('crm.view') ? `<a class="btn ghost sm" href="#/crm/contacts/${o.contact_id}" data-close>Open in CRM</a>` : ''}</div>
-      ${o.quote_id ? `<div class="plan-prev"><img src="/api/v1/quotes/${o.quote_id}/floorplan.svg" alt="Floor plan"></div>` : ''}
+      ${o.quote_id ? `<div class="plan-prev"><img src="${planUrl(o.quote_id)}" alt="Floor plan"></div>` : ''}
       ${can('orders.message') && o.phone ? `<div class="card card-pad" style="margin-top:14px"><h3 style="margin:0 0 8px;font-size:14px">Text ${esc(o.first_name || 'customer')}</h3>
         <div class="row" style="margin-bottom:8px"><button class="btn ghost sm" data-quick="Hi {{contact.first_name}}, this is ${esc(me.name || '')} with ${esc(settings.company_name || '')}. Your building is scheduled for delivery ${esc(o.delivery_date || 'soon')}${o.delivery_window ? ' (' + esc(o.delivery_window) + ')' : ''}.">Delivery date</button>
           <button class="btn ghost sm" data-quick="Hi {{contact.first_name}}, we're on the way with your building! See you soon.">On the way</button>

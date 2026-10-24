@@ -1,6 +1,6 @@
 // Point of sale: contracts, the new-contract wizard (Cash / Rent to Own), contract detail (send by text/email,
 // sign in person, download), contract templates + the drag-and-drop field designer, and POS settings.
-import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, head, me, settings, can, isAdmin, onLive, hashQuery, loadCatalog, catalog, COPY, TRASH } from './admin.js';
+import { $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, head, me, settings, can, isAdmin, onLive, hashQuery, loadCatalog, catalog, COPY, TRASH , planUrl } from './admin.js';
 import { buildDrawingPackage, render3D, floorPlanPNG } from '../js/drawings.js';
 import { FIELD_TYPES, SIGNER_ROLES, TAGS, tagLabel, rtoCalc, usd, saleTypeLabel, DEFAULT_RTO } from '../js/shared/contract.js';
 
@@ -94,7 +94,7 @@ async function wizard() {
   const renderQuote = async () => {
     const q = S.quote;
     if (q) {
-      $('#wQuote').innerHTML = `<div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px"><div class="plan-prev" style="width:200px;flex:none"><img src="/api/v1/quotes/${q.id}/floorplan.svg" alt=""></div>
+      $('#wQuote').innerHTML = `<div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px"><div class="plan-prev" style="width:200px;flex:none"><img src="${planUrl(q.id)}" alt=""></div>
         <div style="flex:1;min-width:0"><b style="font-size:16px">${esc(q.shed.style)} ${esc(q.shed.size)}</b><div class="muted">${esc(q.number)} · ${esc(q.customer.full_name)} · ${fmt(q.pricing.total)}</div>
         <div class="muted" style="font-size:12.5px;margin-top:6px">${esc(q.options.filter(o => !o.name.startsWith('Removed')).map(o => o.name).join(', ') || 'No options')}</div>
         <div class="row" style="margin-top:10px"><a class="btn ghost sm" href="${esc(q.links.view_3d)}" target="_blank">Open in 3D ↗</a><button class="btn ghost sm" id="wPick">Use a different design</button></div></div></div>`;
@@ -349,9 +349,9 @@ async function uploadPdf(url, file, extra = {}, progress = () => {}) {
 let pdfjs = null;
 async function loadPdfjs() {
   if (pdfjs) return pdfjs;
-  const src = '/vendor/pdfjs/pdf.min.mjs';
-  pdfjs = await import(/* webpackIgnore: true */ src);
-  pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+  const f = window.__pdfjsFiles || { lib: '/vendor/pdfjs/pdf.min.mjs', worker: '/vendor/pdfjs/pdf.worker.min.mjs' };
+  pdfjs = await import(/* webpackIgnore: true */ f.lib);
+  pdfjs.GlobalWorkerOptions.workerSrc = f.worker;
   return pdfjs;
 }
 async function previewPdf(host, url) {

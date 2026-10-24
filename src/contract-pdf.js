@@ -81,7 +81,8 @@ async function drawImageBox(pdf, page, f, bytes, kind) {
   const [x, y] = a.at(dx, (a.vh - h) / 2);
   page.drawImage(img, { x, y, width: w, height: h, rotate: degrees(a.r) });
 }
-const dataUrlBytes = (u, kind) => { const m = String(u || '').match(new RegExp(`^data:image/${kind === 'png' ? 'png' : 'jpe?g'};base64,(.+)$`)); return m ? Buffer.from(m[1], 'base64') : null; };
+const b64 = s => (typeof Buffer !== 'undefined' ? Buffer.from(s, 'base64') : Uint8Array.from(atob(s), c => c.charCodeAt(0)));
+const dataUrlBytes = (u, kind) => { const m = String(u || '').match(new RegExp(`^data:image/${kind === 'png' ? 'png' : 'jpe?g'};base64,(.+)$`)); return m ? b64(m[1]) : null; };
 
 /**
  * Template + auto-filled info + images + appended drawing sheets → the document customers sign.
