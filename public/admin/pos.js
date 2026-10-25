@@ -240,6 +240,8 @@ async function wizard(reviseId = null) {
     const err = $('#wErr'); err.hidden = true;
     const fail = m => { err.textContent = m; err.hidden = false; };
     if (!S.template_id) return fail('Pick a contract template.');
+    if (S.sale_type === 'cash' && S.deposit != null && (S.deposit < 0 || (total() > 0 && S.deposit > total()))) return fail(`The deposit must be between $0 and the total (${fmt(total())}).`);
+    if (S.sale_type === 'rto' && $('#rOver')?.value && !(Number($('#rOver').value) > 0)) return fail('The monthly override must be more than $0, or leave it blank to use the rate sheet.');
     if (!$('#sName').value.trim()) return fail("Enter the customer's name.");
     if (!$('#sPhone').value.trim() && !$('#sEmail').value.trim()) return fail('Enter a mobile number or email so the customer can get the signing link.');
     if (!S.quote && !confirmBox('No 3D design picked. Create the contract without the rendering, floor plan and elevations?')) return;

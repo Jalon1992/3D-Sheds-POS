@@ -365,7 +365,11 @@ Prices are always recalculated on the server, so a tampered browser can't submit
 
 ```bash
 npm test            # API + provider suites: CRM, contracts & signing, revisions, reports, roles, lots, concurrency, and real
-                    # Twilio / GoHighLevel requests (stand-in API) and real email (local SMTP server)
+                    # Twilio / GoHighLevel requests (stand-in API) and real email (local SMTP server), plus pricing
+                    # (units, swaps, credits, tax, tiers by lot/ZIP, tampering), configurator settings, 3D model uploads,
+                    # API keys + catalog CRUD, signed webhooks with retries, the GoHighLevel push, auto-replies and a full sale
+npm run test:browser # 3D configurator in a real browser: uploaded .glb models render, price on screen = server price for
+                    # every style, hidden prices / currency / required phone show on the page, settings pages don't clash
 npm run test:e2e    # browser walkthrough: 4 roles at once, phone signing, revisions, dashboard (needs Playwright + Chromium)
 npm run test:sweep  # bug sweep: every page x every role x desktop/phone, script-injection attempts, accented PDFs,
                     # double submits, expired links, oversized uploads, deleted users, restart

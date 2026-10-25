@@ -11,7 +11,8 @@
     "start": "node --disable-warning=ExperimentalWarning server.js",
     "postinstall": "node scripts/copy-vendor.js",
     "build:demo": "node demo/build.mjs",
-    "test": "node --test tests/api.test.mjs tests/messaging.test.mjs",
+    "test": "node --test tests/api.test.mjs tests/messaging.test.mjs tests/full.test.mjs",
+    "test:browser": "node tests/browser.cjs",
     "test:e2e": "node tests/e2e.cjs",
     "test:messaging": "node --test tests/messaging.test.mjs",
     "test:sweep": "node --disable-warning=ExperimentalWarning tests/sweep.cjs"

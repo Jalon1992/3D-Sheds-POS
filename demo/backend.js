@@ -118,6 +118,7 @@ on('POST', /^\/api\/v1\/quotes$/, (m, b) => {
   const cu = b.customer || {};
   if (pos.pos) { if (!pos.contact_id && !cu.first_name) return err('first_name is required'); if (!pos.contact_id && !cu.email && !cu.phone) return err("Enter the customer's email or mobile"); }
   else if (!cu.first_name || !cu.email) return err('first_name and email are required');
+  else if (!v && db.settings.require_phone && !String(cu.phone || '').trim()) return err('phone is required');
   try { const q = createQuote(cfg, cu, v ? `Dealer configurator — ${v.name}` : b.source, pos); logEvent('quote.created', q); return json(v || pricesPublic() ? fmt(q) : hideQuotePrices(fmt(q)), 201); }
   catch (e) { return err(e.message); }
 });

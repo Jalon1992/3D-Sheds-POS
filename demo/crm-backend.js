@@ -313,7 +313,10 @@ on('POST', /^\/api\/pos\/contracts$/, async (m, b) => {
   const custom = { ...(p.custom || {}) };
   const pr = q?.pricing || {}, total = Number(pr.total ?? q?.total) || 0;
   const rto = sale_type === 'rto' ? { ...rtoCalc((+pr.subtotal || 0) + (+pr.delivery || 0) || total, p.rto?.term_months, s.rto || DEFAULT_RTO, s.tax_rate, +p.rto?.monthly_override || null), first_payment_date: p.rto?.first_payment_date || '' } : null;
-  const cash = { deposit: p.cash?.deposit ?? Math.round(total * (+s.cash_deposit_pct || 0)) / 100 };
+  const cash = { deposit: p.cash?.deposit != null && p.cash.deposit !== '' ? Number(p.cash.deposit) : Math.round(total * (+s.cash_deposit_pct || 0)) / 100 };
+  if (sale_type === 'cash' && (!Number.isFinite(cash.deposit) || cash.deposit < 0)) return err("The deposit can't be negative.");
+  if (sale_type === 'cash' && total > 0 && cash.deposit > total + 0.005) return err(`The deposit ($${cash.deposit.toFixed(2)}) is more than the contract total ($${total.toFixed(2)}).`);
+  if (sale_type === 'rto' && p.rto?.monthly_override != null && p.rto.monthly_override !== '' && !(Number(p.rto.monthly_override) > 0)) return err('The monthly payment override must be more than $0.');
   const id = nextId();
   const revision = prev ? Math.max(...versions(prev).map(v => v.revision)) + 1 : 1;
   const number = prev ? `${D().contracts.find(y => y.id === groupOf(prev)).number}-R${revision}` : 'C-' + (10000 + D().contracts.filter(y => !y.group_id).length + 1);

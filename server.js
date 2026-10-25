@@ -2,7 +2,7 @@
 import express from 'express';
 import multer from 'multer';
 import crypto from 'node:crypto';
-import { mkdirSync, unlinkSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, readFileSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -83,7 +83,8 @@ app.post('/api/v1/price', (req, res) => {
   if (!canSeePrices(req)) return bad(res, 'Prices are not shown publicly. Send an API key to price a configuration.', 403);
   try {
     const cat = getCatalog();
-    const cfg = sanitizeConfig(cat, req.body);
+    const v = dealerViewer(req); // lot staff always price for their own lot, same as their quotes
+    const cfg = sanitizeConfig(cat, v?.dealer_id && req.body && typeof req.body === 'object' ? { ...req.body, dealer_id: v.dealer_id } : req.body);
     const p = priceConfig(cat, cfg);
     delete p.style; res.json({ ...p, size: { width: p.size?.width, depth: p.size?.depth } });
   } catch (e) { bad(res, e.message); }
@@ -112,6 +113,7 @@ app.post('/api/v1/quotes', (req, res, next) => (readSession(req) ? next() : quot
     if (!customer.first_name) return bad(res, 'first_name is required');
     if (!posContact && !customer.email && !customer.phone) return bad(res, 'Enter the customer\'s email or mobile');
   } else if (!customer.first_name || !customer.email) return bad(res, 'first_name and email are required');
+  else if (!viewer && getSettings().require_phone && !String(customer.phone || '').trim() && !readApiKey(req)) return bad(res, 'phone is required');
   if (customer.email && !/^\S+@\S+\.\S+$/.test(customer.email)) return bad(res, 'email looks invalid');
   const cat = getCatalog();
   let cfg, pricing;
@@ -461,6 +463,16 @@ const upload = multer({
 });
 admin.post('/upload', upload.single('file'), (req, res) => {
   if (!req.file) return bad(res, 'Upload a .glb model or an image (png/jpg/webp/svg)');
+  // a renamed or broken file would upload fine and then silently not show in 3D: check what's really inside
+  const head = Buffer.alloc(12); try { const fd = openSync(req.file.path, 'r'); readSync(fd, head, 0, 12, 0); closeSync(fd); } catch { /* empty file */ }
+  const ext = extname(req.file.originalname).toLowerCase();
+  const okType = ext === '.glb' ? head.toString('latin1', 0, 4) === 'glTF'
+    : ext === '.gltf' ? (() => { try { return !!JSON.parse(readFileSync(req.file.path, 'utf8')).asset; } catch { return false; } })()
+    : ext === '.png' ? head.readUInt32BE(0) === 0x89504e47
+    : ext === '.jpg' || ext === '.jpeg' ? head[0] === 0xff && head[1] === 0xd8
+    : ext === '.webp' ? head.toString('latin1', 0, 4) === 'RIFF' && head.toString('latin1', 8, 12) === 'WEBP'
+    : ext === '.svg' ? /<svg[\s>]/i.test(readFileSync(req.file.path, 'utf8').slice(0, 4000)) : false;
+  if (!okType) { try { unlinkSync(req.file.path); } catch { /* */ } return bad(res, ext === '.glb' || ext === '.gltf' ? `"${req.file.originalname}" isn't a valid 3D model. Export it from your 3D program as glTF Binary (.glb) and upload it again.` : `"${req.file.originalname}" isn't a valid ${ext.slice(1).toUpperCase()} image.`); }
   res.json({ url: '/uploads/' + req.file.filename, name: req.file.originalname, size: req.file.size });
 });
 admin.delete('/upload', (req, res) => {

@@ -324,6 +324,9 @@ export function posRouter({ baseUrl }) {
     const rtoCfg = s.rto || DEFAULT_RTO;
     const rto = sale_type === 'rto' ? { ...rtoCalc((Number(p.subtotal) || 0) + (Number(p.delivery) || 0) || total, b.rto?.term_months, rtoCfg, s.tax_rate, Number(b.rto?.monthly_override) || null), first_payment_date: String(b.rto?.first_payment_date || '').slice(0, 40) } : null;
     const cash = { deposit: b.cash?.deposit != null && b.cash.deposit !== '' ? Number(b.cash.deposit) : Math.round(total * (Number(s.cash_deposit_pct) || 0)) / 100 };
+    if (sale_type === 'cash' && (!Number.isFinite(cash.deposit) || cash.deposit < 0)) return bad(res, "The deposit can't be negative.");
+    if (sale_type === 'cash' && total > 0 && cash.deposit > total + 0.005) return bad(res, `The deposit ($${cash.deposit.toFixed(2)}) is more than the contract total ($${total.toFixed(2)}).`);
+    if (sale_type === 'rto' && b.rto?.monthly_override != null && b.rto.monthly_override !== '' && !(Number(b.rto.monthly_override) > 0)) return bad(res, 'The monthly payment override must be more than $0.');
     // insert first to get the number
     const group = prev ? (prev.group_id || prev.id) : null;
     const revision = prev ? (get('SELECT MAX(COALESCE(revision, 1)) r FROM contracts WHERE id = ? OR group_id = ?', group, group).r || 1) + 1 : 1;

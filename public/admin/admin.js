@@ -98,8 +98,9 @@ function wireInputs(root, onChange) {
   root.addEventListener('change', guard(async e => {
     const k = e.target.dataset.upload; if (!k || !e.target.files[0]) return onChange && onChange();
     const fd = new FormData(); fd.append('file', e.target.files[0]);
-    root.querySelector(`[data-fn="${k}"]`).textContent = 'Uploading…';
-    const r = await api('POST', '/api/admin/upload', fd);
+    const fnEl = root.querySelector(`[data-fn="${k}"]`), was = fnEl.textContent;
+    fnEl.textContent = 'Uploading…';
+    let r; try { r = await api('POST', '/api/admin/upload', fd); } catch (err) { fnEl.textContent = was; e.target.value = ''; throw err; }
     root.querySelector(`[name="${k}"]`).value = r.url; root.querySelector(`[data-fn="${k}"]`).textContent = r.name;
     toast('Uploaded ' + r.name); onChange && onChange();
   }));
@@ -680,6 +681,7 @@ async function options() {
   $('#main').addEventListener('change', guard(async e => {
     const id = e.target.dataset.glb; if (!id || !e.target.files[0]) return;
     const fd = new FormData(); fd.append('file', e.target.files[0]);
+    const input = e.target; setTimeout(() => { input.value = ''; }, 0); // picking the same file again after a fix still uploads
     toast('Uploading ' + e.target.files[0].name + '…');
     const r = await api('POST', '/api/admin/upload', fd);
     await api('PATCH', `/api/v1/options/${id}`, { model_url: r.url });
