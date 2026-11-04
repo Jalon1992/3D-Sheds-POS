@@ -2,7 +2,7 @@
 
 A self-hosted 3D shed configurator with a **built-in CRM**, a **point of sale with e-signatures** (Cash and Rent-to-Own), **production & delivery boards**, an admin back office, an Open REST API, signed webhooks and a native GoHighLevel integration.
 
-**Want to try it?** Follow [TEST_DRIVE.md](TEST_DRIVE.md).
+**Setting up your own live copy?** Follow [GO_LIVE.md](GO_LIVE.md). **Just want to try it?** Follow [TEST_DRIVE.md](TEST_DRIVE.md).
 
 **New in 2.0** — see [Point of sale](#point-of-sale-contracts--e-signature), [CRM](#crm), [Texting & email](#texting--email-setup), [Team roles](#team-roles--drawing-packages) and [Testing](#testing).
 - Every 3D submission lands in the CRM as a contact + deal. Add walk-ins and phone leads by hand. Two-way texting and email, notes, tasks, saved replies, a drag-and-drop pipeline, and live updates for everyone signed in.
