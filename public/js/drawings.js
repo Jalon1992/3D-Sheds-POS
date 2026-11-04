@@ -3,6 +3,7 @@
 import { ShedScene } from './shed3d.js';
 import { floorPlanSVG } from './shared/floorplan.js';
 import { elevationSVG } from './shared/elevations.js';
+import { DRAWING_INITIALS_BOX } from './shared/contract.js';
 
 function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Could not load ' + src)); document.head.appendChild(s); }); }
 async function loadPdfLibs() {
@@ -44,11 +45,19 @@ function frame(doc, meta, title, n, total) {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...MUTED);
   doc.text([meta.company, `${meta.quote}${meta.customer ? ' · ' + meta.customer : ''}`].filter(Boolean).join('   ·   '), m, y + 19);
   doc.text(`${meta.shed}   ·   ${meta.date}`, w / 2, y + 19, { align: 'center' });
-  doc.text(`Sheet ${n} of ${total}`, w - m, y + 6, { align: 'right' });
-  doc.text('Dimensions are nominal. Verify on site before building.', w - m, y + 19, { align: 'right' });
+  // contract copies get a "Customer initials" box at the right end of the title block
+  const rx = meta.initials ? DRAWING_INITIALS_BOX.x * w - 12 : w - m;
+  doc.text(`Sheet ${n} of ${total}`, rx, y + 6, { align: 'right' });
+  if (meta.initials) { doc.setFontSize(6.5); doc.text('Dimensions are nominal. Verify on site before building.', w / 2, y + 28, { align: 'center' }); doc.setFontSize(8.5); }
+  else doc.text('Dimensions are nominal. Verify on site before building.', rx, y + 19, { align: 'right' });
+  if (meta.initials) {
+    const b = DRAWING_INITIALS_BOX;
+    doc.setDrawColor(...INK); doc.setLineWidth(0.6); doc.rect(b.x * w, b.y * h, b.w * w, b.h * h);
+    doc.setFontSize(6.5); doc.setTextColor(...MUTED); doc.text('CUSTOMER APPROVAL (INITIALS)', b.x * w + 3, b.y * h + 7);
+  }
 }
 
-async function render3D(catalog, config) {
+export async function render3D(catalog, config) {
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;left:-4000px;top:0;width:1200px;height:800px';
   document.body.appendChild(host);
@@ -66,7 +75,7 @@ async function render3D(catalog, config) {
  * @param quote   formatted quote (as returned by GET /api/v1/quotes/:id) incl. config + pricing_lines
  * @returns Blob (application/pdf)
  */
-export async function buildDrawingPackage(catalog, quote, { company = '', withPricing = false, terms = '', showTier = false, money = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } = {}) {
+export async function buildDrawingPackage(catalog, quote, { company = '', withPricing = false, terms = '', showTier = false, initials = false, money = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } = {}) {
   await loadPdfLibs();
   const { jsPDF } = window.jspdf || {};
   if (!jsPDF) throw new Error('PDF library failed to load');
@@ -76,7 +85,7 @@ export async function buildDrawingPackage(catalog, quote, { company = '', withPr
   const meta = {
     company, quote: `Quote ${quote.number}`, customer: quote.customer?.full_name || '',
     shed: `${quote.shed.style} ${quote.shed.size}${quote.shed.roofing ? ' · ' + quote.shed.roofing : ''}`,
-    date: new Date().toLocaleDateString('en-US'),
+    date: new Date().toLocaleDateString('en-US'), initials,
   };
   const total = withPricing ? 5 : 4;
   const { w, h, m } = PAGE, area = { x: m, y: m, w: w - 2 * m, h: h - 2 * m - 46 };
@@ -183,4 +192,17 @@ export async function buildDrawingPackage(catalog, quote, { company = '', withPr
     frame(doc, meta, `${pair[0].toUpperCase()} & ${pair[1].toUpperCase()} ELEVATIONS`, sheet + i, total);
   }
   return doc.output('blob');
+}
+
+/** Floor plan as a PNG data URL (for placing on a contract page). */
+export async function floorPlanPNG(catalog, quote, scale = 2) {
+  const markup = floorPlanSVG(catalog, quote.config, { customer: quote.customer, quote_number: quote.number });
+  const el = new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement;
+  const vb = el.viewBox?.baseVal; const W = Math.round((vb?.width || 1000) * scale), H = Math.round((vb?.height || 700) * scale);
+  el.setAttribute('width', W); el.setAttribute('height', H);
+  const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(el));
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Could not draw the floor plan')); i.src = url; });
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.drawImage(img, 0, 0, W, H);
+  return cv.toDataURL('image/png');
 }

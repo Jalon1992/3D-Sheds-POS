@@ -74,10 +74,10 @@ function flatForGHL(d) {
 
 function pick(obj, path) { return path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj); }
 
-const GHL_BASE = 'https://services.leadconnectorhq.com';
+const GHL_BASE = () => (process.env.GHL_API_BASE || 'https://services.leadconnectorhq.com').replace(/\/$/, '');
 
 async function ghl(method, path, token, body) {
-  const r = await fetch(GHL_BASE + path, {
+  const r = await fetch(GHL_BASE() + path, {
     method,
     headers: { Authorization: `Bearer ${token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' },
     body: body ? JSON.stringify(body) : undefined,

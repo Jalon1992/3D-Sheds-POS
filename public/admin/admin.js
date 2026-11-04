@@ -3,6 +3,9 @@ import { ShedScene, BUILTIN_KINDS } from '../js/shed3d.js';
 import { defaultConfig, money, WALLS, DEFAULT_ROOFING, MAX_TIERS, roofingList } from '../js/shared/pricing.js';
 import { shedGeometry, roofSections } from '../js/shared/geometry.js';
 import { buildDrawingPackage } from '../js/drawings.js';
+import { crmContacts, crmConversations, crmPipeline, crmTasks, ordersBoard, messagingPage } from './crm.js';
+import { posPage } from './pos.js';
+import { renderReports } from './reports.js';
 const roofing = () => (Array.isArray(settings.roofing) && settings.roofing.length ? settings.roofing : DEFAULT_ROOFING);
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -46,8 +49,13 @@ async function api(method, url, body) {
   if (!r.ok) throw new Error(data?.error || data || r.statusText);
   return data;
 }
+/** Page-bound element lookup: if the user already left the page, stop quietly instead of throwing a null error. */
+class PageGone extends Error { constructor() { super('page changed'); this.name = 'PageGone'; } }
+function live(sel) { const el = document.querySelector(sel); if (!el) throw new PageGone(); return el; }
+window.addEventListener('unhandledrejection', e => { if (e.reason instanceof PageGone) e.preventDefault(); });
+window.addEventListener('error', e => { if (e.error instanceof PageGone) e.preventDefault(); });
 function toast(msg, bad = false) { const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (bad ? ' bad' : ''); t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 3200); }
-const guard = fn => async (...a) => { try { return await fn(...a); } catch (e) { toast(e.message, true); } };
+const guard = fn => async (...a) => { try { return await fn(...a); } catch (e) { if (!(e instanceof PageGone)) toast(e.message, true); } };
 
 function field(f, v) {
   const full = f.full ? ' full' : '';
@@ -90,8 +98,9 @@ function wireInputs(root, onChange) {
   root.addEventListener('change', guard(async e => {
     const k = e.target.dataset.upload; if (!k || !e.target.files[0]) return onChange && onChange();
     const fd = new FormData(); fd.append('file', e.target.files[0]);
-    root.querySelector(`[data-fn="${k}"]`).textContent = 'Uploading…';
-    const r = await api('POST', '/api/admin/upload', fd);
+    const fnEl = root.querySelector(`[data-fn="${k}"]`), was = fnEl.textContent;
+    fnEl.textContent = 'Uploading…';
+    let r; try { r = await api('POST', '/api/admin/upload', fd); } catch (err) { fnEl.textContent = was; e.target.value = ''; throw err; }
     root.querySelector(`[name="${k}"]`).value = r.url; root.querySelector(`[data-fn="${k}"]`).textContent = r.name;
     toast('Uploaded ' + r.name); onChange && onChange();
   }));
@@ -135,20 +144,58 @@ $('#loginForm').onsubmit = async e => {
 };
 $('#logout').onclick = async () => { await api('POST', '/api/auth/logout'); location.hash = ''; location.reload(); };
 
-const ROUTES = { dashboard, quotes, styles, colors, options, pricing: pricingPage, integrations, settings: settingsPage, account };
-const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', production: 'Production' };
+const ROUTES = { dashboard, quotes, crm: crmContacts, conversations: crmConversations, pipeline: crmPipeline, tasks: crmTasks, pos: posPage, orders: ordersBoard,
+  templates: (arg, rest) => posPage('templates', ['templates', ...rest]), 'pos-settings': () => posPage('settings'),
+  styles, colors, options, pricing: pricingPage, integrations, messaging: messagingPage, settings: settingsPage, 'configurator-settings': configuratorSettingsPage, account };
+const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', production: 'Production', delivery: 'Delivery' };
 const isAdmin = () => (me?.role || 'admin') === 'admin';
 const canEditQuotes = () => ['admin', 'sales'].includes(me?.role || 'admin');
-const ROLE_PAGES = { sales: ['quotes', 'account'], production: ['quotes', 'account'] };
+const ROLE_PAGES = { sales: ['crm', 'conversations', 'pipeline', 'tasks', 'pos', 'templates', 'quotes', 'orders', 'account'], production: ['orders', 'quotes', 'account'], delivery: ['orders', 'account'] };
+const HOME = { admin: 'dashboard', sales: 'crm', production: 'orders', delivery: 'orders' };
 const allowed = name => isAdmin() || (ROLE_PAGES[me.role] || []).includes(name);
+const can = perm => (me?.permissions || []).includes(perm);
+/** Live updates: pages register handlers here; they're dropped on every route change. */
+const liveHandlers = new Set();
+function onLive(fn) { liveHandlers.add(fn); }
+const hashQuery = () => new URLSearchParams(location.hash.split('?')[1] || '');
+let routeSeq = 0;
 async function route() {
-  const [r, arg] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
-  let name = ROUTES[r] ? r : (isAdmin() ? 'dashboard' : 'quotes');
-  if (!allowed(name)) name = 'quotes';
+  const parts = location.hash.replace(/^#\/?/, '').split('?')[0].split('/').map(decodeURIComponent);
+  const r = parts[0], arg = parts[1];
+  const home = HOME[me?.role || 'admin'] || 'quotes';
+  let name = ROUTES[r] ? r : home;
+  if (!allowed(name)) name = home;
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === name));
+  liveHandlers.clear();
+  if ($('#modal').open) closeModal(); // a dialog left open must not cover the next page (Back button, links)
+  const seq = ++routeSeq;
   const old = $('#main'), fresh = old.cloneNode(false); old.replaceWith(fresh); // drop old listeners
   $('#main').innerHTML = '<div class="empty">Loading…</div>';
-  try { await ROUTES[name](arg); } catch (e) { $('#main').innerHTML = `<div class="card card-pad err">${esc(e.message)}</div>`; }
+  try { await ROUTES[name](arg, parts.slice(1)); } catch (e) { if (seq === routeSeq && !(e instanceof PageGone)) $('#main').innerHTML = `<div class="card card-pad err">${esc(e.message)}</div>`; }
+}
+// one live connection per tab: new leads, texts, signed contracts and board moves show up for everyone signed in
+// the demo has no server stream; its in-browser backend calls this instead
+window.__liveEmit = (type, data = {}) => {
+  if (type === 'notification') { refreshBell(); toast(data.title + (data.body ? ' — ' + data.body : '')); }
+  if (type === 'message' && data.direction === 'in') refreshBell();
+  for (const fn of [...liveHandlers]) { try { fn(type, data); } catch (e) { console.error(e); } }
+};
+function connectLive() {
+  if (!window.EventSource || window.__noLive) return;
+  const es = new EventSource('/api/crm/stream');
+  for (const type of ['contact', 'message', 'opportunity', 'contract', 'notification']) es.addEventListener(type, ev => {
+    let data = {}; try { data = JSON.parse(ev.data); } catch { /* */ }
+    if (type === 'notification') { refreshBell(); toast(data.title + (data.body ? ' — ' + data.body : '')); }
+    if (type === 'message' && data.direction === 'in') refreshBell();
+    for (const fn of [...liveHandlers]) { try { fn(type, data); } catch (e) { console.error(e); } }
+  });
+}
+async function refreshBell() {
+  try {
+    const n = await api('GET', '/api/crm/notifications');
+    $('#bellCount').textContent = n.unread > 99 ? '99+' : n.unread; $('#bellCount').hidden = !n.unread;
+    $('#bellList').innerHTML = n.data.length ? n.data.map(x => `<a class="bell-item ${x.read ? '' : 'unread'}" href="${esc(x.link || '#')}"><b>${esc(x.title)}</b>${x.body ? `<span>${esc(x.body)}</span>` : ''}<small>${fmtDate(x.created_at)}</small></a>`).join('') : '<div class="empty" style="padding:20px">Nothing yet</div>';
+  } catch { /* offline */ }
 }
 async function loadCatalog() { catalog = await api('GET', '/api/admin/catalog'); return catalog; }
 async function start() {
@@ -157,6 +204,9 @@ async function start() {
   $$('#nav a').forEach(a => { a.hidden = !allowed(a.dataset.r); });
   $$('#nav .nav-h').forEach(h => { let n = h.nextElementSibling, any = false; while (n && !n.classList.contains('nav-h')) { if (n.tagName === 'A' && !n.hidden) any = true; n = n.nextElementSibling; } h.hidden = !any; });
   if (!isAdmin()) $('#sideName').insertAdjacentHTML('afterend', `<span class="pill" style="margin-left:6px">${ROLE_LABEL[me.role]}</span>`);
+  $('#bellBtn').onclick = e => { e.stopPropagation(); const open = $('#bellPanel').hidden; $('#bellPanel').hidden = !open; if (open) { refreshBell(); api('POST', '/api/crm/notifications/read').then(() => { $('#bellCount').hidden = true; }).catch(() => {}); } };
+  document.addEventListener('click', e => { if (!e.target.closest('#bellPanel')) $('#bellPanel').hidden = true; });
+  refreshBell(); connectLive();
   settings = await api('GET', '/api/admin/settings');
   $('#sideName').textContent = settings.company_name || 'Shed Builder';
   if (settings.brand_color) document.documentElement.style.setProperty('--brand', settings.brand_color);
@@ -167,38 +217,31 @@ async function start() {
   try { me = await api('GET', '/api/auth/me'); start(); } catch { showLogin(); }
 })();
 
-function head(title, sub, actions = '') { return `<div class="head"><div><h1>${esc(title)}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="row">${actions}</div></div>`; }
+export { live, PageGone, planUrl, $, $$, esc, api, toast, guard, openModal, closeModal, confirmBox, fmt, fmtDate, saveFile, field, readFields, wireInputs, loadCatalog, me, settings, catalog, can, isAdmin, onLive, hashQuery, ROLE_LABEL, CHECK, PENCIL, TRASH, COPY, downloadDrawings, quoteDetail, CONFIG_URL };
+export function head(title, sub, actions = '') { return `<div class="head"><div><h1>${esc(title)}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="row">${actions}</div></div>`; }
 
 // ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
 async function dashboard() {
   const [s, keys, hooks] = await Promise.all([api('GET', '/api/admin/stats'), api('GET', '/api/admin/api-keys'), api('GET', '/api/v1/webhooks')]);
-  const days = []; for (let i = 29; i >= 0; i--) { const d = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10); days.push([d, s.daily.find(x => x.d === d)?.n || 0]); }
-  const max = Math.max(1, ...days.map(d => d[1]));
-  const won = s.byStatus.find(x => x.status === 'won')?.n || 0;
   const checks = [
     [settings.company_name && settings.company_name !== 'Your Shed Co.', 'Add your company name, logo and brand color', '#/settings'],
     [me.email !== 'admin@example.com', 'Change the default admin login', '#/account'],
-    [settings.ghl_enabled || settings.ghl_inbound_webhook_url, 'Connect GoHighLevel', '#/integrations'],
-    [hooks.length > 0 || keys.length > 0, 'Add a webhook or API key for other software', '#/integrations/webhooks'],
+    [settings.sms_provider || settings.email_provider, 'Connect texting and email', '#/messaging'],
+    [settings.ghl_enabled || settings.ghl_inbound_webhook_url, 'Connect GoHighLevel (optional)', '#/integrations'],
     [true, 'Review styles, sizes and prices', '#/styles'],
   ];
   $('#main').innerHTML = head('Dashboard', `Welcome back${me.name ? ', ' + esc(me.name) : ''}.`, `<a class="btn ghost" href="${CONFIG_URL}" target="_blank" title="Opens the dealer-facing configurator: prices always shown">Open configurator (dealer mode) ↗</a>`) + `
-  <div class="grid g4">
-    <div class="card card-pad stat"><div class="lbl">Quotes (30 days)</div><div class="val">${s.last30}</div></div>
-    <div class="card card-pad stat"><div class="lbl">Quoted value (30 days)</div><div class="val">${fmt(s.value30)}</div></div>
-    <div class="card card-pad stat"><div class="lbl">All-time quotes</div><div class="val">${s.total}</div></div>
-    <div class="card card-pad stat"><div class="lbl">Won</div><div class="val">${won}</div></div>
-  </div>
+  <div id="reports"><div class="empty">Loading reports…</div></div>
   <div class="grid g2" style="margin-top:16px">
-    <div class="card card-pad"><h2>Quotes per day</h2><p class="muted" style="margin:0">Last 30 days</p>
-      <div class="bars">${days.map(([d, n]) => `<div style="height:${(n / max) * 100}%" title="${d}: ${n}"></div>`).join('')}</div></div>
     <div class="card card-pad"><h2>Getting set up</h2>${checks.map(([ok, t, href]) => `<a class="check ${ok ? 'done' : ''}" href="${href}" style="color:inherit;text-decoration:none"><span class="dot">${ok ? CHECK : ''}</span><span>${t}</span></a>`).join('')}</div>
-  </div>
-  <div class="card" style="margin-top:16px"><div class="card-pad" style="padding-bottom:6px"><h2>Popular styles</h2></div>
-    ${s.byStyle.length ? `<table class="tbl"><tr><th>Style</th><th class="num">Quotes</th><th class="num">Avg. price</th></tr>${s.byStyle.map(r => `<tr><td>${esc(r.style_name)}</td><td class="num">${r.n}</td><td class="num">${fmt(r.avg)}</td></tr>`).join('')}</table>` : '<div class="empty">No quotes yet.</div>'}
+    <div class="card"><div class="card-pad" style="padding-bottom:6px"><h2>Popular styles</h2></div>
+    ${s.byStyle.length ? `<table class="tbl"><tr><th>Style</th><th class="num">Quotes</th><th class="num">Avg. price</th></tr>${s.byStyle.map(r => `<tr><td>${esc(r.style_name)}</td><td class="num">${r.n}</td><td class="num">${fmt(r.avg)}</td></tr>`).join('')}</table>` : '<div class="empty">No quotes yet.</div>'}</div>
   </div>`;
+  void keys; void hooks;
+  const rep = await renderReports($('#reports'));
+  let t; onLive(type => { if (['contact', 'contract'].includes(type)) { clearTimeout(t); t = setTimeout(() => rep.reload().catch(() => {}), 800); } });
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +305,9 @@ async function quoteDetail(id, refresh) {
         <a class="btn ghost sm" target="_blank" href="${esc(x.links.download_3d_model)}">Download 3D model (.glb)</a>
         <button class="btn ghost sm" id="qPlanDl">Download floor plan</button>
         ${canEditQuotes() ? '<button class="btn primary sm" id="qQuotePdf">Quote PDF (prices + drawings)</button>' : ''}
-        <button class="btn ${canEditQuotes() ? 'ghost' : 'primary'} sm" id="qDraw">Drawings PDF (no prices)</button></div>
+        <button class="btn ${canEditQuotes() ? 'ghost' : 'primary'} sm" id="qDraw">Drawings PDF (no prices)</button>
+        ${can('pos.create') ? `<a class="btn primary sm" href="#/pos/new?quote=${x.id}" data-close>Start contract</a>` : ''}
+        ${can('crm.view') && x.contact_id ? `<a class="btn ghost sm" href="#/crm/contacts/${x.contact_id}" data-close>Open in CRM</a>` : ''}</div>
       <div class="plan-prev"><img src="${planUrl(x.id)}" alt="Floor plan"></div>
       <h3 style="margin:18px 0 6px">Line items</h3><div class="lines">${x.pricing_lines.map(l => `<div class="ln"><div>${esc(l.label)}${l.note ? `<small>${esc(l.note)}</small>` : ''}${l.wall ? `<small>${esc(l.wall)}</small>` : ''}</div><div>${fmt(l.amount)}</div></div>`).join('')}
       ${x.pricing.delivery ? `<div class="ln"><div>Delivery</div><div>${fmt(x.pricing.delivery)}</div></div>` : ''}${x.pricing.tax ? `<div class="ln"><div>Tax</div><div>${fmt(x.pricing.tax)}</div></div>` : ''}
@@ -290,6 +335,7 @@ async function quoteDetail(id, refresh) {
         saveFile(new Blob([await r.text()], { type: 'image/svg+xml' }), `${x.number}-floor-plan.svg`);
       });
       $('#qDraw', root).onclick = () => downloadDrawings(x.id, $('#qDraw', root));
+      $$('[data-close]', root).forEach(a => a.addEventListener('click', () => closeModal()));
       if ($('#qQuotePdf', root)) $('#qQuotePdf', root).onclick = () => downloadDrawings(x.id, $('#qQuotePdf', root), true);
       if ($('#qSave', root)) $('#qSave', root).onclick = guard(async () => { await api('PATCH', `/api/v1/quotes/${id}`, { status: $('#qStatus').value, internal_notes: $('#qNotes').value }); toast('Saved'); refresh && refresh(); });
       if ($('#qResend', root)) $('#qResend', root).onclick = guard(async () => { await api('POST', `/api/v1/quotes/${id}/resend`); toast('Queued — check Integrations → Delivery log'); });
@@ -635,6 +681,7 @@ async function options() {
   $('#main').addEventListener('change', guard(async e => {
     const id = e.target.dataset.glb; if (!id || !e.target.files[0]) return;
     const fd = new FormData(); fd.append('file', e.target.files[0]);
+    const input = e.target; setTimeout(() => { input.value = ''; }, 0); // picking the same file again after a fix still uploads
     toast('Uploading ' + e.target.files[0].name + '…');
     const r = await api('POST', '/api/admin/upload', fd);
     await api('PATCH', `/api/v1/options/${id}`, { model_url: r.url });
@@ -900,40 +947,54 @@ window.addEventListener('message', function (e) {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
-const SETTINGS_FIELDS = [
-  { type: 'section', label: 'Branding' },
-  { key: 'company_name', label: 'Company name' }, { key: 'headline', label: 'Configurator headline' },
-  { key: 'logo_url', label: 'Logo', type: 'upload', accept: 'image/*' }, { key: 'brand_color', label: 'Brand color', type: 'color' },
-  { key: 'phone', label: 'Phone (shown in header)' }, { key: 'website', label: 'Website' },
-  { type: 'section', label: 'Pricing' },
-  { key: 'show_prices', label: 'Show prices to customers (customer-facing configurator)', type: 'checkbox', full: true, help: 'Off = customers see no prices anywhere: no totals, no option prices, and their PDF has no prices. Prices are not sent to their browser at all. The dealer-facing configurator, opened while signed in here (Open configurator), always shows prices.' }, { key: 'currency_symbol', label: 'Currency symbol' },
-  { key: 'delivery_fee', label: 'Delivery fee ($)', type: 'number', step: '0.01' }, { key: 'tax_rate', label: 'Sales tax (%)', type: 'number', step: '0.001' },
+// Company details are shared by the configurator, CRM, contracts and emails; configurator settings only affect the 3D builder.
+const COMPANY_FIELDS = [
+  { type: 'section', label: 'Your company' },
+  { key: 'company_name', label: 'Company name' }, { key: 'phone', label: 'Phone' },
+  { key: 'website', label: 'Website' }, { key: 'company_address', label: 'Address (printed on contracts)' },
+  { key: 'logo_url', label: 'Logo', type: 'upload', accept: 'image/*', help: 'Shown in the configurator, the customer signing page and emails.' }, { key: 'brand_color', label: 'Brand color', type: 'color' },
+  { type: 'section', label: 'Web address & time zone' },
+  { key: 'public_url', label: 'Public URL of this app', full: true, ph: 'https://builder.yourdomain.com', help: 'The address customers and Twilio use. Signing links, 3D links in emails and texts, and reply webhooks are built from it. Leave blank to auto-detect.' },
+  { key: 'timezone', label: 'Time zone', type: 'select', options: [['America/New_York', 'Eastern'], ['America/Chicago', 'Central'], ['America/Denver', 'Mountain'], ['America/Phoenix', 'Arizona'], ['America/Los_Angeles', 'Pacific'], ['America/Anchorage', 'Alaska'], ['Pacific/Honolulu', 'Hawaii']], help: 'Used for dates on contracts and for the dashboard.' },
+];
+const CONFIG_FIELDS = [
+  { type: 'section', label: 'Look' },
+  { key: 'headline', label: 'Configurator headline', full: true, ph: 'Design your shed in 3D' },
+  { type: 'section', label: 'Prices' },
+  { key: 'show_prices', label: 'Show prices to customers (customer-facing configurator)', type: 'checkbox', full: true, help: 'Off = customers see no prices anywhere: no totals, no option prices, and their PDF has no prices. Prices are not sent to their browser at all. The dealer-facing configurator, opened while signed in here, always shows prices.' }, { key: 'currency_symbol', label: 'Currency symbol' },
+  { key: 'delivery_fee', label: 'Delivery fee ($)', type: 'number', step: '0.01' }, { key: 'tax_rate', label: 'Sales tax (%)', type: 'number', step: '0.001', help: 'Also the default tax on rent-to-own payments (change it in Point of sale settings).' },
   { key: 'tax_delivery', label: 'Charge tax on delivery', type: 'checkbox' },
   { key: 'downgrade_credit', label: 'Lower the price when a customer swaps a standard item (door, window, roofing) for a cheaper one', type: 'checkbox', full: true },
   { key: 'remove_credit', label: 'Credit the price of a standard item when the customer removes it', type: 'checkbox', full: true },
   { type: 'section', label: 'Quote form' },
   { key: 'require_phone', label: 'Phone number is required', type: 'checkbox' },
-  { key: 'consent_text', label: 'SMS / call consent text (A2P)', type: 'textarea', full: true, help: 'Leave blank to hide the checkbox.' },
+  { key: 'consent_text', label: 'SMS / call consent text (A2P)', type: 'textarea', full: true, help: 'Leave blank to hide the checkbox. Instant replies by text only go to customers who tick it.' },
   { key: 'privacy_url', label: 'Privacy policy URL' }, { key: 'thank_you_url', label: 'Thank-you page URL (optional redirect)' },
   { key: 'success_message', label: 'Success message', type: 'textarea', full: true },
   { key: 'customer_pdf', label: 'Let customers download their quote PDF (prices + drawings) after submitting', type: 'checkbox', full: true },
   { key: 'quote_terms', label: 'Terms printed on the quote PDF', type: 'textarea', full: true, ph: 'e.g. Prices valid for 30 days. Delivery subject to site access. A 10% deposit is required to order.' },
-  { type: 'section', label: 'Advanced' },
-  { key: 'public_url', label: 'Public URL of this app', full: true, ph: 'https://builder.yourdomain.com', help: 'Used for links in webhooks/GHL. Leave blank to auto-detect.' },
 ];
-async function settingsPage() {
-  settings = await api('GET', '/api/admin/settings');
-  $('#main').innerHTML = head('Settings', 'Branding, pricing rules and the quote form.') + `<div class="card card-pad"><form class="form" id="setf">${SETTINGS_FIELDS.map(f => field(f, settings[f.key])).join('')}</form>
-    <div class="row" style="margin-top:18px"><button class="btn primary" id="ssave">Save settings</button></div></div>`;
-  wireInputs($('#main'));
-  $('#ssave').onclick = guard(async () => {
-    await api('PUT', '/api/admin/settings', readFields($('#setf'), SETTINGS_FIELDS));
+function settingsForm(title, sub, fields, extra = '') {
+  return async function page() {
     settings = await api('GET', '/api/admin/settings');
-    $('#sideName').textContent = settings.company_name || 'Shed Builder';
-    if (settings.brand_color) document.documentElement.style.setProperty('--brand', settings.brand_color);
-    toast('Settings saved');
-  });
+    $('#main').innerHTML = head(title, sub) + extra + `<div class="card card-pad"><form class="form" id="setf">${fields.map(f => field(f, settings[f.key])).join('')}</form>
+      <div class="row" style="margin-top:18px"><button class="btn primary" id="ssave">Save</button></div></div>`;
+    wireInputs($('#main'));
+    $('#ssave').onclick = guard(async () => {
+      await api('PUT', '/api/admin/settings', readFields($('#setf'), fields));
+      settings = await api('GET', '/api/admin/settings');
+      $('#sideName').textContent = settings.company_name || 'Shed Builder';
+      if (settings.brand_color) document.documentElement.style.setProperty('--brand', settings.brand_color);
+      toast('Saved');
+    });
+  };
 }
+const settingsLinks = `<div class="callout" style="margin-bottom:16px">Other settings: <a href="#/configurator-settings">3D configurator</a> · <a href="#/messaging">CRM &amp; messaging</a> (texting, email, alerts) · <a href="#/pos-settings">Point of sale</a> (rent to own, deposits, contract messages) · <a href="#/account">Users</a></div>`;
+const companyPage = settingsForm('Company', 'Details used everywhere: the 3D configurator, the CRM, contracts, the signing page and emails.', COMPANY_FIELDS, settingsLinks);
+const configPage = settingsForm('Configurator settings', 'How the customer-facing 3D builder looks, prices and collects quotes. Styles, sizes, colors and options are in the menu above.', CONFIG_FIELDS);
+// function declarations so the route table (built earlier in this file) can reference them
+function settingsPage() { return companyPage(); }
+function configuratorSettingsPage() { return configPage(); }
 
 // ---------------------------------------------------------------------------
 // Account
@@ -944,10 +1005,17 @@ async function account() {
       <label class="fld"><span>Email</span><input name="email" type="email" value="${esc(me.email)}"></label>
       <label class="fld"><span>Current password *</span><input name="current_password" type="password" autocomplete="current-password"></label>
       <label class="fld"><span>New password</span><input name="new_password" type="password" autocomplete="new-password" placeholder="8+ characters"></label></form>
-      <button class="btn primary" id="asave" style="margin-top:14px">Update</button></div>`;
+      <button class="btn primary" id="asave" style="margin-top:14px">Update</button>
+      <div class="section-t" style="margin:22px 0 10px">My alerts</div>
+      <p class="muted" style="margin:0 0 10px">Get a text and/or email when a contract is signed, a new lead comes in or a customer replies (whichever your admin has switched on in Messaging &amp; alerts).</p>
+      <form class="form" id="nf"><label class="fld"><span>My mobile number</span><input name="phone" type="tel" value="${esc(me.phone || '')}" placeholder="(555) 555-5555"></label><div></div>
+        <label class="chk"><input type="checkbox" name="notify_sms" ${me.notify_sms ? 'checked' : ''}>Text me</label><label class="chk"><input type="checkbox" name="notify_email" ${me.notify_email ? 'checked' : ''}>Email me</label></form>
+      <button class="btn ghost" id="nsave" style="margin-top:12px">Save alerts</button></div>`;
+  const saveAlerts = guard(async () => { const f = $('#nf'); await api('POST', '/api/admin/account', { phone: f.phone.value, notify_sms: f.notify_sms.checked, notify_email: f.notify_email.checked }); me = await api('GET', '/api/auth/me'); toast('Alerts saved'); });
   if (!isAdmin()) {
     $('#main').innerHTML = head('Your account') + `<div class="grid g2">${yours}</div>`;
     $('#asave').onclick = guard(async () => { const d = Object.fromEntries(new FormData($('#af'))); await api('POST', '/api/admin/account', d); me = await api('GET', '/api/auth/me'); toast('Account updated'); account(); });
+    $('#nsave').onclick = saveAlerts;
     return;
   }
   const users = await api('GET', '/api/admin/users');
@@ -956,21 +1024,25 @@ async function account() {
   const lotSel = (v, attrs) => `<select class="in" ${attrs}><option value="">All dealer lots</option>${dealers.map(d => `<option value="${esc(d.id)}" ${String(d.id) === String(v) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`;
   $('#main').innerHTML = head('Account & users') + `<div class="grid g2">${yours}
     <div class="card card-pad"><h2>Team members</h2>
-      <p class="muted" style="margin:2px 0 8px"><b>Admin</b>: everything. <b>Sales</b>: quotes (status & notes) and drawings. <b>Production</b>: view quotes and download drawings (floor plan + elevations PDF). Sales and Production can be limited to one dealer lot.</p>
-      <div class="tbl-wrap"><table class="tbl" style="margin:6px 0 14px"><tr><th>Name</th><th>Role</th><th>Dealer lot</th><th></th></tr>${users.map(u => `<tr><td><b>${esc(u.name || '')}</b><div class="muted" style="font-size:12.5px">${esc(u.email)}</div></td>
+      <p class="muted" style="margin:2px 0 8px"><b>Admin</b>: everything. <b>Sales</b>: CRM, texting &amp; email, quotes and contracts (point of sale). <b>Production</b>: the build board and drawings. <b>Delivery</b>: the delivery schedule, customer address &amp; phone, and drawings. Everyone can be signed in at the same time. Non-admins can be limited to one dealer lot.</p>
+      <div class="tbl-wrap"><table class="tbl" style="margin:6px 0 14px"><tr><th>Name</th><th>Role</th><th>Dealer lot</th><th>Login</th><th></th></tr>${users.map(u => `<tr><td><b>${esc(u.name || '')}</b><div class="muted" style="font-size:12.5px">${esc(u.email)}${u.phone ? ' · ' + esc(u.phone) : ''}</div></td>
         <td>${u.id === me.id ? `<span class="pill">${ROLE_LABEL[u.role]} (you)</span>` : roleSel(u.role, `data-ur="${u.id}"`)}</td>
         <td>${u.role === 'admin' ? '<span class="muted">—</span>' : lotSel(u.dealer_id, `data-ul="${u.id}"`)}</td>
+        <td>${u.id === me.id ? '<span class="pill on">On</span>' : `<label class="chk" title="Turn a login off without deleting it"><input type="checkbox" data-ua="${u.id}" ${u.active ? 'checked' : ''}>${u.active ? 'On' : 'Off'}</label>`}</td>
         <td class="num">${u.id === me.id ? '' : `<button class="icon-btn" data-del="${u.id}">${TRASH}</button>`}</td></tr>`).join('')}</table></div>
       <form class="form" id="uf"><label class="fld"><span>Name</span><input name="name"></label><label class="fld"><span>Email</span><input name="email" type="email"></label>
-      <label class="fld"><span>Role</span>${roleSel('production', 'name="role"')}</label><label class="fld"><span>Dealer lot</span>${lotSel('', 'name="dealer_id"')}</label>
-      <label class="fld full"><span>Temporary password</span><input name="password" type="text" placeholder="8+ characters"></label></form>
+      <label class="fld"><span>Role</span>${roleSel('sales', 'name="role"')}</label><label class="fld"><span>Dealer lot</span>${lotSel('', 'name="dealer_id"')}</label>
+      <label class="fld"><span>Mobile (optional)</span><input name="phone" type="tel"></label>
+      <label class="fld"><span>Temporary password</span><input name="password" type="text" placeholder="8+ characters"></label></form>
       <button class="btn ghost" id="uadd" style="margin-top:12px">+ Add team member</button></div></div>`;
   $('#asave').onclick = guard(async () => { const d = Object.fromEntries(new FormData($('#af'))); await api('POST', '/api/admin/account', d); me = await api('GET', '/api/auth/me'); toast('Account updated'); account(); });
+  $('#nsave').onclick = saveAlerts;
   $('#uadd').onclick = guard(async () => { await api('POST', '/api/admin/users', Object.fromEntries(new FormData($('#uf')))); toast('User added'); account(); });
   $('#main').onchange = guard(async e => {
     const t = e.target;
     if (t.dataset.ur) { await api('PATCH', `/api/admin/users/${t.dataset.ur}`, { role: t.value }); toast('Role updated'); account(); }
     if (t.dataset.ul) { await api('PATCH', `/api/admin/users/${t.dataset.ul}`, { dealer_id: t.value }); toast('Dealer lot updated'); }
+    if (t.dataset.ua) { await api('PATCH', `/api/admin/users/${t.dataset.ua}`, { active: t.checked }); toast(t.checked ? 'Login turned on' : 'Login turned off'); account(); }
   });
   $('#main').onclick = guard(async e => { const b = e.target.closest('[data-del]'); if (b && confirmBox('Remove this user?')) { await api('DELETE', `/api/admin/users/${b.dataset.del}`); account(); } });
 }

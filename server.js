@@ -2,7 +2,7 @@
 import express from 'express';
 import multer from 'multer';
 import crypto from 'node:crypto';
-import { mkdirSync, unlinkSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, readFileSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +13,11 @@ import { emit, deliver, formatQuote, recentLog, pushToGHL, EVENTS } from './src/
 import { openapi } from './src/openapi.js';
 import { priceConfig, sanitizeConfig, stripPrices, hideQuotePrices } from './public/js/shared/pricing.js';
 import { floorPlanSVG } from './public/js/shared/floorplan.js';
+import { crmRouter, hooksRouter, seedCRM, backfillQuotes, onQuoteCreated } from './src/crm.js';
+import { posRouter, signRouter, seedContracts } from './src/contracts.js';
+import { permissionsFor } from './src/permissions.js';
+import { dailyReport, localDay } from './public/js/shared/reports.js';
+import { toE164, sendEmail, sendSMS, messagingStatus, fromAddress, verifyMessaging, connectTwilioReplies } from './src/messaging.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -20,6 +25,9 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || join(__dirname, 'uploads');
 mkdirSync(UPLOAD_DIR, { recursive: true });
 
 seed();
+seedCRM();
+backfillQuotes();
+await seedContracts();
 
 const app = express();
 app.set('trust proxy', true);
@@ -41,9 +49,10 @@ const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
 
 // ---- Simple in-memory rate limit for public quote submissions
 const hits = new Map();
-function rateLimit(max, windowMs) {
+setInterval(() => { const now = Date.now(); for (const [k, arr] of hits) if (!arr.some(t => now - t < 600000)) hits.delete(k); }, 300000).unref();
+function rateLimit(max, windowMs, keyFn = req => req.ip + req.path) {
   return (req, res, next) => {
-    const k = req.ip + req.path, now = Date.now();
+    const k = keyFn(req), now = Date.now();
     const arr = (hits.get(k) || []).filter(t => now - t < windowMs);
     if (arr.length >= max) return bad(res, 'Too many requests, please try again in a minute.', 429);
     arr.push(now); hits.set(k, arr); next();
@@ -74,20 +83,38 @@ app.post('/api/v1/price', (req, res) => {
   if (!canSeePrices(req)) return bad(res, 'Prices are not shown publicly. Send an API key to price a configuration.', 403);
   try {
     const cat = getCatalog();
-    const cfg = sanitizeConfig(cat, req.body);
+    const v = dealerViewer(req); // lot staff always price for their own lot, same as their quotes
+    const cfg = sanitizeConfig(cat, v?.dealer_id && req.body && typeof req.body === 'object' ? { ...req.body, dealer_id: v.dealer_id } : req.body);
     const p = priceConfig(cat, cfg);
     delete p.style; res.json({ ...p, size: { width: p.size?.width, depth: p.size?.depth } });
   } catch (e) { bad(res, e.message); }
 });
 
-app.post('/api/v1/quotes', rateLimit(8, 60000), wrap(async (req, res) => {
-  const { config: rawConfig, customer = {}, source: rawSource, utm } = req.body || {};
+// staff on a lot share one internet connection, so signed-in users aren't throttled
+const quoteLimit = rateLimit(8, 60000);
+app.post('/api/v1/quotes', (req, res, next) => (readSession(req) ? next() : quoteLimit(req, res, next)), wrap(async (req, res) => {
+  const { config: rawConfig, customer: rawCustomer = {}, source: rawSource, utm } = req.body || {};
   const viewer = dealerViewer(req);
+  let customer = rawCustomer && typeof rawCustomer === 'object' ? { ...rawCustomer } : {};
+  // Point of sale: a sales rep redesigning a building for a customer they are writing a contract for.
+  // The quote goes on that contact (no new lead, no auto-replies); blanks are filled from the contact.
+  let posContact = null;
+  const staffUser = viewer && ['admin', 'sales'].includes(viewer.role) ? readSession(req) : null;
+  if (staffUser && req.body?.contact_id) {
+    posContact = get('SELECT * FROM contacts WHERE id = ?', Number(req.body.contact_id));
+    if (!posContact || (staffUser.dealer_id && posContact.dealer_id && String(posContact.dealer_id) !== String(staffUser.dealer_id))) return bad(res, 'Contact not found', 404);
+    for (const k of ['first_name', 'last_name', 'email', 'phone', 'address', 'city', 'state', 'zip']) if (!String(customer[k] || '').trim() && posContact[k]) customer[k] = posContact[k];
+    if (!customer.first_name) customer.first_name = posContact.company || 'Customer';
+  }
   // dealer-facing configurator: lot staff always quote for their own lot
   const config = viewer?.dealer_id && rawConfig && typeof rawConfig === 'object' ? { ...rawConfig, dealer_id: viewer.dealer_id } : rawConfig;
   const source = viewer ? `Dealer configurator — ${viewer.name}` : rawSource;
-  if (!customer.first_name || !customer.email) return bad(res, 'first_name and email are required');
-  if (!/^\S+@\S+\.\S+$/.test(customer.email)) return bad(res, 'email looks invalid');
+  if (staffUser && req.body?.pos) { // staff writing up a sale: a name plus email or mobile is enough
+    if (!customer.first_name) return bad(res, 'first_name is required');
+    if (!posContact && !customer.email && !customer.phone) return bad(res, 'Enter the customer\'s email or mobile');
+  } else if (!customer.first_name || !customer.email) return bad(res, 'first_name and email are required');
+  else if (!viewer && getSettings().require_phone && !String(customer.phone || '').trim() && !readApiKey(req)) return bad(res, 'phone is required');
+  if (customer.email && !/^\S+@\S+\.\S+$/.test(customer.email)) return bad(res, 'email looks invalid');
   const cat = getCatalog();
   let cfg, pricing;
   try { cfg = sanitizeConfig(cat, config); pricing = priceConfig(cat, cfg); } catch (e) { return bad(res, e.message); }
@@ -97,7 +124,7 @@ app.post('/api/v1/quotes', rateLimit(8, 60000), wrap(async (req, res) => {
   const token = crypto.randomBytes(16).toString('hex');
   const r = run(`INSERT INTO quotes (token, first_name, last_name, email, phone, address, city, state, zip, notes, sms_consent, source, utm, config, pricing, total, style_name, size_label, dealer_id, dealer_name, price_tier, pricing_zip)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    token, s(customer.first_name), s(customer.last_name), s(customer.email)?.toLowerCase(), s(customer.phone), s(customer.address), s(customer.city),
+    token, s(customer.first_name), s(customer.last_name), s(customer.email)?.toLowerCase() ?? null, s(customer.phone), s(customer.address), s(customer.city),
     s(customer.state), s(customer.zip), s(customer.notes), customer.sms_consent ? 1 : 0, s(source || req.get('referer') || 'configurator'),
     JSON.stringify(utm || {}), JSON.stringify(cfg), JSON.stringify(pricing), pricing.total, style.name, `${size.width}' x ${size.depth}'`,
     pricing.dealer ? String(pricing.dealer.id) : null, pricing.dealer?.name || null, pricing.tier_name || null, pricing.zip || null);
@@ -106,6 +133,7 @@ app.post('/api/v1/quotes', rateLimit(8, 60000), wrap(async (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', id);
   emit('quote.created', q, baseUrl(req));
   const out = formatQuote(q, baseUrl(req));
+  onQuoteCreated(q, baseUrl(req), out, { contact_id: posContact?.id || null, pos: !!(staffUser && req.body?.pos), user: staffUser }).catch(e => console.error('CRM:', e)); // contact + deal are created synchronously; auto-replies finish in the background
   delete out.links.admin; delete out.integrations;
   res.status(201).json(viewer || pricesPublic() ? out : hideQuotePrices(out));
 }));
@@ -155,7 +183,7 @@ const ownQuote = (req, q) => !req.user?.dealer_id || String(q.dealer_id) === Str
 v1.get('/quotes/:id', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
   if (!q || !ownQuote(req, q)) return bad(res, 'Not found', 404);
-  res.json({ ...formatQuote(q, baseUrl(req)), internal_notes: q.internal_notes, ghl_status: q.ghl_status, pricing_lines: q.pricing.lines });
+  res.json({ ...formatQuote(q, baseUrl(req)), internal_notes: q.internal_notes, ghl_status: q.ghl_status, pricing_lines: q.pricing.lines, contact_id: q.contact_id || null });
 });
 v1.patch('/quotes/:id', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
@@ -246,15 +274,19 @@ app.use('/api/v1', v1);
 // =============================================================================
 //  ADMIN-ONLY (session)
 // =============================================================================
-app.post('/api/auth/login', rateLimit(10, 60000), (req, res) => {
+// login attempts are limited per email (stops password guessing) and loosely per IP (a whole lot shares one IP)
+const loginPerEmail = rateLimit(10, 60000, req => 'login:' + String(req.body?.email || '').toLowerCase().trim());
+const loginPerIp = rateLimit(60, 60000, req => 'loginip:' + req.ip);
+app.post('/api/auth/login', loginPerIp, loginPerEmail, (req, res) => {
   const { email, password } = req.body || {};
   const u = get('SELECT * FROM users WHERE email = ?', String(email || '').toLowerCase().trim());
   if (!u || !verifyPassword(String(password || ''), u.password_hash)) return bad(res, 'Wrong email or password', 401);
+  if (u.active === 0) return bad(res, 'This login has been turned off. Ask your admin.', 403);
   issueSession(res, u.id);
-  res.json({ id: u.id, email: u.email, name: u.name, role: u.role || 'admin', dealer_id: u.dealer_id || null });
+  res.json({ id: u.id, email: u.email, name: u.name, role: u.role || 'admin', dealer_id: u.dealer_id || null, permissions: permissionsFor({ role: u.role || 'admin' }) });
 });
 app.post('/api/auth/logout', (req, res) => { clearSession(res); res.json({ ok: true }); });
-app.get('/api/auth/me', (req, res) => { const u = readSession(req); u ? res.json(u) : bad(res, 'Not logged in', 401); });
+app.get('/api/auth/me', (req, res) => { const u = readSession(req); u ? res.json({ ...u, permissions: permissionsFor(u) }) : bad(res, 'Not logged in', 401); });
 
 const admin = express.Router();
 admin.use(requireSession);
@@ -265,48 +297,69 @@ admin.use((req, res, next) => {
   return open ? next() : res.status(403).json({ error: 'Your account does not have access to this.' });
 });
 admin.post('/account', (req, res) => {
-  const { email, name, current_password, new_password } = req.body || {};
+  const { email, name, current_password, new_password, phone, notify_sms, notify_email } = req.body || {};
   const u = get('SELECT * FROM users WHERE id = ?', req.user.id);
+  // alert preferences + phone can be changed without re-entering the password
+  if (phone !== undefined || notify_sms !== undefined || notify_email !== undefined) {
+    if (phone && !toE164(phone)) return bad(res, 'Mobile number looks invalid');
+    run('UPDATE users SET phone = ?, notify_sms = ?, notify_email = ? WHERE id = ?', phone === undefined ? u.phone : (phone || null),
+      notify_sms === undefined ? u.notify_sms : (notify_sms ? 1 : 0), notify_email === undefined ? u.notify_email : (notify_email ? 1 : 0), u.id);
+    if (!current_password && !new_password && !email && !name) return res.json({ ok: true });
+  }
   if (!verifyPassword(String(current_password || ''), u.password_hash)) return bad(res, 'Current password is wrong');
   if (new_password && String(new_password).length < 8) return bad(res, 'New password must be at least 8 characters');
   run('UPDATE users SET email = COALESCE(?, email), name = COALESCE(?, name), password_hash = ? WHERE id = ?',
     email ? String(email).toLowerCase() : null, name || null, new_password ? hashPassword(String(new_password)) : u.password_hash, u.id);
   res.json({ ok: true });
 });
-admin.get('/users', (req, res) => res.json(all("SELECT id, email, name, COALESCE(role, 'admin') AS role, dealer_id, created_at FROM users")));
+admin.get('/users', (req, res) => res.json(all("SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, COALESCE(active, 1) AS active, created_at FROM users")));
 admin.post('/users', (req, res) => {
-  const { email, name, password, role = 'admin', dealer_id = null } = req.body || {};
-  if (!email || !password || password.length < 8) return bad(res, 'Email and an 8+ character password are required');
+  const { email, name, password, role = 'admin', dealer_id = null, phone = null } = req.body || {};
+  if (!email || !/^\S+@\S+\.\S+$/.test(email) || !password || password.length < 8) return bad(res, 'A valid email and an 8+ character password are required');
   if (!ROLES.includes(role)) return bad(res, 'Unknown role');
-  try { run('INSERT INTO users (email, name, password_hash, role, dealer_id) VALUES (?,?,?,?,?)', email.toLowerCase(), name || '', hashPassword(password), role, role === 'admin' ? null : (dealer_id || null)); res.json({ ok: true }); }
+  if (phone && !toE164(phone)) return bad(res, 'Mobile number looks invalid');
+  try { run('INSERT INTO users (email, name, password_hash, role, dealer_id, phone) VALUES (?,?,?,?,?,?)', email.toLowerCase().trim(), name || '', hashPassword(password), role, role === 'admin' ? null : (dealer_id || null), phone || null); res.json({ ok: true }); }
   catch { bad(res, 'That email already exists'); }
 });
 admin.patch('/users/:id', (req, res) => {
   const u = get('SELECT * FROM users WHERE id = ?', Number(req.params.id)); if (!u) return bad(res, 'Not found', 404);
-  const { role, dealer_id, name, password } = req.body || {};
+  const { role, dealer_id, name, password, phone, active } = req.body || {};
   if (role && !ROLES.includes(role)) return bad(res, 'Unknown role');
   if (u.id === req.user.id && role && role !== 'admin') return bad(res, "You can't remove your own admin access");
+  if (u.id === req.user.id && active === false) return bad(res, "You can't turn off your own login");
   if (password && String(password).length < 8) return bad(res, 'Password must be at least 8 characters');
+  if (phone && !toE164(phone)) return bad(res, 'Mobile number looks invalid');
   const r = role || u.role || 'admin';
-  run('UPDATE users SET role = ?, dealer_id = ?, name = COALESCE(?, name), password_hash = ? WHERE id = ?',
-    r, r === 'admin' ? null : (dealer_id === undefined ? u.dealer_id : (dealer_id || null)), name ?? null, password ? hashPassword(String(password)) : u.password_hash, u.id);
+  run('UPDATE users SET role = ?, dealer_id = ?, name = COALESCE(?, name), password_hash = ?, phone = ?, active = ? WHERE id = ?',
+    r, r === 'admin' ? null : (dealer_id === undefined ? u.dealer_id : (dealer_id || null)), name ?? null, password ? hashPassword(String(password)) : u.password_hash,
+    phone === undefined ? u.phone : (phone || null), active === undefined ? (u.active ?? 1) : (active ? 1 : 0), u.id);
   res.json({ ok: true });
 });
 admin.delete('/users/:id', (req, res) => {
   if (Number(req.params.id) === req.user.id) return bad(res, "You can't delete yourself");
   run('DELETE FROM users WHERE id = ?', Number(req.params.id)); res.sendStatus(204);
 });
+const SECRET_SETTINGS = ['ghl_token', 'twilio_token', 'smtp_pass'];
 admin.get('/settings', (req, res) => {
   const s = getSettings(); delete s._session_secret;
-  if (s.ghl_token) s.ghl_token_set = true;
-  s.ghl_token = s.ghl_token ? '••••••••' + String(s.ghl_token).slice(-4) : '';
+  for (const k of SECRET_SETTINGS) { if (s[k]) s[k + '_set'] = true; s[k] = s[k] ? '••••••••' + String(s[k]).slice(-4) : ''; }
+  if (req.user.role !== 'admin') { for (const k of [...SECRET_SETTINGS, 'inbound_key', 'twilio_sid', 'smtp_user', 'smtp_host', 'ghl_location_id', 'ghl_inbound_webhook_url', 'ghl_custom_fields']) delete s[k]; }
   res.json(s);
 });
 admin.put('/settings', (req, res) => {
   const b = { ...(req.body || {}) };
-  delete b._session_secret; delete b.ghl_token_set;
-  if (typeof b.ghl_token === 'string' && b.ghl_token.startsWith('••••')) delete b.ghl_token; // unchanged
+  delete b._session_secret; delete b.inbound_key; delete b.crm_backfilled; delete b.sample_templates_seeded;
+  for (const k of SECRET_SETTINGS) { delete b[k + '_set']; if (typeof b[k] === 'string' && b[k].startsWith('••••')) delete b[k]; } // unchanged
   for (const k of ['tax_rate', 'delivery_fee']) if (k in b) b[k] = Number(b[k]) || 0;
+  // pasted credentials often carry spaces; phone numbers get stored as +1XXXXXXXXXX
+  for (const k of ['twilio_sid', 'twilio_token', 'twilio_messaging_service_sid', 'smtp_host', 'smtp_user', 'email_from', 'email_reply_to', 'public_url']) if (typeof b[k] === 'string') b[k] = b[k].trim();
+  if (typeof b.smtp_pass === 'string' && !/\S\s\S/.test(b.smtp_pass.trim())) b.smtp_pass = b.smtp_pass.trim();
+  if (typeof b.smtp_pass === 'string' && /^([a-z]{4} ){3}[a-z]{4}$/.test(b.smtp_pass.trim())) b.smtp_pass = b.smtp_pass.replace(/ /g, ''); // Google app passwords are shown with spaces
+  if (b.twilio_from) { const e = toE164(b.twilio_from); if (!e) return bad(res, 'The Twilio phone number looks wrong. Enter it like (615) 555-0123 or +16155550123.'); b.twilio_from = e; }
+  if (b.notify_phones) { const bad1 = String(b.notify_phones).split(/[,;]+/).map(x => x.trim()).filter(x => x && !toE164(x)); if (bad1.length) return bad(res, `These alert numbers look wrong: ${bad1.join(', ')}`); }
+  if (b.email_from && !/@/.test(b.email_from)) return bad(res, 'The From address needs an email, like sales@yourcompany.com or "Trimline Barns" <sales@yourcompany.com>.');
+  if ('smtp_port' in b) b.smtp_port = Number(b.smtp_port) || '';
+  if (b.public_url) { b.public_url = String(b.public_url).replace(/\/+$/, ''); if (!/^https?:\/\/[^/\s]+$/.test(b.public_url)) return bad(res, 'Public URL should look like https://builder.yourcompany.com (no page path at the end).'); }
   setSettings(b); res.json({ ok: true });
 });
 admin.post('/ghl/test', wrap(async (req, res) => {
@@ -316,6 +369,35 @@ admin.post('/ghl/test', wrap(async (req, res) => {
   catch (e) { bad(res, e.message); }
 }));
 admin.get('/catalog', (req, res) => res.json(getCatalog({ includeInactive: true })));
+// Messaging setup helpers: status overview, "Check connection" (no message sent), connect Twilio replies automatically
+const hookUrls = req => { const b = baseUrl(req), k = getSettings().inbound_key || ''; return { twilio: b + '/api/hooks/twilio/sms', email: `${b}/api/hooks/email/${k}`, ghl: `${b}/api/hooks/ghl/${k}`, https: /^https:\/\//.test(b), public_url_set: !!getSettings().public_url }; };
+admin.get('/messaging/status', (req, res) => {
+  const s = getSettings();
+  const last = (channel, dir) => get(`SELECT id, to_addr, from_addr, status, error, created_at FROM messages WHERE channel = ? AND direction = ? ORDER BY id DESC LIMIT 1`, channel, dir) || null;
+  res.json({
+    ...messagingStatus(), from: fromAddress(s), hooks: hookUrls(req),
+    last_sms: last('sms', 'out'), last_email: last('email', 'out'), last_sms_in: last('sms', 'in'), last_email_in: last('email', 'in'),
+    inbound_last_ok: s.inbound_last_ok || null, inbound_last_error: s.inbound_last_error || null,
+    recent: all(`SELECT m.id, m.channel, m.direction, m.to_addr, m.from_addr, m.subject, substr(m.body, 1, 140) body, m.status, m.error, m.created_at, c.first_name, c.last_name
+      FROM messages m LEFT JOIN contacts c ON c.id = m.contact_id ORDER BY m.id DESC LIMIT 25`),
+  });
+});
+admin.post('/messaging/verify', wrap(async (req, res) => {
+  const channel = req.body?.channel === 'email' ? 'email' : 'sms';
+  res.json(await verifyMessaging(channel, { webhookUrl: hookUrls(req).twilio }));
+}));
+admin.post('/messaging/twilio-connect', wrap(async (req, res) => {
+  try { res.json(await connectTwilioReplies(hookUrls(req).twilio)); } catch (e) { bad(res, e.message); }
+}));
+admin.post('/messaging/clear-inbound-error', (req, res) => { setSettings({ inbound_last_error: null }); res.json({ ok: true }); });
+admin.post('/messaging/test', wrap(async (req, res) => {
+  const { channel, to } = req.body || {};
+  const company = getSettings().company_name || '3D Shed Builder';
+  const r = channel === 'email'
+    ? await sendEmail({ to, subject: `Test email from ${company}`, text: `This is a test email from your shed builder.\n\nIf you got this, email is set up correctly.` })
+    : await sendSMS({ to, body: `Test text from ${company}: texting is set up correctly.`, baseUrl: baseUrl(req) });
+  r.ok ? res.json(r) : bad(res, r.error || 'Not sent', 502);
+}));
 admin.get('/api-keys', (req, res) => res.json(all('SELECT id, name, prefix, last_used, created_at FROM api_keys ORDER BY id DESC')));
 admin.post('/api-keys', (req, res) => res.json(createApiKey(req.body?.name)));
 admin.delete('/api-keys/:id', (req, res) => { run('DELETE FROM api_keys WHERE id = ?', Number(req.params.id)); res.sendStatus(204); });
@@ -330,6 +412,17 @@ admin.get('/stats', (req, res) => {
     byStyle: all('SELECT style_name, COUNT(*) n, ROUND(AVG(total)) avg FROM quotes GROUP BY style_name ORDER BY n DESC'),
     daily: all("SELECT date(created_at) d, COUNT(*) n FROM quotes WHERE created_at >= datetime('now','-30 days') GROUP BY d ORDER BY d"),
   });
+});
+// Dashboard reports: one row per local day with leads, quotes and signed sales (client groups by month/year, MTD/YTD, YoY)
+admin.get('/reports', (req, res) => {
+  const tz = getSettings().timezone || 'America/Chicago';
+  const days = dailyReport({
+    contacts: all('SELECT created_at, source, dealer_id FROM contacts'),
+    quotes: all('SELECT created_at, total, dealer_id FROM quotes'),
+    contracts: all('SELECT id, group_id, revision, status, sale_type, total, completed_at, dealer_id FROM contracts'),
+    tz, dealer: String(req.query.dealer || ''),
+  });
+  res.json({ tz, today: localDay(new Date().toISOString(), tz), days, dealers: (getSettings().dealers || []).map(d => ({ id: d.id, name: d.name })) });
 });
 admin.post('/duplicate/:table/:id', (req, res) => {
   const t = req.params.table;
@@ -370,6 +463,16 @@ const upload = multer({
 });
 admin.post('/upload', upload.single('file'), (req, res) => {
   if (!req.file) return bad(res, 'Upload a .glb model or an image (png/jpg/webp/svg)');
+  // a renamed or broken file would upload fine and then silently not show in 3D: check what's really inside
+  const head = Buffer.alloc(12); try { const fd = openSync(req.file.path, 'r'); readSync(fd, head, 0, 12, 0); closeSync(fd); } catch { /* empty file */ }
+  const ext = extname(req.file.originalname).toLowerCase();
+  const okType = ext === '.glb' ? head.toString('latin1', 0, 4) === 'glTF'
+    : ext === '.gltf' ? (() => { try { return !!JSON.parse(readFileSync(req.file.path, 'utf8')).asset; } catch { return false; } })()
+    : ext === '.png' ? head.readUInt32BE(0) === 0x89504e47
+    : ext === '.jpg' || ext === '.jpeg' ? head[0] === 0xff && head[1] === 0xd8
+    : ext === '.webp' ? head.toString('latin1', 0, 4) === 'RIFF' && head.toString('latin1', 8, 12) === 'WEBP'
+    : ext === '.svg' ? /<svg[\s>]/i.test(readFileSync(req.file.path, 'utf8').slice(0, 4000)) : false;
+  if (!okType) { try { unlinkSync(req.file.path); } catch { /* */ } return bad(res, ext === '.glb' || ext === '.gltf' ? `"${req.file.originalname}" isn't a valid 3D model. Export it from your 3D program as glTF Binary (.glb) and upload it again.` : `"${req.file.originalname}" isn't a valid ${ext.slice(1).toUpperCase()} image.`); }
   res.json({ url: '/uploads/' + req.file.filename, name: req.file.originalname, size: req.file.size });
 });
 admin.delete('/upload', (req, res) => {
@@ -379,6 +482,15 @@ admin.delete('/upload', (req, res) => {
   res.sendStatus(204);
 });
 app.use('/api/admin', admin);
+
+// =============================================================================
+//  CRM · POINT OF SALE · E-SIGN · INBOUND MESSAGE WEBHOOKS
+// =============================================================================
+app.use('/api/crm', crmRouter({ baseUrl }));
+app.use('/api/pos', posRouter({ baseUrl }));
+app.use('/api/sign', rateLimit(60, 60000), signRouter());
+app.use('/api/hooks', hooksRouter({ baseUrl }));
+app.get('/sign/:token', (req, res) => { res.set('Cache-Control', 'no-store'); res.sendFile(join(__dirname, 'public', 'sign.html')); });
 
 // =============================================================================
 //  STATIC

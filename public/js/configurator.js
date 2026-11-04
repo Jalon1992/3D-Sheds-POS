@@ -405,7 +405,7 @@ function renderPanel() {
   const key = STEPS[state.step].key;
   const el = $('#panel');
   $('#back').style.visibility = state.step === 0 ? 'hidden' : 'visible';
-  $('#next').innerHTML = state.step === QUOTE ? 'Get my quote' : `<span>Next<span class="next-long">: ${esc(STEPS[state.step + 1]?.label || '')}</span></span>`;
+  $('#next').innerHTML = state.step === QUOTE ? quoteBtnLabel() : `<span>Next<span class="next-long">: ${esc(STEPS[state.step + 1]?.label || '')}</span></span>`;
   $('#next').hidden = !!(state.step === QUOTE && state.submitted);
   const keep = {}; const f0 = el.querySelector('#qform');
   if (f0) for (const i of f0.elements) if (i.name) keep[i.name] = i.type === 'checkbox' ? i.checked : i.value;
@@ -507,22 +507,27 @@ function renderQuote() {
   const sp = showPrices();
   const lines = p.lines.filter(l => l.type !== 'color' || l.amount);
   const st = S();
-  return `<h2>Your quote</h2><p class="sub">Review your shed and tell us where to send your quote.</p>
+  const pf = state.pos ? posPrefill() : {};
+  const v = k => (pf[k] ? ` value="${esc(pf[k])}"` : '');
+  const head = state.pos
+    ? `<h2>Save this design</h2><p class="sub">${pf.first_name ? `It goes back to the contract for <b>${esc([pf.first_name, pf.last_name].filter(Boolean).join(' '))}</b>.` : 'Enter the customer, then save. It goes straight back to the contract.'} Nothing is sent to the customer.</p>`
+    : `<h2>Your quote</h2><p class="sub">Review your shed and tell us where to send your quote.</p>`;
+  return `${head}
   <div class="lines">${lines.map(l => `<div class="line"><div>${esc(l.label)}${l.note ? `<small>${esc(l.note)}</small>` : ''}${l.wall && WALLS.includes(l.wall) ? `<small>${esc(l.wall)} wall</small>` : ''}</div><div class="${l.amount < 0 ? 'neg' : ''}">${sp ? (l.note === 'Standard' ? 'Included' : fmt(l.amount)) : ''}</div></div>`).join('')}
   ${sp && p.delivery ? `<div class="line"><div>Delivery</div><div>${fmt(p.delivery)}</div></div>` : ''}
   ${sp && p.tax ? `<div class="line"><div>Tax (${p.tax_rate}%)</div><div>${fmt(p.tax)}</div></div>` : ''}
   ${sp ? `<div class="line tot"><div>Total</div><div>${fmt(p.total)}</div></div>` : ''}
   ${p.dealer ? `<div class="line"><div><small>Dealer lot</small>${esc(p.dealer.name)}</div><div></div></div>` : ''}</div>
   <form class="form" id="qform" novalidate>
-    <div class="field"><label>First name *</label><input name="first_name" autocomplete="given-name" required></div>
-    <div class="field"><label>Last name</label><input name="last_name" autocomplete="family-name"></div>
-    <div class="field full"><label>Email *</label><input name="email" type="email" autocomplete="email" required></div>
-    <div class="field full"><label>Phone${st.require_phone ? ' *' : ''}</label><input name="phone" type="tel" autocomplete="tel" ${st.require_phone ? 'required' : ''}></div>
-    <div class="field full"><label>Delivery address</label><input name="address" autocomplete="street-address"></div>
-    <div class="field"><label>City</label><input name="city" autocomplete="address-level2"></div>
-    <div class="field"><label>State / ZIP</label><div style="display:flex;gap:6px"><input name="state" autocomplete="address-level1" style="width:40%" maxlength="20"><input name="zip" autocomplete="postal-code" inputmode="numeric" style="width:60%"></div></div>
-    <div class="field full"><label>Anything else we should know?</label><textarea name="notes" placeholder="Site details, timeline, questions…"></textarea></div>
-    ${st.consent_text ? `<label class="consent full"><input type="checkbox" name="sms_consent">${esc(st.consent_text)}${st.privacy_url ? ` <a href="${esc(st.privacy_url)}" target="_blank" rel="noopener">Privacy policy</a>` : ''}</label>` : ''}
+    <div class="field"><label>First name *</label><input name="first_name" autocomplete="given-name" required${v('first_name')}></div>
+    <div class="field"><label>Last name</label><input name="last_name" autocomplete="family-name"${v('last_name')}></div>
+    <div class="field full"><label>Email${state.pos ? '' : ' *'}</label><input name="email" type="email" autocomplete="email" ${state.pos ? '' : 'required'}${v('email')}></div>
+    <div class="field full"><label>Phone${st.require_phone && !state.pos ? ' *' : ''}</label><input name="phone" type="tel" autocomplete="tel" ${st.require_phone && !state.pos ? 'required' : ''}${v('phone')}></div>
+    <div class="field full"><label>Delivery address</label><input name="address" autocomplete="street-address"${v('address')}></div>
+    <div class="field"><label>City</label><input name="city" autocomplete="address-level2"${v('city')}></div>
+    <div class="field"><label>State / ZIP</label><div style="display:flex;gap:6px"><input name="state" autocomplete="address-level1" style="width:40%" maxlength="20"${v('state')}><input name="zip" autocomplete="postal-code" inputmode="numeric" style="width:60%"${v('zip')}></div></div>
+    <div class="field full"><label>${state.pos ? 'Notes for this design' : 'Anything else we should know?'}</label><textarea name="notes" placeholder="${state.pos ? 'Optional' : 'Site details, timeline, questions…'}"></textarea></div>
+    ${st.consent_text && !state.pos ? `<label class="consent full"><input type="checkbox" name="sms_consent">${esc(st.consent_text)}${st.privacy_url ? ` <a href="${esc(st.privacy_url)}" target="_blank" rel="noopener">Privacy policy</a>` : ''}</label>` : ''}
     <div class="err full" id="qerr" hidden></div>
   </form>`;
 }
@@ -532,6 +537,8 @@ function renderDone() {
     <h2>Quote sent!</h2><p class="sub">${esc(S().success_message || 'Thanks! We will be in touch shortly.')}</p>
     <div class="qn">Quote ${esc(q.number)}${showPrices() && q.pricing && !q.pricing.hidden ? ' · ' + fmt(q.pricing.total) : ''}</div>
     <div class="stack">
+      ${state.dealer && q.id && ['admin', 'sales'].includes(state.dealer.role) && /^\d+$/.test(params.get('revise') || '') ? `<a class="btn primary block" href="${ADMIN_URL}#/pos/revise/${params.get('revise')}?quote=${encodeURIComponent(q.id)}"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Update the contract with this design</a>` : ''}
+      ${state.dealer && q.id && !params.get('revise') && ['admin', 'sales'].includes(state.dealer.role) ? `<a class="btn primary block" href="${ADMIN_URL}#/pos/new?quote=${encodeURIComponent(q.id)}${q.contact_id ? '&contact=' + q.contact_id : ''}"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 17l2-2 2 1 4-4"/></svg>Write it up — start a contract</a>` : ''}
       <button class="btn ghost block" data-dl="glb"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/></svg>Download 3D model (.glb)</button>
       ${S().customer_pdf !== false ? `<button class="btn primary block" data-dl="quotepdf"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M12 18v-6m0 6-3-3m3 3 3-3"/></svg>${showPrices() ? 'Download quote PDF' : 'Download design PDF'}</button>` : ''}
       <button class="btn ghost block" data-dl="plan"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3zM3 12h7M14 3v7M14 14v7"/></svg>View / print floor plan</button>
@@ -592,11 +599,17 @@ async function submitQuote() {
   const f = $('#qform'); const err = $('#qerr');
   const data = Object.fromEntries(new FormData(f).entries());
   data.sms_consent = !!f.querySelector('[name=sms_consent]')?.checked;
+  if (state.pos) { // sales rep saving a design for a contract: name + (contact on file, email or mobile)
+    if (!String(data.first_name || '').trim()) { err.textContent = "Enter the customer's first name."; err.hidden = false; f.querySelector('[name=first_name]')?.focus(); return; }
+    if (!state.pos.contact && !String(data.email || '').trim() && !String(data.phone || '').trim()) { err.textContent = "Enter the customer's email or mobile."; err.hidden = false; f.querySelector('[name=email]')?.focus(); return; }
+    if (String(data.email || '').trim() && !/^\S+@\S+\.\S+$/.test(data.email)) { err.textContent = 'Please enter a valid email.'; err.hidden = false; f.querySelector('[name=email]')?.focus(); return; }
+  } else {
   const need = ['first_name', 'email', ...(S().require_phone ? ['phone'] : [])];
   const miss = need.filter(k => !String(data[k] || '').trim());
   if (miss.length || !/^\S+@\S+\.\S+$/.test(data.email || '')) {
     err.textContent = miss.length ? 'Please fill in the required fields.' : 'Please enter a valid email.'; err.hidden = false;
     (f.querySelector(`[name=${miss[0] || 'email'}]`))?.focus(); return;
+  }
   }
   if (mode() === 'dealer' && !findDealer(state.base, state.config.dealer_id)) {
     err.textContent = 'Please choose your dealer lot at the top so we can price your shed.'; err.hidden = false; $('#dealerSel')?.focus(); return;
@@ -607,9 +620,12 @@ async function submitQuote() {
   const btn = $('#next'); btn.disabled = true; btn.textContent = 'Sending…';
   const utm = {}; for (const [k, v] of params) if (k.startsWith('utm_') || k === 'gclid' || k === 'fbclid') utm[k] = v;
   try {
-    const r = await fetch('/api/v1/quotes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: state.config, customer: data, utm, source: params.get('source') || document.referrer || 'configurator' }) });
+    const body = { config: state.config, customer: data, utm, source: params.get('source') || document.referrer || 'configurator' };
+    if (state.pos) Object.assign(body, { pos: true, contact_id: state.pos.contact?.id || null, source: 'Point of sale' });
+    const r = await fetch('/api/v1/quotes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Something went wrong');
+    if (state.pos) { state.submitted = j; btn.textContent = 'Saved — opening the contract…'; posReturn(j.id); return; }
     const u = new URL(j.links.view_3d, location.href);
     j.token = u.searchParams.get('q') || (u.hash.match(/^#q-([a-f0-9]+)/) || [])[1];
     state.submitted = j;
@@ -618,7 +634,7 @@ async function submitQuote() {
     renderSteps(); renderPanel();
     if (S().thank_you_url) setTimeout(() => { (window.top || window).location.href = S().thank_you_url + (S().thank_you_url.includes('?') ? '&' : '?') + 'quote=' + encodeURIComponent(j.number); }, 2500);
   } catch (e) { err.textContent = e.message; err.hidden = false; }
-  finally { btn.disabled = false; if (!state.submitted) btn.textContent = 'Get my quote'; }
+  finally { btn.disabled = false; if (!state.submitted) btn.textContent = quoteBtnLabel(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -687,6 +703,46 @@ function renderDealerBadge() {
     toast(state.customerView ? `Customer view — prices are ${S().show_prices !== false ? 'shown' : 'hidden'} for customers` : 'Dealer mode — prices always shown');
   };
 }
+// ---------------------------------------------------------------------------
+// Point of sale: a sales rep opened this from a contract. Saving brings the design straight back to it.
+// ---------------------------------------------------------------------------
+const ADMIN_URL = window.__adminUrl || '/admin/';
+const quoteBtnLabel = () => (state.pos ? 'Save design &amp; return to contract' : 'Get my quote');
+function posPrefill() {
+  const c = state.pos?.contact || {};
+  const [first, ...rest] = String(state.pos?.name || '').trim().split(/\s+/);
+  const pick = (k, alt) => c[k] || alt || '';
+  return { first_name: pick('first_name', first), last_name: pick('last_name', rest.join(' ')), email: pick('email', state.pos?.email), phone: pick('phone', state.pos?.phone), address: pick('address'), city: pick('city'), state: pick('state'), zip: pick('zip') };
+}
+function posReturn(quoteId) {
+  const back = state.pos.back;
+  location.href = ADMIN_URL + back + (quoteId ? (back.includes('?') ? '&' : '?') + 'quote=' + encodeURIComponent(quoteId) : '');
+}
+function renderPosBar() {
+  let el = $('#posBar');
+  if (!el) { el = document.createElement('div'); el.id = 'posBar'; el.className = 'pos-bar'; $('#topbar').after(el); document.body.classList.add('has-pos-bar'); }
+  const pf = posPrefill(); const who = [pf.first_name, pf.last_name].filter(Boolean).join(' ');
+  const rev = (state.pos.back.match(/^#\/pos\/revise\/(\d+)/) || [])[1];
+  el.innerHTML = `<div class="pos-txt"><b>${who ? 'Designing for ' + esc(who) : 'Designing for a contract'}</b><span>${rev ? 'Editing a contract' : 'New contract'} · save to bring this design back to it</span></div>
+    <button type="button" class="pos-save" id="posSave">Save design &amp; return</button><button type="button" class="pos-cancel" id="posCancel">Cancel</button>`;
+  $('#posSave').onclick = () => {
+    if (state.submitted) return;
+    if (state.step !== QUOTE) go(QUOTE);
+    // a contact on file is all we need; otherwise the rep fills in the name on the quote step first
+    if (state.pos.contact) submitQuote(); else { $('#qform [name=first_name]')?.focus(); toast('Check the customer details, then click Save design & return to contract'); }
+  };
+  $('#posCancel').onclick = () => posReturn(null);
+}
+async function startPos() {
+  const back = params.get('back') || '';
+  if (params.get('pos') !== '1' || !state.dealer || !['admin', 'sales'].includes(state.dealer.role)) return;
+  if (!/^#\/pos\/(new|revise\/\d+)(\?[A-Za-z0-9=&%._-]*)?$/.test(back)) return; // only ever send people back into the point of sale
+  state.pos = { back, contact: null, name: params.get('name') || '', email: params.get('email') || '', phone: params.get('phone') || '' };
+  state.customerView = false;
+  const cid = Number(params.get('contact'));
+  if (cid) { try { const r = await fetch('/api/crm/contacts/' + cid); if (r.ok) state.pos.contact = await r.json(); } catch { /* fall back to the name passed along */ } }
+  renderPosBar(); renderDealerBadge();
+}
 async function boot() {
   if (params.get('embed') === '1') document.body.classList.add('embed');
   if (matchMedia('(pointer: coarse)').matches) $('#hint').textContent = 'Tip: tap a door or window to change it · press and drag to move it · pinch to zoom';
@@ -707,6 +763,7 @@ async function boot() {
   // lot staff signed in to the dealer configurator always quote for their own lot
   if (state.dealer?.dealer_id && findDealer(cat, state.dealer.dealer_id)) { savedLoc.dealer_id = findDealer(cat, state.dealer.dealer_id).id; state.lockDealer = true; }
   if (params.get('zip')) savedLoc.zip = params.get('zip');
+  await startPos();
   if (st.brand_color) document.documentElement.style.setProperty('--brand', st.brand_color);
   $('#company').textContent = st.company_name || 'Shed Builder';
   document.title = `${st.company_name ? st.company_name + ' — ' : ''}Design your shed in 3D`;

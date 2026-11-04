@@ -1,6 +1,7 @@
 // Demo mode for the 3D builder: in-browser backend (shared with the admin demo) + artifact downloads.
 import './backend.js';
 import './downloads.js';
+window.__adminUrl = 'admin.html'; // "Save design & return" goes back to the demo admin
 
 addEventListener('DOMContentLoaded', () => {
   const b = document.createElement('div');

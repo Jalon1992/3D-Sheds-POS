@@ -1,6 +1,14 @@
 # 3D Shed Builder
 
-A self-hosted 3D shed configurator with an admin back office, an Open REST API, signed webhooks and a native GoHighLevel integration.
+A self-hosted 3D shed configurator with a **built-in CRM**, a **point of sale with e-signatures** (Cash and Rent-to-Own), **production & delivery boards**, an admin back office, an Open REST API, signed webhooks and a native GoHighLevel integration.
+
+**Want to try it?** Follow [TEST_DRIVE.md](TEST_DRIVE.md).
+
+**New in 2.0** — see [Point of sale](#point-of-sale-contracts--e-signature), [CRM](#crm), [Texting & email](#texting--email-setup), [Team roles](#team-roles--drawing-packages) and [Testing](#testing).
+- Every 3D submission lands in the CRM as a contact + deal. Add walk-ins and phone leads by hand. Two-way texting and email, notes, tasks, saved replies, a drag-and-drop pipeline, and live updates for everyone signed in.
+- Upload your own contract PDFs for **Cash** and **Rent-to-Own**, drag signature / initials / date / auto-filled boxes onto them, and the 3D rendering, floor plan and all four elevations are attached automatically.
+- Send the contract by **text and/or email**, or sign in person on the lot tablet. You get a text/email the moment it's signed, and you download one PDF with everything: contract, signatures, drawings and a certificate of completion (audit trail).
+- Signed contracts drop onto the **Production & delivery** board. Roles: **Admin, Sales, Production, Delivery**, all logged in at the same time.
 
 - **Customers:** pick a Style & Size (one screen) → Roof & Colors (Architectural Shingles or Ag Panel Metal) → Options → submit a Quote. Standard options are already on the shed. Customers **drag and drop** doors, windows and every other option to a new spot on the 3D model (along a wall, around a corner to another wall, across the ceiling), and click any of them to upgrade, swap or remove it. After submitting they can download their **3D model (.glb)** and a **to-scale floor plan** (SVG / print to PDF).
 - **You (admin):** log in at `/admin` to manage styles, sizes & prices, colors, options (each with a built-in 3D model or your own uploaded `.glb`), quotes, GHL, webhooks, API keys and branding — with a live 3D preview while you edit.
@@ -39,8 +47,10 @@ The first run seeds 4 sample styles (Classic Gable, Lofted Barn, Modern Lean-To,
 | `UPLOAD_DIR` | `./uploads` | Uploaded 3D models and images |
 | `SESSION_SECRET` | auto-generated | Cookie signing secret |
 | `COOKIE_SECURE` | `false` | Set `true` when served over HTTPS |
+| `FILES_DIR` | `<DB folder>/files` | Contract templates and signed contracts (kept private — never served publicly) |
+| `MESSAGING_TEST_MODE` | — | `1` = log texts/emails in the CRM without sending them (also a switch in Settings → CRM & messaging) |
 
-**Back up `data/` and `uploads/`** — that's everything (catalog, quotes, settings, models).
+**Back up `data/` and `uploads/`** — that's everything (catalog, quotes, CRM, contracts and signed PDFs in `data/files`, settings, models).
 
 ---
 
@@ -51,7 +61,7 @@ Any host that runs Node or Docker works. It needs a **persistent disk** for `dat
 **Render (easiest, uses the included `render.yaml`)**
 1. On render.com: **New → Blueprint**, connect GitHub and pick this repo.
 2. Enter `ADMIN_EMAIL` and `ADMIN_PASSWORD` when asked, then **Apply**. Render creates the web service with a 1 GB disk (Starter plan; disks need a paid instance).
-3. When it's live, open `https://<your-app>.onrender.com/admin/`, log in, and set **Settings → Public URL**.
+3. When it's live, open `https://<your-app>.onrender.com/admin/`, log in, and set **Settings → Company → Public URL**.
 4. Optional: add your own domain (e.g. `builder.yourcompany.com`) under the service's **Settings → Custom Domains**.
 
 **Docker**
@@ -65,7 +75,7 @@ docker run -d -p 3000:3000 -v shed_data:/app/data -v shed_uploads:/app/uploads \
 
 **VPS:** `npm install --omit=dev && npm start` behind Nginx/Caddy with HTTPS, kept alive with pm2 or systemd.
 
-After deploying, set **Admin → Settings → Public URL** (e.g. `https://builder.yourdomain.com`) so links in webhooks and GHL point to the right place.
+After deploying, set **Admin → Settings → Company → Public URL** (e.g. `https://builder.yourdomain.com`) so links in webhooks and GHL point to the right place.
 
 ---
 
@@ -133,7 +143,7 @@ Models are stretched to the width × height × depth you enter, so match those t
 
 ## Showing prices: customer vs dealer configurator
 
-- **Customer-facing configurator** (your public link / website embed): Admin → Settings → **Show prices to customers**. When it's off, customers see no prices anywhere: no totals, no option prices, "Price on request" in the footer, and a *design* PDF without prices. Prices aren't even sent to their browser (the public catalog comes back with prices zeroed and the public price API refuses), so nobody can dig them out. Quotes are still priced on the server and sent to you, your webhooks and GHL with full pricing.
+- **Customer-facing configurator** (your public link / website embed): Admin → 3D configurator → Configurator settings → **Show prices to customers**. When it's off, customers see no prices anywhere: no totals, no option prices, "Price on request" in the footer, and a *design* PDF without prices. Prices aren't even sent to their browser (the public catalog comes back with prices zeroed and the public price API refuses), so nobody can dig them out. Quotes are still priced on the server and sent to you, your webhooks and GHL with full pricing.
 - **Dealer-facing configurator**: open the configurator while signed in to the admin (**Open configurator (dealer mode)**). It **always shows prices**, whatever the setting, and has a *Dealer mode* badge with a **Customer view** switch to preview exactly what customers see. Any staff login works (admin, sales, production). Sales/production users tied to a dealer lot are locked to that lot and its price tier. Quotes made this way are marked *Dealer configurator — name*, so you can tell them apart in Quotes.
 - Give lot staff their own login (Account & users → role *Sales*, pick their lot) and have them sign in on the lot's tablet. The configurator then works as their dealer tool.
 
@@ -152,15 +162,16 @@ Admin → **Price tiers & dealers**.
 
 ## Team roles & drawing packages
 
-Admin → **Account & users** → add team members with a role:
+Admin → **Account & users** → add team members with a role. Any number of people can be signed in at the same time, on any device; pages update live when someone else changes something.
 
 | Role | Can do |
 |---|---|
-| **Admin** | Everything |
-| **Sales** | View quotes, change status & notes, download drawings |
-| **Production** | View quotes (read-only) and download drawings |
+| **Admin** | Everything, including templates, messaging setup, pipelines and users |
+| **Sales** | CRM (contacts, conversations, pipeline, tasks), text & email customers, quotes, write up and send contracts, sign for the company |
+| **Production** | Production board (move buildings through the shop, serial numbers, notes), quotes (read-only), drawings, signed contract PDF. No prices on the board |
+| **Delivery** | Delivery schedule (date, time window, driver, notes), customer address/phone/directions, text the customer about their delivery, drawings |
 
-Sales and Production users can be limited to **one dealer lot** — they then only see that lot's quotes (enforced by the server).
+Non-admin users can be limited to **one dealer lot** — they then only see that lot's quotes, contacts, contracts and orders (enforced by the server). Each person can switch on their own text/email alerts in **Account**. A login can be turned off without deleting it.
 
 **Drawings (PDF)** — on any quote (list or detail) click **Drawings PDF** to get one file with:
 1. 3D view & specifications (size, roofing, colors, dealer lot, delivery address, every option and its wall)
@@ -173,6 +184,81 @@ Elevations are drawn to scale from the same geometry as the 3D model: siding, tr
 **Quote PDF (prices + drawings)** — Admin and Sales also get a **Quote PDF** button. It is the same package with a **Quote & pricing** sheet added as sheet 2: customer contact, dealer lot, price tier, every line item (base shed, roofing, upgrades with "Upgrade from …", standard items marked *Included*, credits for removed standard items), subtotal, delivery, tax and total. The cover sheet also shows the total. Production only sees the Drawings PDF, which has no prices.
 
 Customers can download their own Quote PDF from the thank-you screen after submitting. It does not show the tier name. You can turn this off in **Settings** ("Let customers download their quote PDF"), and the **Terms printed on the quote PDF** setting controls the fine print.
+
+## Point of sale (contracts & e-signature)
+
+Admin → **Point of sale**.
+
+**1. Templates (one-time setup).** Make your agreement in Word or Google Docs, save it as PDF, then **Point of sale → Contract templates → + Upload template** and pick *Cash*, *Rent to own* or *Both*. In the designer, click a field type and click on the page:
+- **Signer fields** — signature, initials, date signed, text box, checkbox — for the *Customer*, *Co-buyer* or *Company / sales rep* (blue / purple / orange).
+- **Auto-filled info** — customer name/address/phone, building style/size/colors/options, every price line, deposit and balance, rent-to-own term/monthly/tax/LDW/due-at-signing/total of payments, contract #, date, dealer lot, sales rep, and **custom values** the rep types in (e.g. *Anchor type*).
+- **3D rendering** and **floor plan** images placed right on your page.
+- Template switches: **attach drawings** (3D view & specs, floor plan, 4 elevations appended at the end) and **customer initials on each drawing sheet**.
+Drag to move, drag the corner to resize, arrow keys nudge, *Replace PDF* keeps your boxes. Two **Sample** templates are included so you can try everything immediately — they are examples only; have your attorney review your own agreement.
+
+**2. Write it up.** From a contact, a quote (**Start contract**), the dealer configurator's thank-you screen (**Write it up**), or **+ New contract**: pick the design (or click **Design in 3D configurator** to build it now for this customer; see below), Cash or Rent to own, the template, the signers (optional co-buyer, which rep signs for the company), the deposit or RTO term (live monthly calculator; reps can override the monthly), and any custom values. The browser renders the 3D view, floor plan and elevations and the server builds the contract PDF. Nothing is sent until you review it.
+
+**3. Sign.** **Send to customer** texts and/or emails each signer their own secure link (no account needed), or tap **Sign now (in person)** to sign on the lot tablet. The signing page works on phones: it walks the signer box by box, they draw or type a signature once and it's used everywhere, initial each drawing sheet, tick boxes, agree to e-sign (ESIGN/UETA consent) and finish. The rep taps **Sign as company**.
+
+**4. Done.** When everyone has signed: the signed PDF (contract + signatures + drawings + **certificate of completion** with timestamps, IP addresses, devices and a SHA-256 fingerprint) is emailed to the customer, you get a text/email alert (Settings → CRM & messaging), the deal moves to **Sold**, the quote is marked won, and an order card lands on the **Production & delivery** board. Download the signed PDF any time from the contract page.
+
+**Edit a sale & resend:** open the contract → **Edit & resend**. The wizard comes back filled in with everything used last time. Change the design (**Change design in 3D configurator**, see below), Cash ↔ Rent to own, template, signers, deposit or term, and add a short *What changed?* note. This creates the next version (`C-10012-R2`, `-R3`…). Every version is kept with its date and PDF, and the newest is marked **Latest**. Older versions' signing links stop working and point customers to the new link. The resent text and email say it's an updated contract. If the sale was already signed, the signed original stays on file and the order on the production board is updated (not duplicated) once the new version is signed. Deleting an unsent revision brings the previous version back as the latest.
+
+Statuses: *Draft → Sent → Opened → Partly signed → Signed*, or *Void* (links stop working). Links expire after 30 days (configurable); resend any time.
+
+**Design in 3D from the contract:** in a new or edited contract, **Design in 3D configurator** / **Change design in 3D configurator** opens the configurator in the same tab with a green bar: *Designing for (customer) · Save design & return · Cancel*. Make your changes and click **Save design & return**. The design is saved on that same customer (no new lead, no auto-reply to the customer; it's logged on their timeline and their deal is updated), and you land back on the contract with the new design loaded and everything you'd typed (sale type, signers, terms, notes) still there. With no customer picked yet, the configurator asks for a name plus an email or mobile before saving.
+
+**Where things are in the menu:**
+- *Point of sale → Contracts*: every contract, with **Edit** on each row to change a sale and resend it.
+- *Point of sale → Contract templates*: upload your PDFs and place the signature/auto-fill boxes.
+- *3D configurator → Configurator settings*: only what customers see in the builder (prices shown, tax, delivery fee, form and thank-you settings).
+- *Settings → Company* (name, address, logo, time zone, public URL), *Settings → CRM & messaging* (texts, email, alerts), *Settings → Point of sale settings* (RTO rate sheet, deposits, signing links, contract messages).
+
+**Rent-to-own setup:** Settings → *Point of sale settings*. Enter your RTO company's rate sheet as **term factors** (monthly rental = cash price before tax × factor ÷ months), the number of payments due at signing, damage-waiver (LDW) per month and the rental tax rate. The defaults are placeholders — replace them with your RTO company's numbers. The same page holds the default cash deposit %, link expiry and the wording of every contract text/email. Company name, address and the time zone used for dates on contracts are under Settings → Company.
+
+## Dashboard reports
+
+Admin → **Dashboard**. Sales, leads and quotes for **Month to date**, **Year to date**, any **Month**, any **Year**, or **All years**, with **Compare with last year** (same dates last year). Shows:
+- **Tiles:** sales $ (cash vs rent-to-own count), leads, quotes, close rate (sales ÷ quotes) and average sale, each with the change against last year.
+- **Month by month:** this year vs last year, switchable between sales $, sales count, leads, quotes and quoted $. Hover for exact numbers.
+- **Running total:** by day for a month, by month for a year, with last year dashed for comparison.
+- **Sales mix** (cash vs rent to own) and **where leads came from** (3D builder, walk-in/phone/manual, texts & emails).
+- **Year-over-year** and **by-month** tables.
+- A dealer-lot filter when you have lots.
+
+A sale counts once, on the day its contract was first fully signed, at the value of its latest signed version. Dates use the time zone in Point of sale settings.
+
+## CRM
+
+Admin → **Contacts / Conversations / Pipeline / Tasks**.
+- **Every 3D quote** creates or updates a contact (matched by email, then phone) and a deal in the *Sales* pipeline. A customer who designs again updates their open deal instead of piling up cards. Existing quotes from before 2.0 are imported once on first start.
+- **Manual leads:** *+ Add lead* (walk-ins, phone calls, Facebook…), with duplicate detection.
+- **Contact record:** contact details, tags, owner, consent and do-not-contact switches; one timeline with texts, emails, notes, calls, quotes, contracts and stage changes; send a **text or email** (saved replies and merge tags like `{{contact.first_name}}`); tasks; deals with stage/status; 3D designs; contracts.
+- **Conversations:** a shared inbox. Replies arrive live (Twilio, GHL or inbound-email webhook). Customers who reply **STOP** are marked do-not-text automatically.
+- **Pipeline:** drag-and-drop board with totals per stage; edit stage names/order (*Edit stages*). Sending a contract moves the deal to *Contract sent*; signing moves it to *Sold*.
+- **Alerts:** the bell shows new leads, replies and signed contracts; optionally by text/email (Settings → CRM & messaging, or each user's Account).
+- **Production & delivery:** *Sold → In production → Built → Delivery scheduled → Out for delivery → Delivered*. Production and Delivery each move cards through their own stages ("Built" is the hand-off). The delivery schedule lists dates, addresses (directions link), drivers and one-tap texts ("On the way", "Delivered").
+
+## Texting & email setup
+
+Admin → Settings → **CRM & messaging**. The two cards at the top show whether texting and email are **Ready**, the last message sent and the last reply received. Each card has **Check connection**, which logs in with your saved details without sending anything and lists what's fine (✓), what to fix (✕) and warnings (!), and **Send a test**.
+
+**Texting.** Pick one:
+- **Twilio.**
+  1. Paste the Account SID and Auth Token from console.twilio.com.
+  2. Enter your Twilio number. It's saved as +1…, and pasted spaces are removed.
+  3. Click **Save** → **Check connection**. It confirms the login, that the number belongs to the account and can text, and warns if it's a trial account.
+  4. Click **Connect replies for me**. It sets your number's *A message comes in* webhook, so customers' replies land in Conversations (or copy the URL shown into Twilio yourself).
+  In the US your number must be **A2P 10DLC registered** (or a verified toll-free number), or carriers block texts.
+- **GoHighLevel.** Texts go out through your GHL number using the token in Integrations → GoHighLevel (scopes: contacts.write, conversations/message.write, locations.readonly). For replies, create a GHL workflow: *Customer Replied* → *Webhook* (POST) to the URL shown.
+
+When something fails, the reason is shown in plain words wherever you see the message: in the conversation, on the contract's activity, and in **Recent messages** at the bottom of the page. That includes Twilio carrier codes such as unregistered A2P (30034), trial-account limits (21608), landlines and STOP. Delivery reports from Twilio update each text to delivered or failed.
+
+If a customer's reply is refused, usually because Twilio's webhook address and **Settings → Public URL** differ (Settings → Company → Public URL), a warning at the top of the page says so and how to fix it. Both your custom domain and the onrender.com address are accepted.
+
+**Email.** Choose your provider: **Gmail/Google Workspace, Microsoft 365/Outlook, Yahoo, SendGrid, Mailgun, Amazon SES**, other SMTP, or **GoHighLevel**. The server settings are filled in for you, and the help text says exactly which password to use (for example a Google App Password; pasting it with spaces is fine). The **From** address defaults to *Company name <your login>*. Replies go to the rep who sent the email unless you set one Reply-to address. Optional: point Mailgun/SendGrid/Postmark inbound at the inbound URL to see email replies in Conversations.
+
+**Alerts:** numbers and emails to notify when a contract is signed (optionally with the PDF), when one signer finishes, when a new 3D lead arrives, or when a customer replies. Each team member can also turn on their own alerts in **Account**. **Instant reply** sends an automatic text and/or email to new 3D leads. **Test mode** logs everything without sending, for training.
 
 ## GoHighLevel
 
@@ -275,6 +361,21 @@ Prices are always recalculated on the server, so a tampered browser can't submit
 
 `npm run build:demo` builds a static demo in `demo/dist/`: the 3D builder (`shed-builder-demo.html`) and the admin (`admin.html`). They share an in-browser stand-in for the server, so admin changes show up in the builder and submitted quotes appear in the admin. Data stays in that browser; webhooks and GoHighLevel only run on the real server. Serve both files from the same folder (with the builder as `index.html`). `node demo/build.mjs --seed http://localhost:3000` refreshes the sample catalog from a running server.
 
+## Testing
+
+```bash
+npm test            # API + provider suites: CRM, contracts & signing, revisions, reports, roles, lots, concurrency, and real
+                    # Twilio / GoHighLevel requests (stand-in API) and real email (local SMTP server), plus pricing
+                    # (units, swaps, credits, tax, tiers by lot/ZIP, tampering), configurator settings, 3D model uploads,
+                    # API keys + catalog CRUD, signed webhooks with retries, the GoHighLevel push, auto-replies and a full sale
+npm run test:browser # 3D configurator in a real browser: uploaded .glb models render, price on screen = server price for
+                    # every style, hidden prices / currency / required phone show on the page, settings pages don't clash
+npm run test:e2e    # browser walkthrough: 4 roles at once, phone signing, revisions, dashboard (needs Playwright + Chromium)
+npm run test:sweep  # bug sweep: every page x every role x desktop/phone, script-injection attempts, accented PDFs,
+                    # double submits, expired links, oversized uploads, deleted users, restart
+```
+Both start their own server on a throw-away database in messaging test mode. The browser suite signs in as Admin, Sales, Production and Delivery **at the same time**, has a customer sign on an iPhone and a co-buyer on an Android phone, and walks a lead from the 3D builder through contract, signature, production and delivery. It prints where it saved screenshots and the signed PDF.
+
 ## Project layout
 
 ```
@@ -282,6 +383,16 @@ server.js                    Express app: API, admin, auth, uploads, static file
 src/db.js                    SQLite schema + catalog loader
 src/auth.js                  Admin sessions, password hashing, API keys
 src/integrations.js          Webhooks (signed, retried) + GoHighLevel
+src/crm.js                   CRM API: contacts, pipelines, messages, tasks, notifications, order board, inbound webhooks
+src/contracts.js             Point of sale API: templates, contracts, sending, public signing API
+src/contract-pdf.js          Contract PDFs (pdf-lib): fill, attach drawings, stamp signatures, certificate, sample templates
+src/messaging.js             Twilio / SMTP / GoHighLevel texting & email
+src/permissions.js           Role permissions + dealer-lot filtering
+src/realtime.js              Live updates (Server-Sent Events)
+public/sign.html, js/sign.js Customer signing page
+public/admin/crm.js, pos.js  CRM, boards, messaging and point-of-sale screens
+public/js/shared/contract.js Field types, merge tags, rent-to-own calculator
+tests/                       API + browser end-to-end tests
 src/openapi.js               OpenAPI 3.1 spec
 src/seed.js                  First-run sample data
 public/index.html            Customer configurator
@@ -294,5 +405,7 @@ render.yaml, Dockerfile      Deployment
 ```
 
 ## Notes
+- E-signatures: each signer gets a unique link, agrees to an ESIGN/UETA consent, and every view/sign is logged with time, IP and device on the certificate. This is the standard approach for e-signing sales contracts, but it is not legal advice — have your attorney approve your templates and your rent-to-own disclosures for your state.
+- The try-it-now demo (`npm run build:demo`) runs everything in the browser, CRM and point of sale included (`demo/dist/artifact/` is the claude.ai artifact bundle). Data stays in that browser; texts and emails are only logged.
 - Prices shown are a quote, not a contract — tax and delivery are configurable in Settings; hide prices entirely with *Show prices to customers* off.
 - The GoHighLevel native push uses the LeadConnector API v2 (`/contacts/upsert`, `/opportunities/`, `/contacts/{id}/notes`, header `Version: 2021-07-28`). If GHL changes scopes or endpoints, check **Integrations → Delivery log** for the exact response.

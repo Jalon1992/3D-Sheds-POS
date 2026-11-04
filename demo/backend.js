@@ -5,8 +5,9 @@ import seed from './seed-admin.json';
 import { priceConfig, sanitizeConfig, defaultConfig, stripPrices, hideQuotePrices } from '../public/js/shared/pricing.js';
 import { floorPlanSVG } from '../public/js/shared/floorplan.js';
 import { formatQuote } from '../public/js/shared/quote-format.js';
+import { permissionsFor } from '../src/permissions.js';
 
-const KEY = 'shedbuilder-demo-v1';
+const KEY = 'shedbuilder-demo-v2';
 const PUBLIC = ['company_name', 'logo_url', 'brand_color', 'currency_symbol', 'tax_rate', 'tax_delivery', 'delivery_fee', 'show_prices',
   'success_message', 'consent_text', 'phone', 'website', 'privacy_url', 'require_phone', 'headline', 'thank_you_url', 'roofing',
   'downgrade_credit', 'remove_credit', 'color_groups', 'pricing_mode', 'price_tiers', 'default_tier', 'dealers', 'zip_tiers', 'customer_pdf', 'quote_terms'];
@@ -28,11 +29,12 @@ function fresh() {
     users: [
       { id: 1, email: 'demo@example.com', name: 'Demo Admin', role: 'admin', created_at: now() },
       { id: 2, email: 'shop@example.com', name: 'Sample Production Crew', role: 'production', created_at: now() },
-      { id: 3, email: 'sales@example.com', name: 'Sample Sales (Highway 45 lot)', role: 'sales', dealer_id: 'lot2', created_at: now() },
+      { id: 3, email: 'sales@example.com', name: 'Sam Sales', role: 'sales', created_at: now() },
+      { id: 4, email: 'driver@example.com', name: 'Dee Delivery', role: 'delivery', created_at: now() },
     ],
     seq: 1000,
   };
-  db = d; sampleQuotes(); return d;
+  db = d; for (const fn of hooks.fresh) fn(d); sampleQuotes(); return d;
 }
 const now = (o = 0) => new Date(Date.now() - o).toISOString().replace('T', ' ').slice(0, 19);
 const nextId = () => ++db.seq;
@@ -54,7 +56,7 @@ const links = {
   admin: q => `admin.html#/quotes/${q.id}`,
 };
 const fmt = q => formatQuote(q, '', links);
-function createQuote(config, customer, source) {
+function createQuote(config, customer, source, opts = {}) {
   const cat = catalog(false);
   const cfg = sanitizeConfig(cat, config);
   const pricing = priceConfig(cat, cfg);
@@ -66,15 +68,18 @@ function createQuote(config, customer, source) {
     size_label: `${size.width}' x ${size.depth}'`, created_at: now(), updated_at: now(), internal_notes: '',
     dealer_id: pricing.dealer ? String(pricing.dealer.id) : null, dealer_name: pricing.dealer?.name || null, price_tier: pricing.tier_name || null, pricing_zip: pricing.zip || null,
   };
-  db.quotes.unshift(q); save(); return q;
+  db.quotes.unshift(q); save();
+  for (const fn of hooks.quoteCreated) fn(q, opts);
+  return q;
 }
+export const hooks = { quoteCreated: [], fresh: [] };
 function sampleQuotes() {
   const cat = catalog(false);
   const people = [['Sample', 'Customer A', 'Lofted Barn', 'won'], ['Sample', 'Customer B', 'Classic Gable', 'contacted'], ['Sample', 'Customer C', 'Garage', 'new']];
   people.forEach(([f, l, styleName, status], i) => {
     const st = cat.styles.find(s => s.name === styleName) || cat.styles[0];
     const cfg = defaultConfig(cat, st.id, st.sizes[Math.min(2, st.sizes.length - 1)].id);
-    const q = createQuote(cfg, { first_name: f, last_name: l, email: `sample${i + 1}@example.com`, phone: '555-0100', city: 'Example City', notes: 'Sample quote for the demo' }, 'sample');
+    const q = createQuote(cfg, { first_name: f, last_name: l, email: `sample${i + 1}@example.com`, phone: `(615) 555-01${10 + i}`, city: 'Example City', notes: 'Sample quote for the demo' }, 'sample');
     q.status = status; q.created_at = now((i + 1) * 864e5 * 3);
   });
   save();
@@ -90,8 +95,8 @@ const loggedOut = () => { try { return sessionStorage.getItem(KEY + '-out') === 
 
 const viewAs = () => { try { return Number(sessionStorage.getItem(KEY + '-as')) || 1; } catch { return 1; } };
 const currentUser = () => db.users.find(u => u.id === viewAs()) || db.users[0];
-on('GET', /^\/api\/auth\/me$/, () => (loggedOut() ? err('Not logged in', 401) : json(currentUser())));
-on('POST', /^\/api\/auth\/login$/, () => { try { sessionStorage.removeItem(KEY + '-out'); } catch { /* */ } return json(db.users[0]); });
+on('GET', /^\/api\/auth\/me$/, () => (loggedOut() ? err('Not logged in', 401) : json({ ...currentUser(), permissions: permissionsFor(currentUser()) })));
+on('POST', /^\/api\/auth\/login$/, () => { try { sessionStorage.removeItem(KEY + '-out'); } catch { /* */ } return json({ ...currentUser(), permissions: permissionsFor(currentUser()) }); });
 on('POST', /^\/api\/auth\/logout$/, () => { try { sessionStorage.setItem(KEY + '-out', '1'); } catch { /* */ } return json({ ok: true }); });
 
 // Dealer-facing configurator in the demo: the admin's "Open configurator" link adds #staff, which signs
@@ -109,7 +114,12 @@ on('GET', /^\/api\/v1\/shared\/([a-f0-9]+)$/, m => { const q = db.quotes.find(x 
 on('POST', /^\/api\/v1\/quotes$/, (m, b) => {
   const v = dealerViewer();
   const cfg = v?.dealer_id && b.config ? { ...b.config, dealer_id: v.dealer_id } : b.config;
-  try { const q = createQuote(cfg, b.customer || {}, v ? `Dealer configurator — ${v.name}` : b.source); logEvent('quote.created', q); return json(v || pricesPublic() ? fmt(q) : hideQuotePrices(fmt(q)), 201); }
+  const pos = v && ['admin', 'sales'].includes(v.role) && b.pos ? { contact_id: Number(b.contact_id) || null, pos: true } : {};
+  const cu = b.customer || {};
+  if (pos.pos) { if (!pos.contact_id && !cu.first_name) return err('first_name is required'); if (!pos.contact_id && !cu.email && !cu.phone) return err("Enter the customer's email or mobile"); }
+  else if (!cu.first_name || !cu.email) return err('first_name and email are required');
+  else if (!v && db.settings.require_phone && !String(cu.phone || '').trim()) return err('phone is required');
+  try { const q = createQuote(cfg, cu, v ? `Dealer configurator — ${v.name}` : b.source, pos); logEvent('quote.created', q); return json(v || pricesPublic() ? fmt(q) : hideQuotePrices(fmt(q)), 201); }
   catch (e) { return err(e.message); }
 });
 on('GET', /^\/api\/v1\/quotes$/, (m, b, url) => {
@@ -118,7 +128,7 @@ on('GET', /^\/api\/v1\/quotes$/, (m, b, url) => {
   const rows = db.quotes.filter(q => (!st || q.status === st) && (!dl || q.dealer_id === dl) && (!lim || q.dealer_id === lim) && (!s || [q.first_name, q.last_name, q.email, q.phone, q.number].join(' ').toLowerCase().includes(s)));
   return json({ total: rows.length, data: rows.map(fmt) });
 });
-on('GET', /^\/api\/v1\/quotes\/(\d+)$/, m => { const q = db.quotes.find(x => x.id === +m[1]); return q ? json({ ...fmt(q), internal_notes: q.internal_notes, pricing_lines: q.pricing.lines }) : err('Not found', 404); });
+on('GET', /^\/api\/v1\/quotes\/(\d+)$/, m => { const q = db.quotes.find(x => x.id === +m[1]); return q ? json({ ...fmt(q), internal_notes: q.internal_notes, pricing_lines: q.pricing.lines, contact_id: q.contact_id || null }) : err('Not found', 404); });
 on('PATCH', /^\/api\/v1\/quotes\/(\d+)$/, (m, b) => {
   const q = db.quotes.find(x => x.id === +m[1]); if (!q) return err('Not found', 404);
   const changed = b.status && b.status !== q.status;
@@ -170,8 +180,8 @@ on('POST', /^\/api\/admin\/api-keys$/, (m, b) => { const key = 'sb_demo_' + tok(
 on('DELETE', /^\/api\/admin\/api-keys\/(\d+)$/, m => { db.api_keys = db.api_keys.filter(k => k.id !== +m[1]); save(); return json(null, 204); });
 on('POST', /^\/api\/admin\/ghl\/test$/, () => err('Demo mode: GoHighLevel is not contacted from the demo. This button works on your deployed app.'));
 on('GET', /^\/api\/admin\/users$/, () => json(db.users));
-on('POST', /^\/api\/admin\/users$/, (m, b) => { if (!b.email || !b.password || b.password.length < 8) return err('Email and an 8+ character password are required'); db.users.push({ id: nextId(), email: b.email, name: b.name || '', role: b.role || 'admin', dealer_id: b.role === 'admin' ? null : (b.dealer_id || null), created_at: now() }); save(); return json({ ok: true }); });
-on('PATCH', /^\/api\/admin\/users\/(\d+)$/, (m, b) => { const u = db.users.find(x => x.id === +m[1]); if (!u) return err('Not found', 404); if (b.role) u.role = b.role; if ('dealer_id' in b) u.dealer_id = b.dealer_id || null; if (u.role === 'admin') u.dealer_id = null; save(); return json({ ok: true }); });
+on('POST', /^\/api\/admin\/users$/, (m, b) => { if (!b.email || !b.password || b.password.length < 8) return err('Email and an 8+ character password are required'); db.users.push({ id: nextId(), email: b.email, name: b.name || '', phone: b.phone || '', role: b.role || 'admin', dealer_id: b.role === 'admin' ? null : (b.dealer_id || null), active: 1, created_at: now() }); save(); return json({ ok: true }); });
+on('PATCH', /^\/api\/admin\/users\/(\d+)$/, (m, b) => { const u = db.users.find(x => x.id === +m[1]); if (!u) return err('Not found', 404); if (b.role) u.role = b.role; if ('dealer_id' in b) u.dealer_id = b.dealer_id || null; if ('active' in b) u.active = b.active ? 1 : 0; if (u.role === 'admin') u.dealer_id = null; save(); return json({ ok: true }); });
 on('DELETE', /^\/api\/admin\/users\/(\d+)$/, m => { if (+m[1] === 1) return err("You can't delete yourself"); db.users = db.users.filter(u => u.id !== +m[1]); save(); return json(null, 204); });
 on('POST', /^\/api\/admin\/account$/, (m, b) => { Object.assign(db.users[0], { email: b.email || db.users[0].email, name: b.name || db.users[0].name }); save(); return json({ ok: true }); });
 on('POST', /^\/api\/admin\/upload$/, async (m, b) => {
@@ -190,6 +200,9 @@ function logEvent(event, q) {
 }
 
 // ---- install -------------------------------------------------------------------
+let ready = Promise.resolve();
+export const setReady = p => { ready = p; };
+export const api = { on, json, err, save, nextId, now, tok, catalog, fmt, currentUser, get db() { return db; }, KEY };
 db = load();
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input, opts = {}) => {
@@ -199,9 +212,10 @@ window.fetch = async (input, opts = {}) => {
   const method = (opts.method || 'GET').toUpperCase();
   let body = opts.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { /* keep */ } }
+  await ready;
   for (const [m, re, fn] of routes) {
     const hit = m === method && path.match(re);
-    if (hit) { await new Promise(r => setTimeout(r, 60)); return fn(hit, body || {}, url); }
+    if (hit) { await new Promise(r => setTimeout(r, 40)); try { return await fn(hit, body || {}, url); } catch (e) { console.error(e); return err(e.message || 'Something went wrong', 500); } }
   }
   return err('Not available in the demo', 404);
 };
@@ -213,4 +227,4 @@ window.__planUrl = id => {
 };
 window.__shedDemoUsers = () => db.users;
 window.__shedDemoViewAs = id => { try { sessionStorage.setItem(KEY + '-as', String(id)); } catch { /* */ } location.hash = ''; location.reload(); };
-window.__shedDemoReset = () => { try { localStorage.removeItem(KEY); } catch { /* */ } location.reload(); };
+window.__shedDemoReset = async () => { try { localStorage.removeItem(KEY); } catch { /* */ } try { await window.__shedDemoClearFiles?.(); } catch { /* */ } location.reload(); };

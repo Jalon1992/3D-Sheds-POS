@@ -26,19 +26,33 @@
 
   <div id="app" class="app" hidden>
     <aside class="side">
-      <div class="side-brand"><div class="logo-mark sm"><svg viewBox="0 0 32 32"><path d="M4 15 16 5l12 10M7 13v14h18V13"/><rect x="13" y="18" width="6" height="9"/></svg></div><span id="sideName">Shed Builder</span></div>
+      <div class="side-brand"><div class="logo-mark sm"><svg viewBox="0 0 32 32"><path d="M4 15 16 5l12 10M7 13v14h18V13"/><rect x="13" y="18" width="6" height="9"/></svg></div><span id="sideName">Shed Builder</span>
+        <button class="bell" id="bellBtn" title="Notifications" aria-label="Notifications"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></svg><span id="bellCount" hidden>0</span></button>
+        <div class="bell-panel" id="bellPanel" hidden><div class="bell-h">Notifications</div><div id="bellList"></div></div></div>
       <nav id="nav">
         <a href="#/dashboard" data-r="dashboard"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/></svg>Dashboard</a>
-        <a href="#/quotes" data-r="quotes"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Quotes</a>
-        <div class="nav-h">Catalog</div>
+        <div class="nav-h">Sales &amp; CRM</div>
+        <a href="#/crm" data-r="crm"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg>Contacts</a>
+        <a href="#/conversations" data-r="conversations"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z"/></svg>Conversations</a>
+        <a href="#/pipeline" data-r="pipeline"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="11" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/></svg>Pipeline</a>
+        <a href="#/tasks" data-r="tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>Tasks</a>
+        <a href="#/quotes" data-r="quotes"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>3D quotes</a>
+        <div class="nav-h">Point of sale</div>
+        <a href="#/pos" data-r="pos"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 17c1.5-2 2.5-2 3 0s1.5 1 2.5-.5M8 12h4"/></svg>Contracts</a>
+        <a href="#/templates" data-r="templates"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h5M8 16.5h3l1.5-1.5 1.5 1.5H16"/></svg>Contract templates</a>
+        <div class="nav-h">Operations</div>
+        <a href="#/orders" data-r="orders"><svg viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>Production &amp; delivery</a>
+        <div class="nav-h">3D configurator</div>
         <a href="#/styles" data-r="styles"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7M5 10v10h14V10"/></svg>Styles &amp; sizes</a>
         <a href="#/colors" data-r="colors"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="10" r="1.5"/><circle cx="12" cy="7.5" r="1.5"/><circle cx="16" cy="10" r="1.5"/></svg>Roofing &amp; colors</a>
         <a href="#/pricing" data-r="pricing"><svg viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>Price tiers &amp; dealers</a>
         <a href="#/options" data-r="options"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1"/><circle cx="15" cy="12" r="1"/></svg>Options &amp; 3D models</a>
-        <div class="nav-h">Connect</div>
+        <a href="#/configurator-settings" data-r="configurator-settings"><svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Configurator settings</a>
+        <div class="nav-h">Settings</div>
+        <a href="#/settings" data-r="settings"><svg viewBox="0 0 24 24"><path d="M4 21V8l8-5 8 5v13M9 21v-6h6v6"/></svg>Company</a>
+        <a href="#/messaging" data-r="messaging"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>CRM &amp; messaging</a>
+        <a href="#/pos-settings" data-r="pos-settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Point of sale settings</a>
         <a href="#/integrations" data-r="integrations"><svg viewBox="0 0 24 24"><path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/></svg>Integrations &amp; API</a>
-        <div class="nav-h">Setup</div>
-        <a href="#/settings" data-r="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</a>
         <a href="#/account" data-r="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Account &amp; users</a>
       </nav>
       <div class="side-foot">

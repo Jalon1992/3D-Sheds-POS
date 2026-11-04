@@ -41,7 +41,7 @@ function readSession(req) {
   if (!uid || !exp || !sig || Number(exp) < Date.now()) return null;
   const expect = crypto.createHmac('sha256', secret()).update(`${uid}.${exp}`).digest('base64url');
   if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
-  return get("SELECT id, email, name, COALESCE(role, 'admin') AS role, dealer_id FROM users WHERE id = ?", Number(uid)) || null;
+  return get("SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, notify_sms, notify_email FROM users WHERE id = ? AND COALESCE(active, 1) = 1", Number(uid)) || null;
 }
 
 // ---- API keys ----------------------------------------------------------------
@@ -62,9 +62,10 @@ function readApiKey(req) {
   return row || null;
 }
 
-/** Roles: admin (everything), sales (quotes: view + update status/notes, drawings),
- *  production (quotes: view + drawings only). sales/production can be limited to one dealer lot. */
-export const ROLES = ['admin', 'sales', 'production'];
+/** Roles: admin (everything), sales (CRM, quotes, contracts), production (orders board + drawings),
+ *  delivery (delivery schedule + drawings). Non-admin roles can be limited to one dealer lot.
+ *  Fine-grained checks for the CRM / point of sale live in permissions.js. */
+export const ROLES = ['admin', 'sales', 'production', 'delivery'];
 const QUOTE_READ = /^\/quotes(\/\d+(\/floorplan\.svg)?)?$/;
 function roleAllows(user, method, path) {
   if (user.role === 'admin') return true;
