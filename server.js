@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import { db, all, get, run, getSettings, setSettings, getCatalog, JSON_COLS } from './src/db.js';
 import { seed } from './src/seed.js';
-import { requireAuth, requireSession, issueSession, clearSession, verifyPassword, hashPassword, createApiKey, readSession, readApiKey, ROLES } from './src/auth.js';
-import { emit, deliver, formatQuote, recentLog, pushToGHL, EVENTS } from './src/integrations.js';
+import { requireAuth, requireSession, issueSession, clearSession, verifyPassword, hashPassword, createApiKey, readSession, readApiKey, ROLES, endSessions } from './src/auth.js';
+import { emit, deliver, formatQuote, recentLog, pushToGHL, EVENTS, blockedTarget } from './src/integrations.js';
 import { openapi } from './src/openapi.js';
 import { priceConfig, sanitizeConfig, stripPrices, hideQuotePrices } from './public/js/shared/pricing.js';
 import { floorPlanSVG } from './public/js/shared/floorplan.js';
@@ -44,7 +44,11 @@ setModuleSource(() => MODS);
   if (!email && !pw) return;
   if (!/^\S+@\S+\.\S+$/.test(email) || pw.length < 10) { console.warn('  ⚠  Developer login not set up: DEVOPS_EMAIL must be an email and DEVOPS_PASSWORD at least 10 characters.'); return; }
   const u = get('SELECT * FROM users WHERE email = ?', email);
-  if (u) run("UPDATE users SET is_devops = 1, role = 'admin', dealer_id = NULL, active = 1, password_hash = ? WHERE id = ?", hashPassword(pw), u.id);
+  if (u) {
+    const changed = !verifyPassword(pw, u.password_hash);
+    run("UPDATE users SET is_devops = 1, role = 'admin', dealer_id = NULL, active = 1, password_hash = ? WHERE id = ?", changed ? hashPassword(pw) : u.password_hash, u.id);
+    if (changed || !u.is_devops) endSessions(u.id); // a new developer password signs out the old one everywhere
+  }
   else run("INSERT INTO users (email, name, password_hash, role, is_devops) VALUES (?, 'Developer', ?, 'admin', 1)", email, hashPassword(pw));
 })();
 const hasDevops = () => !!get('SELECT id FROM users WHERE COALESCE(is_devops, 0) = 1 AND COALESCE(active, 1) = 1 LIMIT 1');
@@ -52,7 +56,32 @@ const canManageModules = u => !!u && u.role === 'admin' && (u.devops || !hasDevo
 const meInfo = u => ({ ...u, permissions: permissionsFor(u), modules: MODS, can_manage_modules: canManageModules(u) });
 
 const app = express();
-app.set('trust proxy', true);
+// Behind Railway's edge the visitor's X-Forwarded-For is replaced, so `true` gives the real client IP there.
+// Other hosts may append to it instead; set TRUST_PROXY to the number of proxies in front of the app (Render: 3).
+const TRUST = process.env.TRUST_PROXY;
+app.set('trust proxy', TRUST === undefined || TRUST === '' || TRUST === 'true' ? true : TRUST === 'false' ? false : /^\d+$/.test(TRUST) ? Number(TRUST) : TRUST);
+app.disable('x-powered-by');
+
+// ---- Security headers. The 3D configurator stays embeddable (website / GHL funnels); the admin, the signing
+// page and the API can't be framed by other sites (clickjacking), and nothing is content-sniffed.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
+  if (/^\/(admin|sign|api|docs)(\/|$)/.test(req.path)) { res.setHeader('X-Frame-Options', 'DENY'); res.setHeader('Content-Security-Policy', "frame-ancestors 'none'"); }
+  if (req.path.startsWith('/sign/')) res.setHeader('Referrer-Policy', 'no-referrer'); // the signing token is in the address
+  next();
+});
+// ---- Cross-site request check (defence in depth on top of SameSite cookies): a signed-in browser request that
+// changes something must come from this site.
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || !/(^|;\s*)sb_session=/.test(req.headers.cookie || '')) return next();
+  const origin = req.get('origin'); if (!origin) return next(); // same-site navigations and non-browser clients send none
+  let host; try { host = new URL(origin).host; } catch { return res.status(403).json({ error: 'Request blocked: unknown origin.' }); }
+  const pub = (() => { try { return new URL(getSettings().public_url).host; } catch { return null; } })();
+  if (host === req.get('host') || host === pub) return next();
+  res.status(403).json({ error: 'Request blocked: it came from another website.' });
+});
 app.use(express.json({ limit: '2mb' }));
 
 // ---- CORS for the API (lets you embed the configurator or call the API from any site / CRM)
@@ -71,13 +100,14 @@ const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
 
 // ---- Simple in-memory rate limit for public quote submissions
 const hits = new Map();
+const MAX_KEYS = 50000; // a flood of made-up addresses can't grow this without limit
 setInterval(() => { const now = Date.now(); for (const [k, arr] of hits) if (!arr.some(t => now - t < 600000)) hits.delete(k); }, 300000).unref();
 function rateLimit(max, windowMs, keyFn = req => req.ip + req.path) {
   return (req, res, next) => {
     const k = keyFn(req), now = Date.now();
     const arr = (hits.get(k) || []).filter(t => now - t < windowMs);
     if (arr.length >= max) return bad(res, 'Too many requests, please try again in a minute.', 429);
-    arr.push(now); hits.set(k, arr); next();
+    arr.push(now); if (!hits.has(k) && hits.size >= MAX_KEYS) hits.delete(hits.keys().next().value); hits.set(k, arr); next();
   };
 }
 
@@ -261,24 +291,26 @@ for (const table of Object.keys(TABLES)) {
     const r = get(`SELECT * FROM ${table} WHERE id = ?`, Number(req.params.id));
     r ? res.json(r) : bad(res, 'Not found', 404);
   });
-  v1.post(`/${table}`, (req, res) => {
+  v1.post(`/${table}`, wrap(async (req, res) => {
     const d = clean(table, req.body);
     if (table === 'webhooks' && !/^https?:\/\//.test(d.url || '')) return bad(res, 'url must start with http(s)://');
+    if (table === 'webhooks') { const why = await blockedTarget(d.url); if (why) return bad(res, `That webhook address ${why}.`); }
     const keys = Object.keys(d);
     if (!keys.length) return bad(res, 'No valid fields');
     try {
       const r = run(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, ...keys.map(k => d[k]));
       res.status(201).json(get(`SELECT * FROM ${table} WHERE id = ?`, Number(r.lastInsertRowid)));
     } catch (e) { bad(res, e.message); }
-  });
-  const upd = (req, res) => {
+  }));
+  const upd = wrap(async (req, res) => {
     const d = clean(table, req.body), keys = Object.keys(d);
     if (!keys.length) return bad(res, 'No valid fields');
+    if (table === 'webhooks' && 'url' in d) { const why = await blockedTarget(String(d.url || '')); if (why) return bad(res, `That webhook address ${why}.`); }
     try {
       run(`UPDATE ${table} SET ${keys.map(k => k + ' = ?').join(', ')} WHERE id = ?`, ...keys.map(k => d[k]), Number(req.params.id));
       res.json(get(`SELECT * FROM ${table} WHERE id = ?`, Number(req.params.id)));
     } catch (e) { bad(res, e.message); }
-  };
+  });
   v1.patch(`/${table}/:id`, upd);
   v1.put(`/${table}/:id`, upd);
   v1.delete(`/${table}/:id`, (req, res) => { run(`DELETE FROM ${table} WHERE id = ?`, Number(req.params.id)); res.sendStatus(204); });
@@ -302,7 +334,8 @@ const loginPerIp = rateLimit(60, 60000, req => 'loginip:' + req.ip);
 app.post('/api/auth/login', loginPerIp, loginPerEmail, (req, res) => {
   const { email, password } = req.body || {};
   const u = get('SELECT * FROM users WHERE email = ?', String(email || '').toLowerCase().trim());
-  if (!u || !verifyPassword(String(password || ''), u.password_hash)) return bad(res, 'Wrong email or password', 401);
+  const ok = verifyPassword(String(password || ''), u?.password_hash); // hashed even for unknown emails (same timing)
+  if (!u || !ok) return bad(res, 'Wrong email or password', 401);
   if (u.active === 0) return bad(res, 'This login has been turned off. Ask your admin.', 403);
   issueSession(res, u.id);
   res.json(meInfo({ id: u.id, email: u.email, name: u.name, role: u.role || 'admin', dealer_id: u.dealer_id || null, devops: !!u.is_devops }));
@@ -315,7 +348,7 @@ admin.use(requireSession);
 // Non-admin roles may only read the catalog/settings (to draw sheds) and manage their own login
 admin.use((req, res, next) => {
   if (req.user.role === 'admin') return next();
-  const open = (req.method === 'GET' && ['/catalog', '/settings', '/modules'].includes(req.path)) || (req.method === 'POST' && req.path === '/account');
+  const open = (req.method === 'GET' && ['/catalog', '/settings', '/modules'].includes(req.path)) || (req.method === 'POST' && ['/account', '/account/sign-out-others'].includes(req.path));
   return open ? next() : res.status(403).json({ error: 'Your account does not have access to this.' });
 });
 admin.post('/account', (req, res) => {
@@ -330,9 +363,17 @@ admin.post('/account', (req, res) => {
   }
   if (!verifyPassword(String(current_password || ''), u.password_hash)) return bad(res, 'Current password is wrong');
   if (new_password && String(new_password).length < 8) return bad(res, 'New password must be at least 8 characters');
+  const newEmail = email ? String(email).toLowerCase().trim() : null;
+  if (newEmail && !/^\S+@\S+\.\S+$/.test(newEmail)) return bad(res, 'Email looks invalid');
+  if (newEmail && get('SELECT id FROM users WHERE email = ? AND id != ?', newEmail, u.id)) return bad(res, 'That email is already used by another login');
   run('UPDATE users SET email = COALESCE(?, email), name = COALESCE(?, name), password_hash = ? WHERE id = ?',
-    email ? String(email).toLowerCase() : null, name || null, new_password ? hashPassword(String(new_password)) : u.password_hash, u.id);
+    newEmail, name || null, new_password ? hashPassword(String(new_password)) : u.password_hash, u.id);
+  // a new password signs this login out on every other device; this one gets a fresh cookie
+  if (new_password) { endSessions(u.id); issueSession(res, u.id); }
   res.json({ ok: true });
+});
+// "Sign out everywhere else" (lost phone, shared tablet)
+admin.post('/account/sign-out-others', (req, res) => { endSessions(req.user.id); issueSession(res, req.user.id); res.json({ ok: true });
 });
 // the developer login is invisible to (and can't be changed by) the customer's own admins
 const devopsRow = id => get('SELECT id FROM users WHERE id = ? AND COALESCE(is_devops, 0) = 1', Number(id));
@@ -365,9 +406,12 @@ admin.patch('/users/:id', (req, res) => {
   if (password && String(password).length < 8) return bad(res, 'Password must be at least 8 characters');
   if (phone && !toE164(phone)) return bad(res, 'Mobile number looks invalid');
   const r = role || u.role || 'admin';
+  const wasActive = u.active ?? 1;
+  const signOut = !!password || (role && role !== (u.role || 'admin')) || (active === false && wasActive) || (dealer_id !== undefined && (dealer_id || null) !== (u.dealer_id || null));
   run('UPDATE users SET role = ?, dealer_id = ?, name = COALESCE(?, name), password_hash = ?, phone = ?, active = ? WHERE id = ?',
     r, r === 'admin' ? null : (dealer_id === undefined ? u.dealer_id : (dealer_id || null)), name ?? null, password ? hashPassword(String(password)) : u.password_hash,
     phone === undefined ? u.phone : (phone || null), active === undefined ? (u.active ?? 1) : (active ? 1 : 0), u.id);
+  if (signOut) { endSessions(u.id); if (u.id === req.user.id) issueSession(res, u.id); } // their open sessions end now (yours gets a fresh cookie)
   res.json({ ok: true });
 });
 admin.delete('/users/:id', (req, res) => {
@@ -382,8 +426,9 @@ admin.get('/settings', (req, res) => {
   if (req.user.role !== 'admin') { for (const k of [...SECRET_SETTINGS, 'inbound_key', 'twilio_sid', 'smtp_user', 'smtp_host', 'ghl_location_id', 'ghl_inbound_webhook_url', 'ghl_custom_fields']) delete s[k]; }
   res.json(s);
 });
-admin.put('/settings', (req, res) => {
+admin.put('/settings', wrap(async (req, res) => {
   const b = { ...(req.body || {}) };
+  for (const k of Object.keys(b)) if (/^(__proto__|constructor|prototype)$/.test(k) || k.startsWith('_')) delete b[k];
   delete b._session_secret; delete b.inbound_key; delete b.crm_backfilled; delete b.sample_templates_seeded; delete b.modules; // modules: developer login only
   for (const k of SECRET_SETTINGS) { delete b[k + '_set']; if (typeof b[k] === 'string' && b[k].startsWith('••••')) delete b[k]; } // unchanged
   for (const k of ['tax_rate', 'delivery_fee']) if (k in b) b[k] = Number(b[k]) || 0;
@@ -395,9 +440,10 @@ admin.put('/settings', (req, res) => {
   if (b.notify_phones) { const bad1 = String(b.notify_phones).split(/[,;]+/).map(x => x.trim()).filter(x => x && !toE164(x)); if (bad1.length) return bad(res, `These alert numbers look wrong: ${bad1.join(', ')}`); }
   if (b.email_from && !/@/.test(b.email_from)) return bad(res, 'The From address needs an email, like sales@yourcompany.com or "Trimline Barns" <sales@yourcompany.com>.');
   if ('smtp_port' in b) b.smtp_port = Number(b.smtp_port) || '';
+  if (b.ghl_inbound_webhook_url) { const why = await blockedTarget(String(b.ghl_inbound_webhook_url)); if (why) return bad(res, `The GoHighLevel inbound webhook URL ${why}.`); }
   if (b.public_url) { b.public_url = String(b.public_url).replace(/\/+$/, ''); if (!/^https?:\/\/[^/\s]+$/.test(b.public_url)) return bad(res, 'Public URL should look like https://builder.yourcompany.com (no page path at the end).'); }
   setSettings(b); res.json({ ok: true });
-});
+}));
 admin.post('/ghl/test', wrap(async (req, res) => {
   const q = get('SELECT * FROM quotes ORDER BY id DESC LIMIT 1');
   if (!q) return bad(res, 'Submit at least one quote first (use the configurator), then test.');
@@ -531,7 +577,9 @@ app.get('/sign/:token', (req, res) => { res.set('Cache-Control', 'no-store'); re
 // =============================================================================
 //  STATIC
 // =============================================================================
-app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
+// Uploaded images/models are served from this site, so an SVG with a script in it must not run here
+app.use('/uploads', (req, res, next) => { res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox"); res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin'); next(); },
+  express.static(UPLOAD_DIR, { maxAge: '7d', dotfiles: 'deny' }));
 app.get('/docs', (req, res) => res.sendFile(join(__dirname, 'public', 'docs.html')));
 app.use(express.static(join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -541,7 +589,9 @@ app.use((err, req, res, next) => {
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request body is too large' });
   if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'File is too large' });
   console.error(err);
-  res.status(500).json({ error: err.message || 'Server error' });
+  // in production don't hand internal details (database errors, file paths) to whoever caused them
+  const hide = process.env.NODE_ENV === 'production' && !err.expose;
+  res.status(err.status >= 400 && err.status < 500 ? err.status : 500).json({ error: hide ? 'Something went wrong on our side. Please try again, or contact support if it keeps happening.' : (err.message || 'Server error') });
 });
 
 app.listen(PORT, () => {

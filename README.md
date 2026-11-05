@@ -46,7 +46,9 @@ The first run seeds 4 sample styles (Classic Gable, Lofted Barn, Modern Lean-To,
 | `DB_PATH` | `./data/shedbuilder.db` | SQLite database file |
 | `UPLOAD_DIR` | `./uploads` | Uploaded 3D models and images |
 | `SESSION_SECRET` | auto-generated | Cookie signing secret |
-| `COOKIE_SECURE` | `false` | Set `true` when served over HTTPS |
+| `COOKIE_SECURE` | auto | Login cookies are marked Secure automatically on https; `true` forces it, `false` turns it off |
+| `TRUST_PROXY` | `true` | How to read the visitor's IP for rate limits. `true` is right on Railway (its edge replaces X-Forwarded-For). Elsewhere set the number of proxies in front of the app (e.g. `3` on Render) |
+| `ALLOW_PRIVATE_WEBHOOKS` | — | `1` lets webhooks call private/internal addresses (only for self-hosted setups that need it; off blocks SSRF) |
 | `FILES_DIR` | `<DB folder>/files` | Contract templates and signed contracts (kept private — never served publicly) |
 | `MODULES` | `all` | Add-on modules on the **first** run: `all`, `none` (3D configurator only) or a list like `crm,pos`, `pos,orders`. After that they're switched on the Modules page |
 | `DEVOPS_EMAIL`, `DEVOPS_PASSWORD` | — | The developer login (password 10+ characters). Only this login sees the **Modules** page; the customer's admins can't see, change or remove it. Re-applied on every start |
@@ -424,6 +426,30 @@ public/admin/                Admin dashboard
 demo/                        Single-file demo build
 render.yaml, Dockerfile      Deployment
 ```
+
+## Security
+
+What's in place (each item has an attack test in `tests/security.test.mjs`, run by `npm test`):
+
+- **Logins:** passwords hashed with scrypt; the same response time for unknown emails; 10 tries a minute per email.
+  - Cookies are HttpOnly, SameSite=Lax, and Secure on https.
+  - Changing a password, turning a login off, or changing its role or lot signs that person out on every device at once. **Account → Sign out other devices** does the same on demand.
+- **Cross-site requests:** a signed-in request that changes something must come from this site, on top of SameSite cookies. API keys work from anywhere, as intended.
+- **Clickjacking:** the admin, the signing page, the docs and the API can't be framed by other sites. The 3D configurator stays embeddable.
+- **Uploads:**
+  - .glb, .gltf and image contents are checked, not just the file name.
+  - Uploaded SVGs are served sandboxed, so a script inside one never runs.
+  - Paths can't escape the uploads folder.
+- **Webhooks (SSRF):** they can't be pointed at the server's own network (localhost, 10.x/192.168.x, cloud metadata, `*.railway.internal`). Redirects aren't followed.
+- **Signing:** tokens are 192-bit and rate-limited. Signature images are verified before anything is saved, so a broken one can't leave a contract stuck. The token is never sent to other sites (no-referrer).
+- **Permissions:** checked on the server for every role, dealer lot and module.
+  - The developer login can't be seen, edited or impersonated by customer admins.
+  - Secrets (Twilio, SMTP, GHL, session key) are never sent to the browser, and hidden settings can't be written.
+- **Exports:** customer-typed values in the quotes CSV can't run as Excel formulas.
+- **Errors:** in production (`NODE_ENV=production`, set by the Dockerfile) server errors don't reveal internals.
+- **Dependencies:** `npm audit` reports 0 known vulnerabilities.
+
+Keep it that way: run `npm audit` before deploying updates, use strong admin passwords, and give each person their own login.
 
 ## Notes
 - E-signatures: each signer gets a unique link, agrees to an ESIGN/UETA consent, and every view/sign is logged with time, IP and device on the certificate. This is the standard approach for e-signing sales contracts, but it is not legal advice — have your attorney approve your templates and your rent-to-own disclosures for your state.

@@ -288,7 +288,9 @@ async function quotes(id) {
     const res = await api('GET', '/api/v1/quotes?limit=500');
     const rows = [['Quote', 'Date', 'Status', 'First', 'Last', 'Email', 'Phone', 'Address', 'City', 'State', 'ZIP', 'Style', 'Size', 'Options', 'Dealer lot', 'Price tier', 'Total', '3D link']];
     for (const x of res.data) rows.push([x.number, x.created_at, x.status, x.customer.first_name, x.customer.last_name, x.customer.email, x.customer.phone, x.customer.address, x.customer.city, x.customer.state, x.customer.zip, x.shed.style, x.shed.size, x.options.map(o => o.name).join('; '), x.dealer?.name || '', x.pricing.tier || '', x.pricing.total, x.links.view_3d]);
-    const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    // customers type these fields: a value starting with = + - @ would run as a formula in Excel, so it's quoted as text
+    const cell = v => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t) && !/^-?\d+(\.\d+)?$/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; };
+    const csv = rows.map(r => r.map(cell).join(',')).join('\n');
     saveFile(new Blob([csv], { type: 'text/csv' }), 'shed-quotes.csv');
   });
   await render();
@@ -1034,13 +1036,14 @@ async function modulesPage() {
   render();
 }
 
+document.addEventListener('click', e => { if (e.target.closest('#aout')) guard(async () => { await api('POST', '/api/admin/account/sign-out-others'); toast('Signed out on every other device'); })(); });
 async function account() {
   const yours = `<div class="card card-pad"><h2>Your login</h2><p class="muted" style="margin:2px 0 0">Role: <b>${ROLE_LABEL[me.role || 'admin']}</b>${me.dealer_id ? ` · ${esc((settings.dealers || []).find(d => String(d.id) === String(me.dealer_id))?.name || me.dealer_id)}` : ''}</p><form class="form" id="af" style="margin-top:12px">
       <label class="fld"><span>Name</span><input name="name" value="${esc(me.name || '')}"></label>
       <label class="fld"><span>Email</span><input name="email" type="email" value="${esc(me.email)}"></label>
       <label class="fld"><span>Current password *</span><input name="current_password" type="password" autocomplete="current-password"></label>
       <label class="fld"><span>New password</span><input name="new_password" type="password" autocomplete="new-password" placeholder="8+ characters"></label></form>
-      <button class="btn primary" id="asave" style="margin-top:14px">Update</button>
+      <div class="row" style="margin-top:14px"><button class="btn primary" id="asave">Update</button><button class="btn ghost" id="aout" title="Lost a phone or used a shared tablet? This signs your login out everywhere except here.">Sign out other devices</button></div>
       <div class="section-t" style="margin:22px 0 10px">My alerts</div>
       <p class="muted" style="margin:0 0 10px">Get a text and/or email when a contract is signed, a new lead comes in or a customer replies (whichever your admin has switched on in Messaging &amp; alerts).</p>
       <form class="form" id="nf"><label class="fld"><span>My mobile number</span><input name="phone" type="tel" value="${esc(me.phone || '')}" placeholder="(555) 555-5555"></label><div></div>

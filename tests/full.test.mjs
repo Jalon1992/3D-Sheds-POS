@@ -75,7 +75,7 @@ async function price(cfg, c = anon) { return c.post('/api/v1/price', cfg); }
 before(async () => {
   await new Promise(r => recv.listen(0, '127.0.0.1', r)); RECV = `http://127.0.0.1:${recv.address().port}`;
   dir = mkdtempSync(join(tmpdir(), 'shedfull-'));
-  srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: ROOT, env: { ...process.env, PORT, DB_PATH: join(dir, 'db.sqlite'), UPLOAD_DIR: join(dir, 'uploads'), MESSAGING_TEST_MODE: '1', GHL_API_BASE: RECV, ADMIN_EMAIL: 'owner@test.com', ADMIN_PASSWORD: 'owner-pass-1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: ROOT, env: { ...process.env, PORT, DB_PATH: join(dir, 'db.sqlite'), UPLOAD_DIR: join(dir, 'uploads'), MESSAGING_TEST_MODE: '1', ALLOW_PRIVATE_WEBHOOKS: '1', GHL_API_BASE: RECV, ADMIN_EMAIL: 'owner@test.com', ADMIN_PASSWORD: 'owner-pass-1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = ''; srv.stdout.on('data', d => (log += d)); srv.stderr.on('data', d => (log += d)); srv.on('exit', c => c && console.error(log));
   for (let i = 0; i < 60; i++) { try { if ((await fetch(B + '/healthz')).ok) break; } catch { /* starting */ } await sleep(200); }
   await admin.login('owner@test.com', 'owner-pass-1');

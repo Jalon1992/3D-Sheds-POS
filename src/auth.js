@@ -15,20 +15,25 @@ export function hashPassword(pw) {
   return `scrypt$${salt}$${hash}`;
 }
 export function verifyPassword(pw, stored) {
-  const [, salt, hash] = String(stored).split('$');
-  if (!salt || !hash) return false;
-  const h = crypto.scryptSync(pw, salt, 64);
-  return crypto.timingSafeEqual(h, Buffer.from(hash, 'hex'));
+  const [, salt, hash] = String(stored || '').split('$');
+  const expect = Buffer.from(hash || '', 'hex');
+  // always do the (slow) hash, even for unknown emails, so response times don't reveal which logins exist
+  const h = crypto.scryptSync(String(pw), salt || 'no-such-user', 64);
+  return !!salt && expect.length === h.length && crypto.timingSafeEqual(h, expect);
 }
 
 const COOKIE = 'sb_session';
 const TTL = 1000 * 60 * 60 * 24 * 14; // 14 days
 
+// The cookie carries the user's session version: changing the password, turning the login off or changing its
+// role bumps the version, so every copy of an older cookie (another device, a stolen one) stops working at once.
 export function issueSession(res, userId) {
   const exp = Date.now() + TTL;
-  const payload = `${userId}.${exp}`;
+  const ver = get('SELECT COALESCE(session_ver, 0) v FROM users WHERE id = ?', Number(userId))?.v || 0;
+  const payload = `${userId}.${exp}.${ver}`;
   const sig = crypto.createHmac('sha256', secret()).update(payload).digest('base64url');
-  const secure = process.env.COOKIE_SECURE === 'true' ? '; Secure' : '';
+  // Secure when asked to, or automatically whenever the request came in over https
+  const secure = process.env.COOKIE_SECURE === 'true' || (process.env.COOKIE_SECURE !== 'false' && res.req?.secure) ? '; Secure' : '';
   res.setHeader('Set-Cookie', `${COOKIE}=${payload}.${sig}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${TTL / 1000}${secure}`);
 }
 export function clearSession(res) {
@@ -37,15 +42,21 @@ export function clearSession(res) {
 function readSession(req) {
   const raw = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith(COOKIE + '='));
   if (!raw) return null;
-  const [uid, exp, sig] = raw.slice(COOKIE.length + 1).split('.');
-  if (!uid || !exp || !sig || Number(exp) < Date.now()) return null;
-  const expect = crypto.createHmac('sha256', secret()).update(`${uid}.${exp}`).digest('base64url');
+  const parts = raw.slice(COOKIE.length + 1).split('.');
+  // uid.exp.ver.sig (cookies from before session versions: uid.exp.sig, treated as version 0)
+  const [uid, exp] = parts, ver = parts.length === 4 ? parts[2] : '0', sig = parts[parts.length - 1];
+  if (parts.length < 3 || parts.length > 4 || !/^\d+$/.test(uid) || !/^\d+$/.test(exp) || !/^\d+$/.test(ver) || Number(exp) < Date.now()) return null;
+  const expect = crypto.createHmac('sha256', secret()).update(parts.length === 4 ? `${uid}.${exp}.${ver}` : `${uid}.${exp}`).digest('base64url');
   if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
-  const u = get("SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, notify_sms, notify_email, COALESCE(is_devops, 0) AS is_devops FROM users WHERE id = ? AND COALESCE(active, 1) = 1", Number(uid));
-  if (!u) return null;
+  const u = get("SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, notify_sms, notify_email, COALESCE(is_devops, 0) AS is_devops, COALESCE(session_ver, 0) AS session_ver FROM users WHERE id = ? AND COALESCE(active, 1) = 1", Number(uid));
+  if (!u || Number(ver) !== u.session_ver) return null;
+  delete u.session_ver;
   u.devops = !!u.is_devops; delete u.is_devops; // the developer login works as an admin everywhere, plus the Modules page
   return u;
 }
+
+/** Sign this user out everywhere (call after a password change, turning the login off, a role change). */
+export function endSessions(userId) { run('UPDATE users SET session_ver = COALESCE(session_ver, 0) + 1 WHERE id = ?', Number(userId)); }
 
 // ---- API keys ----------------------------------------------------------------
 export function createApiKey(name) {

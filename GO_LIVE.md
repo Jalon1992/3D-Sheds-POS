@@ -23,7 +23,7 @@ You start with an empty system and a sample shed catalog. No other company's cus
    | `ADMIN_EMAIL` | the email you'll log in with |
    | `ADMIN_PASSWORD` | a strong password, 12+ characters (you can change it later in Account) |
    | `UPLOAD_DIR` | `/app/data/uploads` |
-   | `COOKIE_SECURE` | `true` |
+   | `COOKIE_SECURE` | `true` (optional: it's automatic on https) |
    | `SESSION_SECRET` | a long random string, e.g. 40+ random letters and numbers |
 
    Optional, if you're setting this up for someone else:

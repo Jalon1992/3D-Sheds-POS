@@ -199,6 +199,7 @@ for (const sql of [
   'ALTER TABLE users ADD COLUMN notify_email INTEGER DEFAULT 0',
   'ALTER TABLE users ADD COLUMN active INTEGER DEFAULT 1',
   'ALTER TABLE users ADD COLUMN is_devops INTEGER DEFAULT 0',
+  'ALTER TABLE users ADD COLUMN session_ver INTEGER DEFAULT 0',
   'ALTER TABLE contracts ADD COLUMN group_id INTEGER',
   'ALTER TABLE contracts ADD COLUMN revision INTEGER DEFAULT 1',
   'ALTER TABLE contracts ADD COLUMN superseded_by INTEGER',
