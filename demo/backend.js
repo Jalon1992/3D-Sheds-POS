@@ -5,7 +5,8 @@ import seed from './seed-admin.json';
 import { priceConfig, sanitizeConfig, defaultConfig, stripPrices, hideQuotePrices } from '../public/js/shared/pricing.js';
 import { floorPlanSVG } from '../public/js/shared/floorplan.js';
 import { formatQuote } from '../public/js/shared/quote-format.js';
-import { permissionsFor } from '../src/permissions.js';
+import { permissionsFor, setModuleSource } from '../src/permissions.js';
+import { MODULES, normalizeModules } from '../public/js/shared/modules.js';
 
 const KEY = 'shedbuilder-demo-v2';
 const PUBLIC = ['company_name', 'logo_url', 'brand_color', 'currency_symbol', 'tax_rate', 'tax_delivery', 'delivery_fee', 'show_prices',
@@ -95,8 +96,14 @@ const loggedOut = () => { try { return sessionStorage.getItem(KEY + '-out') === 
 
 const viewAs = () => { try { return Number(sessionStorage.getItem(KEY + '-as')) || 1; } catch { return 1; } };
 const currentUser = () => db.users.find(u => u.id === viewAs()) || db.users[0];
-on('GET', /^\/api\/auth\/me$/, () => (loggedOut() ? err('Not logged in', 401) : json({ ...currentUser(), permissions: permissionsFor(currentUser()) })));
-on('POST', /^\/api\/auth\/login$/, () => { try { sessionStorage.removeItem(KEY + '-out'); } catch { /* */ } return json({ ...currentUser(), permissions: permissionsFor(currentUser()) }); });
+// add-on modules: the demo has no developer login, so its admin can try the Modules page
+const demoMods = () => normalizeModules(db?.settings?.modules);
+setModuleSource(demoMods);
+const meOut = () => ({ ...currentUser(), permissions: permissionsFor(currentUser()), modules: demoMods(), can_manage_modules: (currentUser().role || 'admin') === 'admin' });
+on('GET', /^\/api\/auth\/me$/, () => (loggedOut() ? err('Not logged in', 401) : json(meOut())));
+on('POST', /^\/api\/auth\/login$/, () => { try { sessionStorage.removeItem(KEY + '-out'); } catch { /* */ } return json(meOut()); });
+on('GET', /^\/api\/admin\/modules$/, () => json({ modules: demoMods(), list: MODULES, can_manage: (currentUser().role || 'admin') === 'admin', developer_login: false }));
+on('PUT', /^\/api\/admin\/modules$/, (m, b) => { if ((currentUser().role || 'admin') !== 'admin') return err('Only the developer login can change modules.', 403); db.settings.modules = normalizeModules(b || {}, demoMods()); save(); return json({ modules: db.settings.modules }); });
 on('POST', /^\/api\/auth\/logout$/, () => { try { sessionStorage.setItem(KEY + '-out', '1'); } catch { /* */ } return json({ ok: true }); });
 
 // Dealer-facing configurator in the demo: the admin's "Open configurator" link adds #staff, which signs
@@ -104,10 +111,10 @@ on('POST', /^\/api\/auth\/logout$/, () => { try { sessionStorage.setItem(KEY + '
 try { if (location.hash === '#staff') { sessionStorage.setItem(KEY + '-dealer', '1'); history.replaceState(null, '', location.pathname + location.search); } } catch { /* */ }
 const dealerViewer = () => { try { if (sessionStorage.getItem(KEY + '-dealer') !== '1' || loggedOut()) return null; } catch { return null; } const u = currentUser(); return { dealer_mode: true, name: u.name || u.email, role: u.role, dealer_id: u.dealer_id || null }; };
 const pricesPublic = () => db.settings.show_prices !== false;
-on('GET', /^\/api\/v1\/catalog$/, () => { const v = dealerViewer(); if (v) return json({ ...catalog(false), viewer: v }); return json(pricesPublic() ? catalog(false) : stripPrices(catalog(false))); });
+on('GET', /^\/api\/v1\/catalog$/, () => { const v = dealerViewer(); if (v) return json({ ...catalog(false), viewer: { ...v, modules: demoMods() } }); return json(pricesPublic() ? catalog(false) : stripPrices(catalog(false))); });
 on('GET', /^\/api\/admin\/catalog$/, () => json(catalog(true)));
 on('GET', /^\/api\/admin\/settings$/, () => json({ ...db.settings, ghl_token: db.settings.ghl_token ? '••••••••' + String(db.settings.ghl_token).slice(-4) : '' }));
-on('PUT', /^\/api\/admin\/settings$/, (m, b) => { if (typeof b.ghl_token === 'string' && b.ghl_token.startsWith('••••')) delete b.ghl_token; Object.assign(db.settings, b); save(); return json({ ok: true }); });
+on('PUT', /^\/api\/admin\/settings$/, (m, b) => { delete b.modules; if (typeof b.ghl_token === 'string' && b.ghl_token.startsWith('••••')) delete b.ghl_token; Object.assign(db.settings, b); save(); return json({ ok: true }); });
 
 on('POST', /^\/api\/v1\/price$/, (m, b) => { if (!pricesPublic() && !dealerViewer()) return err('Prices are not shown publicly.', 403); try { const cat = catalog(false); const p = priceConfig(cat, sanitizeConfig(cat, b)); delete p.style; return json(p); } catch (e) { return err(e.message); } });
 on('GET', /^\/api\/v1\/shared\/([a-f0-9]+)$/, m => { const q = db.quotes.find(x => x.token === m[1]); return q ? json({ number: q.number, config: q.config, ...(pricesPublic() || dealerViewer() ? { total: q.total } : {}) }) : err('Not found', 404); });

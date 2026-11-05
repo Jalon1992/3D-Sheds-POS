@@ -537,8 +537,8 @@ function renderDone() {
     <h2>Quote sent!</h2><p class="sub">${esc(S().success_message || 'Thanks! We will be in touch shortly.')}</p>
     <div class="qn">Quote ${esc(q.number)}${showPrices() && q.pricing && !q.pricing.hidden ? ' · ' + fmt(q.pricing.total) : ''}</div>
     <div class="stack">
-      ${state.dealer && q.id && ['admin', 'sales'].includes(state.dealer.role) && /^\d+$/.test(params.get('revise') || '') ? `<a class="btn primary block" href="${ADMIN_URL}#/pos/revise/${params.get('revise')}?quote=${encodeURIComponent(q.id)}"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Update the contract with this design</a>` : ''}
-      ${state.dealer && q.id && !params.get('revise') && ['admin', 'sales'].includes(state.dealer.role) ? `<a class="btn primary block" href="${ADMIN_URL}#/pos/new?quote=${encodeURIComponent(q.id)}${q.contact_id ? '&contact=' + q.contact_id : ''}"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 17l2-2 2 1 4-4"/></svg>Write it up — start a contract</a>` : ''}
+      ${state.dealer && posOn() && q.id && ['admin', 'sales'].includes(state.dealer.role) && /^\d+$/.test(params.get('revise') || '') ? `<a class="btn primary block" href="${ADMIN_URL}#/pos/revise/${params.get('revise')}?quote=${encodeURIComponent(q.id)}"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Update the contract with this design</a>` : ''}
+      ${state.dealer && posOn() && q.id && !params.get('revise') && ['admin', 'sales'].includes(state.dealer.role) ? `<a class="btn primary block" href="${ADMIN_URL}#/pos/new?quote=${encodeURIComponent(q.id)}${q.contact_id ? '&contact=' + q.contact_id : ''}"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 17l2-2 2 1 4-4"/></svg>Write it up — start a contract</a>` : ''}
       <button class="btn ghost block" data-dl="glb"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/></svg>Download 3D model (.glb)</button>
       ${S().customer_pdf !== false ? `<button class="btn primary block" data-dl="quotepdf"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M12 18v-6m0 6-3-3m3 3 3-3"/></svg>${showPrices() ? 'Download quote PDF' : 'Download design PDF'}</button>` : ''}
       <button class="btn ghost block" data-dl="plan"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3zM3 12h7M14 3v7M14 14v7"/></svg>View / print floor plan</button>
@@ -601,7 +601,7 @@ async function submitQuote() {
   data.sms_consent = !!f.querySelector('[name=sms_consent]')?.checked;
   if (state.pos) { // sales rep saving a design for a contract: name + (contact on file, email or mobile)
     if (!String(data.first_name || '').trim()) { err.textContent = "Enter the customer's first name."; err.hidden = false; f.querySelector('[name=first_name]')?.focus(); return; }
-    if (!state.pos.contact && !String(data.email || '').trim() && !String(data.phone || '').trim()) { err.textContent = "Enter the customer's email or mobile."; err.hidden = false; f.querySelector('[name=email]')?.focus(); return; }
+    if (!state.pos.contact && !state.pos.contactId && !String(data.email || '').trim() && !String(data.phone || '').trim()) { err.textContent = "Enter the customer's email or mobile."; err.hidden = false; f.querySelector('[name=email]')?.focus(); return; }
     if (String(data.email || '').trim() && !/^\S+@\S+\.\S+$/.test(data.email)) { err.textContent = 'Please enter a valid email.'; err.hidden = false; f.querySelector('[name=email]')?.focus(); return; }
   } else {
   const need = ['first_name', 'email', ...(S().require_phone ? ['phone'] : [])];
@@ -621,7 +621,8 @@ async function submitQuote() {
   const utm = {}; for (const [k, v] of params) if (k.startsWith('utm_') || k === 'gclid' || k === 'fbclid') utm[k] = v;
   try {
     const body = { config: state.config, customer: data, utm, source: params.get('source') || document.referrer || 'configurator' };
-    if (state.pos) Object.assign(body, { pos: true, contact_id: state.pos.contact?.id || null, source: 'Point of sale' });
+    // the contact id is kept even when the CRM is off (the lookup above fails), so the design stays on the same customer
+    if (state.pos) Object.assign(body, { pos: true, contact_id: state.pos.contact?.id || state.pos.contactId || null, source: 'Point of sale' });
     const r = await fetch('/api/v1/quotes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Something went wrong');
@@ -707,6 +708,7 @@ function renderDealerBadge() {
 // Point of sale: a sales rep opened this from a contract. Saving brings the design straight back to it.
 // ---------------------------------------------------------------------------
 const ADMIN_URL = window.__adminUrl || '/admin/';
+const posOn = () => state.dealer?.modules?.pos !== false; // Point of sale module
 const quoteBtnLabel = () => (state.pos ? 'Save design &amp; return to contract' : 'Get my quote');
 function posPrefill() {
   const c = state.pos?.contact || {};
@@ -735,9 +737,9 @@ function renderPosBar() {
 }
 async function startPos() {
   const back = params.get('back') || '';
-  if (params.get('pos') !== '1' || !state.dealer || !['admin', 'sales'].includes(state.dealer.role)) return;
+  if (params.get('pos') !== '1' || !state.dealer || !['admin', 'sales'].includes(state.dealer.role) || !posOn()) return;
   if (!/^#\/pos\/(new|revise\/\d+)(\?[A-Za-z0-9=&%._-]*)?$/.test(back)) return; // only ever send people back into the point of sale
-  state.pos = { back, contact: null, name: params.get('name') || '', email: params.get('email') || '', phone: params.get('phone') || '' };
+  state.pos = { back, contact: null, contactId: Number(params.get('contact')) || null, name: params.get('name') || '', email: params.get('email') || '', phone: params.get('phone') || '' };
   state.customerView = false;
   const cid = Number(params.get('contact'));
   if (cid) { try { const r = await fetch('/api/crm/contacts/' + cid); if (r.ok) state.pos.contact = await r.json(); } catch { /* fall back to the name passed along */ } }

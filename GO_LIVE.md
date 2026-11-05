@@ -26,6 +26,13 @@ You start with an empty system and a sample shed catalog. No other company's cus
    | `COOKIE_SECURE` | `true` |
    | `SESSION_SECRET` | a long random string, e.g. 40+ random letters and numbers |
 
+   Optional, if you're setting this up for someone else:
+
+   | Variable | Value |
+   |---|---|
+   | `MODULES` | which add-ons they start with: `all`, `none` (3D configurator only) or e.g. `crm,pos`, `pos,orders` |
+   | `DEVOPS_EMAIL` / `DEVOPS_PASSWORD` | your developer login (password 10+ characters). Only it sees **Settings → Modules**, where you switch the CRM, Point of sale and Production & delivery on or off. Their admins can't see it or change it |
+
    Do **not** add `MESSAGING_TEST_MODE`. That setting only logs texts and emails instead of sending them.
 5. Keep it at **1 replica**. The included `railway.json` already does this; two copies would each get a separate database.
 6. **Settings → Networking → Generate Domain** gives you a `…up.railway.app` address. Open `https://<that address>/admin/` and log in.

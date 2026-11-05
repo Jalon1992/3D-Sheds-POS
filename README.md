@@ -48,6 +48,8 @@ The first run seeds 4 sample styles (Classic Gable, Lofted Barn, Modern Lean-To,
 | `SESSION_SECRET` | auto-generated | Cookie signing secret |
 | `COOKIE_SECURE` | `false` | Set `true` when served over HTTPS |
 | `FILES_DIR` | `<DB folder>/files` | Contract templates and signed contracts (kept private — never served publicly) |
+| `MODULES` | `all` | Add-on modules on the **first** run: `all`, `none` (3D configurator only) or a list like `crm,pos`, `pos,orders`. After that they're switched on the Modules page |
+| `DEVOPS_EMAIL`, `DEVOPS_PASSWORD` | — | The developer login (password 10+ characters). Only this login sees the **Modules** page; the customer's admins can't see, change or remove it. Re-applied on every start |
 | `MESSAGING_TEST_MODE` | — | `1` = log texts/emails in the CRM without sending them (also a switch in Settings → CRM & messaging) |
 
 **Back up `data/` and `uploads/`** — that's everything (catalog, quotes, CRM, contracts and signed PDFs in `data/files`, settings, models).
@@ -78,6 +80,24 @@ docker run -d -p 3000:3000 -v shed_data:/app/data -v shed_uploads:/app/uploads \
 After deploying, set **Admin → Settings → Company → Public URL** (e.g. `https://builder.yourdomain.com`) so links in webhooks and GHL point to the right place.
 
 ---
+
+## Modules: give each customer only what they need
+
+The **3D configurator** is the base and is always on. Three add-ons bolt on to it:
+
+| Module | Adds |
+|---|---|
+| **CRM** | Contacts, conversations (two-way texts and email), sales pipeline, tasks, saved replies, instant auto-replies to new leads |
+| **Point of sale** | Cash and rent-to-own contracts from any 3D design, contract templates, e-signatures by text, email or in person |
+| **Production & delivery** | Order board for the shop, delivery schedule, Production and Delivery logins |
+
+Each one works on its own. Point of sale doesn't need the CRM, and the order board fills from signed contracts.
+
+- **Who switches them:** the developer login (`DEVOPS_EMAIL` + `DEVOPS_PASSWORD`) gets a **Modules** page under Settings. The customer's own admins never see it and can't edit or remove the developer login. With no developer login set up, admins manage modules themselves.
+- **What "off" means:** the module's menus, buttons, settings, dashboard figures and API routes disappear for everyone on that install. Its API answers `404 {"module_off": true}`. Roles that need it (Production, Delivery) can't be given out.
+- **Nothing is lost:** customers, quotes, contracts and orders are kept underneath. Turning a module on later shows the full history, and signing links customers already have keep working.
+- **Live:** open admin pages reload with the new menus as soon as the developer flips a switch.
+- **New installs:** set `MODULES` to choose the starting set (e.g. `MODULES=none` for configurator only). Existing installs keep everything on.
 
 ## Managing the catalog
 
@@ -369,7 +389,8 @@ npm test            # API + provider suites: CRM, contracts & signing, revisions
                     # (units, swaps, credits, tax, tiers by lot/ZIP, tampering), configurator settings, 3D model uploads,
                     # API keys + catalog CRUD, signed webhooks with retries, the GoHighLevel push, auto-replies and a full sale
 npm run test:browser # 3D configurator in a real browser: uploaded .glb models render, price on screen = server price for
-                    # every style, hidden prices / currency / required phone show on the page, settings pages don't clash
+                    # every style, hidden prices / currency / required phone show on the page, settings pages don't clash,
+                    # and module switching: configurator-only menus + dashboard, Modules page, live reload
 npm run test:e2e    # browser walkthrough: 4 roles at once, phone signing, revisions, dashboard (needs Playwright + Chromium)
 npm run test:sweep  # bug sweep: every page x every role x desktop/phone, script-injection attempts, accented PDFs,
                     # double submits, expired links, oversized uploads, deleted users, restart

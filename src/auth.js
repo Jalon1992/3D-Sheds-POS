@@ -41,7 +41,10 @@ function readSession(req) {
   if (!uid || !exp || !sig || Number(exp) < Date.now()) return null;
   const expect = crypto.createHmac('sha256', secret()).update(`${uid}.${exp}`).digest('base64url');
   if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
-  return get("SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, notify_sms, notify_email FROM users WHERE id = ? AND COALESCE(active, 1) = 1", Number(uid)) || null;
+  const u = get("SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, notify_sms, notify_email, COALESCE(is_devops, 0) AS is_devops FROM users WHERE id = ? AND COALESCE(active, 1) = 1", Number(uid));
+  if (!u) return null;
+  u.devops = !!u.is_devops; delete u.is_devops; // the developer login works as an admin everywhere, plus the Modules page
+  return u;
 }
 
 // ---- API keys ----------------------------------------------------------------
