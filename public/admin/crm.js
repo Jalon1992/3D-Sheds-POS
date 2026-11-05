@@ -240,7 +240,7 @@ async function contactRecord(id) {
       <div class="card card-pad"><h3>3D designs</h3><div class="mini-list">${c.quotes.length ? c.quotes.map(q => `<div class="mini-item"><div class="row"><b>${esc(q.number)}</b><span>${fmt(q.total)}</span></div>
         <div class="muted" style="font-size:12px">${esc(q.style_name)} ${esc(q.size_label)} · ${ago(q.created_at)}</div>
         <div class="row"><a class="btn ghost sm" href="/?q=${esc(q.token)}" target="_blank">Open 3D ↗</a><a class="btn ghost sm" href="#/quotes/${q.id}">Quote</a>${can('pos.create') ? `<a class="btn primary sm" href="#/pos/new?quote=${q.id}">Contract</a>` : ''}</div></div>`).join('') : '<div class="muted" style="font-size:13px">No 3D designs yet. Click <b>Design in 3D</b> and submit it with this customer\'s email.</div>'}</div></div>
-      <div class="card card-pad"><h3>Contracts</h3><div class="mini-list">${c.contracts.length ? c.contracts.map(k => `<a class="mini-item" href="#/pos/contracts/${k.id}" style="text-decoration:none;color:inherit"><div class="row"><b>${esc(k.number)}</b><span class="pill ${esc(k.status)}">${esc(statusLabel(k.status))}</span></div>
+      <div class="card card-pad"${can('pos.view') ? '' : ' hidden'}><h3>Contracts</h3><div class="mini-list">${c.contracts.length ? c.contracts.map(k => `<a class="mini-item" href="#/pos/contracts/${k.id}" style="text-decoration:none;color:inherit"><div class="row"><b>${esc(k.number)}</b><span class="pill ${esc(k.status)}">${esc(statusLabel(k.status))}</span></div>
         <div class="muted" style="font-size:12px">${k.sale_type === 'rto' ? 'Rent to own' : 'Cash'} · ${fmt(k.total)} · ${ago(k.created_at)}</div></a>`).join('') : '<div class="muted" style="font-size:13px">None yet.</div>'}</div></div>
       <div class="card card-pad"><h3>Tasks</h3><div id="tasks">${c.tasks.length ? c.tasks.map(t => taskRow(t)).join('') : '<div class="muted" style="font-size:13px;margin-bottom:8px">No tasks.</div>'}</div>
         ${can('crm.edit') ? `<form id="tf" class="row" style="margin-top:8px;flex-wrap:nowrap"><input class="in" name="title" placeholder="Call back about financing…" style="flex:2"><input class="in" type="date" name="due_at" style="flex:1;min-width:120px"><button class="btn ghost sm">Add</button></form>` : ''}</div>`;
@@ -534,7 +534,7 @@ const splitFrom = f => { const m = String(f || '').match(/^\s*"?([^"<]*?)"?\s*<(
 const checkList = r => `<div class="checks">${r.checks.map(c => `<div class="ck ${c.ok === true ? 'ok' : c.ok === false ? 'bad' : 'warn'}"><span>${c.ok === true ? '✓' : c.ok === false ? '✕' : '!'}</span><div><b>${esc(c.label)}</b>${c.detail ? `<small>${esc(c.detail)}</small>` : ''}</div></div>`).join('')}</div>`;
 
 export async function messagingPage() {
-  const [s, st, sn] = await Promise.all([api('GET', '/api/admin/settings'), api('GET', '/api/admin/messaging/status'), api('GET', '/api/crm/snippets')]);
+  const [s, st, sn] = await Promise.all([api('GET', '/api/admin/settings'), api('GET', '/api/admin/messaging/status'), can('crm.view') ? api('GET', '/api/crm/snippets') : []]); // saved replies are a CRM feature
   const H = st.hooks;
   const preset0 = presetFor(s);
   const from0 = splitFrom(s.email_from);
@@ -551,7 +551,10 @@ export async function messagingPage() {
   const C = (k, label, help = '') => `<label class="fld full"><label class="chk"><input type="checkbox" name="${k}" ${s[k] === true ? 'checked' : ''}>${label}</label>${help ? `<small>${help}</small>` : ''}</label>`;
   const copyRow = (label, url, help = '') => `<div class="fld full"><span>${label}</span><div class="row" style="flex-wrap:nowrap"><input class="in mono" readonly value="${esc(url)}"><button type="button" class="btn ghost sm" data-copy="${esc(url)}">Copy</button></div>${help ? `<small>${help}</small>` : ''}</div>`;
   const provChoice = (name, val, label, sub, cur) => `<label><input type="radio" name="${name}" value="${val}" ${cur === val ? 'checked' : ''}><b>${label}</b><small>${sub}</small></label>`;
-  $('#main').innerHTML = head('Messaging & alerts', 'Set up texting and email once. Then everyone can text and email customers from the CRM, and contracts go out by text and email.', '<button class="btn primary" id="msave">Save</button>') + `
+  const M = me.modules || { crm: true, pos: true, orders: true };
+  const uses = [M.crm && 'everyone can text and email customers from the CRM', M.pos && 'contracts go out by text and email', M.orders && 'drivers can text customers about delivery'].filter(Boolean);
+  const hide = on => (on ? '' : ' hidden');
+  $('#main').innerHTML = head(M.crm ? 'Messaging & alerts' : 'Texts, email & alerts', `Set up texting and email once.${uses.length ? ' Then ' + uses.join(', ').replace(/, ([^,]*)$/, ' and $1') + '.' : ''}`, '<button class="btn primary" id="msave">Save</button>') + `
   ${st.inbound_last_error ? `<div class="callout warn" style="margin-bottom:16px;display:flex;gap:12px;align-items:flex-start"><div style="flex:1"><b>A customer reply didn't come through</b> (${ago2(st.inbound_last_error)}). ${esc(st.inbound_last_error.reason)}</div><button type="button" class="btn ghost sm" id="clrIn">Dismiss</button></div>` : ''}
   ${!H.https ? `<div class="callout warn" style="margin-bottom:16px">Replies and delivery updates need this app on a public <b>https://</b> address. Set <a href="#/settings">Settings → Public URL</a> once it's deployed.</div>` : ''}
   <div class="grid g2" style="margin-bottom:16px">${card('smsCard', 'Texting', smsState, st.last_sms, st.last_sms_in, s.sms_provider === 'twilio' ? 'No replies yet — text your Twilio number from your phone to test' : 'No replies yet')}${card('emailCard', 'Email', emailState, st.last_email, st.last_email_in, 'Optional: replies go to your inbox')}</div>
@@ -594,18 +597,18 @@ export async function messagingPage() {
     <div class="card card-pad"><h2>3 · Alerts to your team</h2><div class="form" style="margin-top:12px">
       ${F('notify_phones', 'Text alerts to', { ph: '(615) 555-0100, (615) 555-0111', help: 'Comma separated. Each team member can also turn on their own alerts in Account.' })}
       ${F('notify_emails', 'Email alerts to', { ph: 'owner@yourcompany.com, office@yourcompany.com' })}
-      ${C('notify_on_signed', 'When a contract is fully signed')}${C('notify_each_signer', 'Also each time one signer finishes (e.g. customer signed, waiting on co-buyer)')}
-      ${C('notify_attach_pdf', 'Attach the signed PDF to the email alert')}${C('notify_on_new_lead', 'When a new 3D lead comes in')}${C('notify_on_inbound', 'When a customer texts or emails back')}
+      ${M.pos ? C('notify_on_signed', 'When a contract is fully signed') + C('notify_each_signer', 'Also each time one signer finishes (e.g. customer signed, waiting on co-buyer)') + C('notify_attach_pdf', 'Attach the signed PDF to the email alert') : ''}
+      ${C('notify_on_new_lead', 'When a new 3D lead comes in')}${M.crm ? C('notify_on_inbound', 'When a customer texts or emails back') : ''}
     </div></div>
-    <div class="card card-pad"><h2>4 · Instant reply to new 3D leads <span class="muted" style="font-weight:600;font-size:13px">optional</span></h2><p class="muted" style="margin:2px 0 0">Texts only go to customers who ticked the text-consent box. Merge tags: {{contact.first_name}}, {{quote.number}}, {{quote.style}}, {{quote.size}}, {{quote.view_3d}}, {{company.name}}, {{company.phone}}</p><div class="form" style="margin-top:12px">
+    <div class="card card-pad"${hide(M.crm)}><h2>4 · Instant reply to new 3D leads <span class="muted" style="font-weight:600;font-size:13px">optional</span></h2><p class="muted" style="margin:2px 0 0">Texts only go to customers who ticked the text-consent box. Merge tags: {{contact.first_name}}, {{quote.number}}, {{quote.style}}, {{quote.size}}, {{quote.view_3d}}, {{company.name}}, {{company.phone}}</p><div class="form" style="margin-top:12px">
       <label class="fld full"><span>Text</span><textarea name="auto_reply_sms" placeholder="Hi {{contact.first_name}}, thanks for designing your {{quote.style}} with {{company.name}}! A team member will reach out shortly.">${esc(s.auto_reply_sms || '')}</textarea></label>
       ${F('auto_reply_email_subject', 'Email subject', { full: true, ph: 'Your {{quote.style}} design from {{company.name}}' })}
       <label class="fld full"><span>Email</span><textarea name="auto_reply_email_body" placeholder="Leave blank for no auto-reply email">${esc(s.auto_reply_email_body || '')}</textarea></label>
     </div></div>
-    <div class="card card-pad"><h2>Saved replies</h2><p class="muted" style="margin:2px 0 10px">Quick messages your team can drop into any conversation.</p>
+    <div class="card card-pad"${hide(M.crm)}><h2>Saved replies</h2><p class="muted" style="margin:2px 0 10px">Quick messages your team can drop into any conversation.</p>
       <div id="snips">${sn.map(x => `<div class="mini-item" style="margin-bottom:8px"><div class="row"><b>${esc(x.name)} <span class="pill">${x.channel === 'email' ? 'Email' : 'Text'}</span></b><span><button type="button" class="btn link sm" data-sedit="${x.id}">Edit</button><button type="button" class="btn link sm" data-sdel="${x.id}">Delete</button></span></div><div class="muted" style="white-space:pre-wrap">${esc(x.body)}</div></div>`).join('')}</div>
       <button type="button" class="btn ghost sm" id="sadd">+ Add saved reply</button></div>
-    <div class="card card-pad"><h2>Test mode</h2>${C('messaging_test_mode', 'Log texts and emails in the CRM but don\'t actually send them', 'Use this while training staff. Turn it off to go live.')}</div>
+    <div class="card card-pad"><h2>Test mode</h2>${C('messaging_test_mode', M.crm ? 'Log texts and emails in the CRM but don\'t actually send them' : 'Log texts and emails but don\'t actually send them', 'Use this while training staff. Turn it off to go live.')}</div>
   </form>
   <div class="card" style="margin-top:16px"><div class="card-pad" style="padding-bottom:6px"><h2>Recent messages</h2><p class="muted" style="margin:2px 0 0">The last 25 texts and emails, sent and received, with the reason when something failed.</p></div>
     <div class="tbl-wrap">${st.recent.length ? `<table class="tbl"><tr><th>When</th><th>Type</th><th>To / from</th><th>Message</th><th>Status</th></tr>${st.recent.map(m => `<tr><td class="muted" style="white-space:nowrap">${fmtDate(m.created_at)}</td><td>${m.direction === 'in' ? '↘ ' : '↗ '}${m.channel === 'email' ? 'Email' : 'Text'}</td>

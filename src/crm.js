@@ -4,7 +4,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { all, get, run, getSettings, setSettings } from './db.js';
 import { requireSession } from './auth.js';
-import { can, need, lotFilter, inLot } from './permissions.js';
+import { can, need, lotFilter, inLot, moduleOn } from './permissions.js';
 import { broadcast, streamHandler } from './realtime.js';
 import { sendSMS, sendEmail, toE164, fill, logInbound, twilioSignatureOk, updateDeliveryStatus, messagingStatus } from './messaging.js';
 
@@ -157,7 +157,10 @@ export async function onQuoteCreated(q, baseUrl, formatted, { contact_id = null,
 
   const s = getSettings();
   const name = [q.first_name, q.last_name].filter(Boolean).join(' ') || q.email;
-  notify({ type: 'lead', title: `New 3D lead: ${name}`, body: `${title} · $${Number(q.total || 0).toLocaleString('en-US')} · ${q.number}`, link: `#/crm/contacts/${contact.id}`, perm: 'crm.view', dealer_id: contact.dealer_id, external: !!s.notify_on_new_lead }, baseUrl).catch(() => {});
+  // without the CRM the alert points at the 3D quote instead of the contact
+  const crmOn = moduleOn('crm');
+  notify({ type: 'lead', title: `New 3D lead: ${name}`, body: `${title} · $${Number(q.total || 0).toLocaleString('en-US')} · ${q.number}`, link: crmOn ? `#/crm/contacts/${contact.id}` : `#/quotes/${q.id}`, perm: crmOn ? 'crm.view' : 'quotes.view', dealer_id: contact.dealer_id, external: !!s.notify_on_new_lead }, baseUrl).catch(() => {});
+  if (!crmOn) return { contact, opportunity_id: opp?.id }; // auto-replies are a CRM feature
 
   // optional instant auto-reply (texts only go out when the customer ticked SMS consent)
   const ctx = contactCtx(contact, { quote: { number: q.number, style: q.style_name, size: q.size_label, total: q.total, view_3d: formatted?.links?.view_3d || '' } });
@@ -219,7 +222,7 @@ export function crmRouter({ baseUrl }) {
 
   r.get('/stream', streamHandler);
   r.get('/me', (req, res) => res.json({ ...req.user, messaging: messagingStatus() }));
-  r.get('/users', (req, res) => res.json(all("SELECT id, name, email, COALESCE(role,'admin') role, dealer_id FROM users WHERE COALESCE(active,1) = 1 ORDER BY name, email")));
+  r.get('/users', (req, res) => res.json(all(`SELECT id, name, email, COALESCE(role,'admin') role, dealer_id FROM users WHERE COALESCE(active,1) = 1${req.user.devops ? '' : ' AND COALESCE(is_devops,0) = 0'} ORDER BY name, email`)));
 
   // ---- contacts
   r.get('/contacts', need('crm.view'), (req, res) => {
@@ -371,7 +374,7 @@ export function crmRouter({ baseUrl }) {
   });
 
   // ---- pipelines & opportunities
-  r.get('/pipelines', need('orders.view'), (req, res) => res.json(all('SELECT * FROM pipelines ORDER BY sort, id')));
+  r.get('/pipelines', need('crm.view', 'orders.view'), (req, res) => res.json(all('SELECT * FROM pipelines ORDER BY sort, id')));
   r.put('/pipelines/:id', need('crm.settings'), (req, res) => {
     const p = get('SELECT * FROM pipelines WHERE id = ?', Number(req.params.id)); if (!p) return bad(res, 'Not found', 404);
     const stages = (req.body?.stages || []).filter(s => s && s.name).map((s, i) => ({ ...s, id: String(s.id || s.name).toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40) || 'stage' + i, name: String(s.name).slice(0, 60) }));
@@ -388,7 +391,7 @@ export function crmRouter({ baseUrl }) {
 
   const oppRows = (req, where, params) => {
     const [lf, lp] = lotFilter(req.user, 'o.dealer_id');
-    const showMoney = can(req.user, 'crm.view');
+    const showMoney = ['admin', 'sales'].includes(req.user.role); // the shop and drivers don't see prices
     return all(`SELECT o.*, c.first_name, c.last_name, c.phone, c.email, c.address, c.city, c.state, c.zip, c.unread,
         q.number quote_number, q.token quote_token, q.style_name, q.size_label,
         k.number contract_number, k.status contract_status,
@@ -400,10 +403,11 @@ export function crmRouter({ baseUrl }) {
       WHERE ${where}${lf} ORDER BY o.stage_changed_at DESC LIMIT 1000`, ...params, ...lp)
       .map(o => (showMoney ? o : { ...o, value: undefined }));
   };
-  r.get('/opportunities', need('orders.view'), (req, res) => {
+  r.get('/opportunities', need('crm.view', 'orders.view'), (req, res) => {
     const pid = Number(req.query.pipeline_id) || salesPipeline()?.id;
     const pipe = get('SELECT * FROM pipelines WHERE id = ?', pid); if (!pipe) return bad(res, 'Pipeline not found', 404);
     if (pipe.kind === 'sales' && !can(req.user, 'crm.view')) return bad(res, 'Your account does not have access to this.', 403);
+    if (pipe.kind === 'orders' && !can(req.user, 'orders.view')) return bad(res, 'This feature is not part of your plan.', 404);
     const status = req.query.status ? ' AND o.status = ?' : (pipe.kind === 'sales' && !req.query.all ? " AND o.status != 'lost'" : '');
     res.json({ pipeline: pipe, data: oppRows(req, `o.pipeline_id = ?${status}`, [pid, ...(req.query.status ? [req.query.status] : [])]) });
   });
@@ -418,12 +422,13 @@ export function crmRouter({ baseUrl }) {
     broadcast('opportunity', { id: Number(o.lastInsertRowid) }, { perm: 'orders.view' });
     res.status(201).json(get('SELECT * FROM opportunities WHERE id = ?', Number(o.lastInsertRowid)));
   });
-  r.patch('/opportunities/:id', need('orders.view'), (req, res) => {
+  r.patch('/opportunities/:id', need('crm.edit', 'orders.view'), (req, res) => {
     const o = get('SELECT * FROM opportunities WHERE id = ?', Number(req.params.id));
     if (!o || !inLot(req.user, o)) return bad(res, 'Not found', 404);
     const pipe = get('SELECT * FROM pipelines WHERE id = ?', o.pipeline_id);
     const b = req.body || {}, upd = {};
     const isOrders = pipe.kind === 'orders';
+    if (isOrders && !moduleOn('orders')) return bad(res, 'This feature is not part of your plan.', 404);
     const crmEdit = can(req.user, 'crm.edit');
     if (!isOrders && !crmEdit) return bad(res, 'Your account does not have access to this.', 403);
     if (b.stage && b.stage !== o.stage) {

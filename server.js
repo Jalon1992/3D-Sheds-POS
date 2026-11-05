@@ -15,7 +15,9 @@ import { priceConfig, sanitizeConfig, stripPrices, hideQuotePrices } from './pub
 import { floorPlanSVG } from './public/js/shared/floorplan.js';
 import { crmRouter, hooksRouter, seedCRM, backfillQuotes, onQuoteCreated } from './src/crm.js';
 import { posRouter, signRouter, seedContracts } from './src/contracts.js';
-import { permissionsFor } from './src/permissions.js';
+import { permissionsFor, setModuleSource } from './src/permissions.js';
+import { MODULES, normalizeModules, roleUsable } from './public/js/shared/modules.js';
+import { broadcast } from './src/realtime.js';
 import { dailyReport, localDay } from './public/js/shared/reports.js';
 import { toE164, sendEmail, sendSMS, messagingStatus, fromAddress, verifyMessaging, connectTwilioReplies } from './src/messaging.js';
 
@@ -28,6 +30,26 @@ seed();
 seedCRM();
 backfillQuotes();
 await seedContracts();
+
+// ---- Add-on modules (CRM, Point of sale, Production & delivery). The first run takes MODULES from the
+// environment (e.g. MODULES=crm,pos or MODULES=none; default: all on); after that the developer login
+// switches them on the Modules page. Cached here because every permission check reads it.
+if (getSettings().modules === undefined) setSettings({ modules: normalizeModules(process.env.MODULES || 'all') });
+let MODS = normalizeModules(getSettings().modules);
+setModuleSource(() => MODS);
+// The developer login (DEVOPS_EMAIL + DEVOPS_PASSWORD) is the only one that can switch modules once it exists.
+// Re-applied on every start, so the password in the hosting settings always works (also a lock-out fix).
+(function ensureDevops() {
+  const email = String(process.env.DEVOPS_EMAIL || '').toLowerCase().trim(), pw = String(process.env.DEVOPS_PASSWORD || '');
+  if (!email && !pw) return;
+  if (!/^\S+@\S+\.\S+$/.test(email) || pw.length < 10) { console.warn('  ⚠  Developer login not set up: DEVOPS_EMAIL must be an email and DEVOPS_PASSWORD at least 10 characters.'); return; }
+  const u = get('SELECT * FROM users WHERE email = ?', email);
+  if (u) run("UPDATE users SET is_devops = 1, role = 'admin', dealer_id = NULL, active = 1, password_hash = ? WHERE id = ?", hashPassword(pw), u.id);
+  else run("INSERT INTO users (email, name, password_hash, role, is_devops) VALUES (?, 'Developer', ?, 'admin', 1)", email, hashPassword(pw));
+})();
+const hasDevops = () => !!get('SELECT id FROM users WHERE COALESCE(is_devops, 0) = 1 AND COALESCE(active, 1) = 1 LIMIT 1');
+const canManageModules = u => !!u && u.role === 'admin' && (u.devops || !hasDevops());
+const meInfo = u => ({ ...u, permissions: permissionsFor(u), modules: MODS, can_manage_modules: canManageModules(u) });
 
 const app = express();
 app.set('trust proxy', true);
@@ -73,7 +95,7 @@ const canSeePrices = req => pricesPublic() || !!readSession(req) || !!readApiKey
 app.get('/api/v1/catalog', (req, res) => {
   const viewer = dealerViewer(req);
   res.set('Cache-Control', 'private, no-store');
-  if (viewer) return res.json({ ...getCatalog(), viewer });
+  if (viewer) return res.json({ ...getCatalog(), viewer: { ...viewer, modules: MODS } });
   res.json(pricesPublic() ? getCatalog() : stripPrices(getCatalog()));
 });
 
@@ -99,7 +121,7 @@ app.post('/api/v1/quotes', (req, res, next) => (readSession(req) ? next() : quot
   // Point of sale: a sales rep redesigning a building for a customer they are writing a contract for.
   // The quote goes on that contact (no new lead, no auto-replies); blanks are filled from the contact.
   let posContact = null;
-  const staffUser = viewer && ['admin', 'sales'].includes(viewer.role) ? readSession(req) : null;
+  const staffUser = viewer && ['admin', 'sales'].includes(viewer.role) && MODS.pos ? readSession(req) : null; // POS design saves need Point of sale
   if (staffUser && req.body?.contact_id) {
     posContact = get('SELECT * FROM contacts WHERE id = ?', Number(req.body.contact_id));
     if (!posContact || (staffUser.dealer_id && posContact.dealer_id && String(posContact.dealer_id) !== String(staffUser.dealer_id))) return bad(res, 'Contact not found', 404);
@@ -283,17 +305,17 @@ app.post('/api/auth/login', loginPerIp, loginPerEmail, (req, res) => {
   if (!u || !verifyPassword(String(password || ''), u.password_hash)) return bad(res, 'Wrong email or password', 401);
   if (u.active === 0) return bad(res, 'This login has been turned off. Ask your admin.', 403);
   issueSession(res, u.id);
-  res.json({ id: u.id, email: u.email, name: u.name, role: u.role || 'admin', dealer_id: u.dealer_id || null, permissions: permissionsFor({ role: u.role || 'admin' }) });
+  res.json(meInfo({ id: u.id, email: u.email, name: u.name, role: u.role || 'admin', dealer_id: u.dealer_id || null, devops: !!u.is_devops }));
 });
 app.post('/api/auth/logout', (req, res) => { clearSession(res); res.json({ ok: true }); });
-app.get('/api/auth/me', (req, res) => { const u = readSession(req); u ? res.json({ ...u, permissions: permissionsFor(u) }) : bad(res, 'Not logged in', 401); });
+app.get('/api/auth/me', (req, res) => { const u = readSession(req); u ? res.json(meInfo(u)) : bad(res, 'Not logged in', 401); });
 
 const admin = express.Router();
 admin.use(requireSession);
 // Non-admin roles may only read the catalog/settings (to draw sheds) and manage their own login
 admin.use((req, res, next) => {
   if (req.user.role === 'admin') return next();
-  const open = (req.method === 'GET' && ['/catalog', '/settings'].includes(req.path)) || (req.method === 'POST' && req.path === '/account');
+  const open = (req.method === 'GET' && ['/catalog', '/settings', '/modules'].includes(req.path)) || (req.method === 'POST' && req.path === '/account');
   return open ? next() : res.status(403).json({ error: 'Your account does not have access to this.' });
 });
 admin.post('/account', (req, res) => {
@@ -312,19 +334,32 @@ admin.post('/account', (req, res) => {
     email ? String(email).toLowerCase() : null, name || null, new_password ? hashPassword(String(new_password)) : u.password_hash, u.id);
   res.json({ ok: true });
 });
-admin.get('/users', (req, res) => res.json(all("SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, COALESCE(active, 1) AS active, created_at FROM users")));
+// the developer login is invisible to (and can't be changed by) the customer's own admins
+const devopsRow = id => get('SELECT id FROM users WHERE id = ? AND COALESCE(is_devops, 0) = 1', Number(id));
+admin.get('/users', (req, res) => res.json(all(`SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, COALESCE(active, 1) AS active, COALESCE(is_devops, 0) AS devops, created_at FROM users ${req.user.devops ? '' : 'WHERE COALESCE(is_devops, 0) = 0'}`)));
+admin.get('/modules', (req, res) => res.json({ modules: MODS, list: MODULES, can_manage: canManageModules(req.user), developer_login: hasDevops() }));
+admin.put('/modules', (req, res) => {
+  if (!canManageModules(req.user)) return bad(res, 'Only the developer login can change modules.', 403);
+  const next = normalizeModules(req.body || {}, MODS);
+  setSettings({ modules: next }); MODS = next;
+  broadcast('modules', { modules: MODS }); // open admin pages reload with the new menus
+  res.json({ modules: MODS });
+});
 admin.post('/users', (req, res) => {
   const { email, name, password, role = 'admin', dealer_id = null, phone = null } = req.body || {};
   if (!email || !/^\S+@\S+\.\S+$/.test(email) || !password || password.length < 8) return bad(res, 'A valid email and an 8+ character password are required');
   if (!ROLES.includes(role)) return bad(res, 'Unknown role');
+  if (!roleUsable(role, MODS)) return bad(res, `${role[0].toUpperCase() + role.slice(1)} logins need the Production & delivery module.`);
   if (phone && !toE164(phone)) return bad(res, 'Mobile number looks invalid');
   try { run('INSERT INTO users (email, name, password_hash, role, dealer_id, phone) VALUES (?,?,?,?,?,?)', email.toLowerCase().trim(), name || '', hashPassword(password), role, role === 'admin' ? null : (dealer_id || null), phone || null); res.json({ ok: true }); }
   catch { bad(res, 'That email already exists'); }
 });
 admin.patch('/users/:id', (req, res) => {
-  const u = get('SELECT * FROM users WHERE id = ?', Number(req.params.id)); if (!u) return bad(res, 'Not found', 404);
+  const u = get('SELECT * FROM users WHERE id = ?', Number(req.params.id)); if (!u || (u.is_devops && !req.user.devops)) return bad(res, 'Not found', 404);
   const { role, dealer_id, name, password, phone, active } = req.body || {};
   if (role && !ROLES.includes(role)) return bad(res, 'Unknown role');
+  if (role && role !== u.role && !roleUsable(role, MODS)) return bad(res, `${role[0].toUpperCase() + role.slice(1)} logins need the Production & delivery module.`);
+  if (u.is_devops && role && role !== 'admin') return bad(res, 'The developer login is always an admin.');
   if (u.id === req.user.id && role && role !== 'admin') return bad(res, "You can't remove your own admin access");
   if (u.id === req.user.id && active === false) return bad(res, "You can't turn off your own login");
   if (password && String(password).length < 8) return bad(res, 'Password must be at least 8 characters');
@@ -337,6 +372,7 @@ admin.patch('/users/:id', (req, res) => {
 });
 admin.delete('/users/:id', (req, res) => {
   if (Number(req.params.id) === req.user.id) return bad(res, "You can't delete yourself");
+  if (devopsRow(req.params.id) && !req.user.devops) return bad(res, 'Not found', 404);
   run('DELETE FROM users WHERE id = ?', Number(req.params.id)); res.sendStatus(204);
 });
 const SECRET_SETTINGS = ['ghl_token', 'twilio_token', 'smtp_pass'];
@@ -348,7 +384,7 @@ admin.get('/settings', (req, res) => {
 });
 admin.put('/settings', (req, res) => {
   const b = { ...(req.body || {}) };
-  delete b._session_secret; delete b.inbound_key; delete b.crm_backfilled; delete b.sample_templates_seeded;
+  delete b._session_secret; delete b.inbound_key; delete b.crm_backfilled; delete b.sample_templates_seeded; delete b.modules; // modules: developer login only
   for (const k of SECRET_SETTINGS) { delete b[k + '_set']; if (typeof b[k] === 'string' && b[k].startsWith('••••')) delete b[k]; } // unchanged
   for (const k of ['tax_rate', 'delivery_fee']) if (k in b) b[k] = Number(b[k]) || 0;
   // pasted credentials often carry spaces; phone numbers get stored as +1XXXXXXXXXX

@@ -6,6 +6,7 @@ import { buildDrawingPackage } from '../js/drawings.js';
 import { crmContacts, crmConversations, crmPipeline, crmTasks, ordersBoard, messagingPage } from './crm.js';
 import { posPage } from './pos.js';
 import { renderReports } from './reports.js';
+import { MODULES, ALL_ON, pageOn, roleUsable } from '../js/shared/modules.js';
 const roofing = () => (Array.isArray(settings.roofing) && settings.roofing.length ? settings.roofing : DEFAULT_ROOFING);
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -146,13 +147,17 @@ $('#logout').onclick = async () => { await api('POST', '/api/auth/logout'); loca
 
 const ROUTES = { dashboard, quotes, crm: crmContacts, conversations: crmConversations, pipeline: crmPipeline, tasks: crmTasks, pos: posPage, orders: ordersBoard,
   templates: (arg, rest) => posPage('templates', ['templates', ...rest]), 'pos-settings': () => posPage('settings'),
-  styles, colors, options, pricing: pricingPage, integrations, messaging: messagingPage, settings: settingsPage, 'configurator-settings': configuratorSettingsPage, account };
+  styles, colors, options, pricing: pricingPage, integrations, messaging: messagingPage, settings: settingsPage, 'configurator-settings': configuratorSettingsPage, account, modules: modulesPage };
 const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', production: 'Production', delivery: 'Delivery' };
 const isAdmin = () => (me?.role || 'admin') === 'admin';
+/** Add-on modules switched on for this install ({ crm, pos, orders }). */
+const mods = () => me?.modules || ALL_ON;
+const modOn = id => id === 'configurator' || !!mods()[id];
 const canEditQuotes = () => ['admin', 'sales'].includes(me?.role || 'admin');
 const ROLE_PAGES = { sales: ['crm', 'conversations', 'pipeline', 'tasks', 'pos', 'templates', 'quotes', 'orders', 'account'], production: ['orders', 'quotes', 'account'], delivery: ['orders', 'account'] };
 const HOME = { admin: 'dashboard', sales: 'crm', production: 'orders', delivery: 'orders' };
-const allowed = name => isAdmin() || (ROLE_PAGES[me.role] || []).includes(name);
+const homeFor = role => (role === 'admin' ? 'dashboard' : role === 'sales' ? (modOn('crm') ? 'crm' : modOn('pos') ? 'pos' : 'quotes') : modOn('orders') ? 'orders' : 'account');
+const allowed = name => (name === 'modules' ? !!me?.can_manage_modules : (isAdmin() || (ROLE_PAGES[me.role] || []).includes(name)) && pageOn(name, mods()));
 const can = perm => (me?.permissions || []).includes(perm);
 /** Live updates: pages register handlers here; they're dropped on every route change. */
 const liveHandlers = new Set();
@@ -162,7 +167,7 @@ let routeSeq = 0;
 async function route() {
   const parts = location.hash.replace(/^#\/?/, '').split('?')[0].split('/').map(decodeURIComponent);
   const r = parts[0], arg = parts[1];
-  const home = HOME[me?.role || 'admin'] || 'quotes';
+  const home = homeFor(me?.role || 'admin'); void HOME;
   let name = ROUTES[r] ? r : home;
   if (!allowed(name)) name = home;
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === name));
@@ -183,6 +188,8 @@ window.__liveEmit = (type, data = {}) => {
 function connectLive() {
   if (!window.EventSource || window.__noLive) return;
   const es = new EventSource('/api/crm/stream');
+  // the developer switched modules on or off: reload so menus and pages match
+  es.addEventListener('modules', () => { toast('Your modules were updated — reloading…'); setTimeout(() => location.reload(), 1200); });
   for (const type of ['contact', 'message', 'opportunity', 'contract', 'notification']) es.addEventListener(type, ev => {
     let data = {}; try { data = JSON.parse(ev.data); } catch { /* */ }
     if (type === 'notification') { refreshBell(); toast(data.title + (data.body ? ' — ' + data.body : '')); }
@@ -202,8 +209,11 @@ async function start() {
   $('#app').hidden = false;
   // hide admin-only navigation for sales / production accounts
   $$('#nav a').forEach(a => { a.hidden = !allowed(a.dataset.r); });
+  // texting + email serve the CRM, contracts and delivery; without the CRM it's just "Texts & email"
+  const msgLink = $('#nav a[data-r=messaging]'); if (msgLink && !modOn('crm')) msgLink.lastChild.textContent = 'Texts & email';
+  if (!modOn('crm')) { const h = $$('#nav .nav-h').find(x => /CRM/.test(x.textContent)); if (h) h.textContent = 'Sales'; }
   $$('#nav .nav-h').forEach(h => { let n = h.nextElementSibling, any = false; while (n && !n.classList.contains('nav-h')) { if (n.tagName === 'A' && !n.hidden) any = true; n = n.nextElementSibling; } h.hidden = !any; });
-  if (!isAdmin()) $('#sideName').insertAdjacentHTML('afterend', `<span class="pill" style="margin-left:6px">${ROLE_LABEL[me.role]}</span>`);
+  if (!isAdmin() || me.devops) $('#sideName').insertAdjacentHTML('afterend', `<span class="pill" style="margin-left:6px">${me.devops ? 'Developer' : ROLE_LABEL[me.role]}</span>`);
   $('#bellBtn').onclick = e => { e.stopPropagation(); const open = $('#bellPanel').hidden; $('#bellPanel').hidden = !open; if (open) { refreshBell(); api('POST', '/api/crm/notifications/read').then(() => { $('#bellCount').hidden = true; }).catch(() => {}); } };
   document.addEventListener('click', e => { if (!e.target.closest('#bellPanel')) $('#bellPanel').hidden = true; });
   refreshBell(); connectLive();
@@ -228,7 +238,7 @@ async function dashboard() {
   const checks = [
     [settings.company_name && settings.company_name !== 'Your Shed Co.', 'Add your company name, logo and brand color', '#/settings'],
     [me.email !== 'admin@example.com', 'Change the default admin login', '#/account'],
-    [settings.sms_provider || settings.email_provider, 'Connect texting and email', '#/messaging'],
+    ...(pageOn('messaging', mods()) ? [[settings.sms_provider || settings.email_provider, 'Connect texting and email', '#/messaging']] : []),
     [settings.ghl_enabled || settings.ghl_inbound_webhook_url, 'Connect GoHighLevel (optional)', '#/integrations'],
     [true, 'Review styles, sizes and prices', '#/styles'],
   ];
@@ -240,7 +250,7 @@ async function dashboard() {
     ${s.byStyle.length ? `<table class="tbl"><tr><th>Style</th><th class="num">Quotes</th><th class="num">Avg. price</th></tr>${s.byStyle.map(r => `<tr><td>${esc(r.style_name)}</td><td class="num">${r.n}</td><td class="num">${fmt(r.avg)}</td></tr>`).join('')}</table>` : '<div class="empty">No quotes yet.</div>'}</div>
   </div>`;
   void keys; void hooks;
-  const rep = await renderReports($('#reports'));
+  const rep = await renderReports($('#reports'), { sales: modOn('pos'), leads: modOn('crm') });
   let t; onLive(type => { if (['contact', 'contract'].includes(type)) { clearTimeout(t); t = setTimeout(() => rep.reload().catch(() => {}), 800); } });
 }
 
@@ -977,7 +987,7 @@ const CONFIG_FIELDS = [
 function settingsForm(title, sub, fields, extra = '') {
   return async function page() {
     settings = await api('GET', '/api/admin/settings');
-    $('#main').innerHTML = head(title, sub) + extra + `<div class="card card-pad"><form class="form" id="setf">${fields.map(f => field(f, settings[f.key])).join('')}</form>
+    $('#main').innerHTML = head(title, sub) + (typeof extra === 'function' ? extra() : extra) + `<div class="card card-pad"><form class="form" id="setf">${fields.map(f => field(f, settings[f.key])).join('')}</form>
       <div class="row" style="margin-top:18px"><button class="btn primary" id="ssave">Save</button></div></div>`;
     wireInputs($('#main'));
     $('#ssave').onclick = guard(async () => {
@@ -989,7 +999,7 @@ function settingsForm(title, sub, fields, extra = '') {
     });
   };
 }
-const settingsLinks = `<div class="callout" style="margin-bottom:16px">Other settings: <a href="#/configurator-settings">3D configurator</a> · <a href="#/messaging">CRM &amp; messaging</a> (texting, email, alerts) · <a href="#/pos-settings">Point of sale</a> (rent to own, deposits, contract messages) · <a href="#/account">Users</a></div>`;
+const settingsLinks = () => `<div class="callout" style="margin-bottom:16px">Other settings: <a href="#/configurator-settings">3D configurator</a>${pageOn('messaging', mods()) ? ` · <a href="#/messaging">${modOn('crm') ? 'CRM &amp; messaging' : 'Texts &amp; email'}</a> (texting, email, alerts)` : ''}${modOn('pos') ? ' · <a href="#/pos-settings">Point of sale</a> (rent to own, deposits, contract messages)' : ''} · <a href="#/account">Users</a>${me?.can_manage_modules ? ' · <a href="#/modules">Modules</a>' : ''}</div>`;
 const companyPage = settingsForm('Company', 'Details used everywhere: the 3D configurator, the CRM, contracts, the signing page and emails.', COMPANY_FIELDS, settingsLinks);
 const configPage = settingsForm('Configurator settings', 'How the customer-facing 3D builder looks, prices and collects quotes. Styles, sizes, colors and options are in the menu above.', CONFIG_FIELDS);
 // function declarations so the route table (built earlier in this file) can reference them
@@ -999,6 +1009,31 @@ function configuratorSettingsPage() { return configPage(); }
 // ---------------------------------------------------------------------------
 // Account
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Modules (developer login only): which add-ons this install has
+// ---------------------------------------------------------------------------
+async function modulesPage() {
+  const info = await api('GET', '/api/admin/modules');
+  const on = { ...info.modules };
+  const render = () => {
+    $('#main').innerHTML = head('Modules', 'Pick which parts of the system this install gets. The 3D configurator is always on. A module that is off disappears for everyone: no menus, buttons, settings or API access.') +
+      (info.developer_login ? '' : '<div class="callout warn" style="margin-bottom:16px"><b>No developer login is set up</b>, so any admin can change modules. To lock this page to you, add <code>DEVOPS_EMAIL</code> and <code>DEVOPS_PASSWORD</code> (10+ characters) to the hosting settings and restart. Only that login will see this page.</div>') +
+      `<div class="grid" style="gap:12px">${MODULES.map(m => `<div class="card card-pad mod-card ${m.always || on[m.id] ? 'on' : ''}">
+        <div class="row" style="justify-content:space-between;flex-wrap:nowrap;gap:14px"><div><h2 style="margin:0">${esc(m.name)}</h2><p class="muted" style="margin:4px 0 0">${esc(m.desc)}</p></div>
+        ${m.always ? '<span class="pill on">Always on</span>' : `<label class="switch" title="${on[m.id] ? 'Turn off' : 'Turn on'}"><input type="checkbox" data-mod="${m.id}" ${on[m.id] ? 'checked' : ''}><span></span><b>${on[m.id] ? 'On' : 'Off'}</b></label>`}</div></div>`).join('')}</div>
+      <div class="callout" style="margin-top:16px">Turning a module off keeps its data. Customers, contracts and orders stay in the database and come back when the module is turned on again. Customer signing links that were already sent keep working.</div>`;
+    $$('[data-mod]').forEach(i => (i.onchange = guard(async () => {
+      const id = i.dataset.mod, name = MODULES.find(m => m.id === id).name;
+      if (!i.checked && !confirmBox(`Turn off ${name}? Its menus and pages disappear for everyone on this install. Data is kept.`)) { i.checked = true; return; }
+      const r = await api('PUT', '/api/admin/modules', { ...on, [id]: i.checked });
+      Object.assign(on, r.modules); me.modules = r.modules;
+      toast(`${name} turned ${i.checked ? 'on' : 'off'} — reloading menus…`);
+      setTimeout(() => location.reload(), 900);
+    })));
+  };
+  render();
+}
+
 async function account() {
   const yours = `<div class="card card-pad"><h2>Your login</h2><p class="muted" style="margin:2px 0 0">Role: <b>${ROLE_LABEL[me.role || 'admin']}</b>${me.dealer_id ? ` · ${esc((settings.dealers || []).find(d => String(d.id) === String(me.dealer_id))?.name || me.dealer_id)}` : ''}</p><form class="form" id="af" style="margin-top:12px">
       <label class="fld"><span>Name</span><input name="name" value="${esc(me.name || '')}"></label>
@@ -1020,13 +1055,17 @@ async function account() {
   }
   const users = await api('GET', '/api/admin/users');
   const dealers = settings.dealers || [];
-  const roleSel = (v, attrs) => `<select class="in" ${attrs}>${Object.entries(ROLE_LABEL).map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  // roles that need a switched-off module aren't offered (an existing login keeps its role so nothing is lost)
+  const roleSel = (v, attrs) => `<select class="in" ${attrs}>${Object.entries(ROLE_LABEL).filter(([k]) => k === v || roleUsable(k, mods())).map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}${roleUsable(k, mods()) ? '' : ' (module off)'}</option>`).join('')}</select>`;
+  const roleHelp = [`<b>Admin</b>: everything.`,
+    `<b>Sales</b>: ${[modOn('crm') && 'CRM, texting &amp; email', 'quotes and the dealer configurator', modOn('pos') && 'contracts (point of sale)'].filter(Boolean).join(', ')}.`,
+    ...(modOn('orders') ? ['<b>Production</b>: the build board and drawings.', '<b>Delivery</b>: the delivery schedule, customer address &amp; phone.'] : [])].join(' ');
   const lotSel = (v, attrs) => `<select class="in" ${attrs}><option value="">All dealer lots</option>${dealers.map(d => `<option value="${esc(d.id)}" ${String(d.id) === String(v) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`;
   $('#main').innerHTML = head('Account & users') + `<div class="grid g2">${yours}
     <div class="card card-pad"><h2>Team members</h2>
-      <p class="muted" style="margin:2px 0 8px"><b>Admin</b>: everything. <b>Sales</b>: CRM, texting &amp; email, quotes and contracts (point of sale). <b>Production</b>: the build board and drawings. <b>Delivery</b>: the delivery schedule, customer address &amp; phone, and drawings. Everyone can be signed in at the same time. Non-admins can be limited to one dealer lot.</p>
+      <p class="muted" style="margin:2px 0 8px">${roleHelp}</p>
       <div class="tbl-wrap"><table class="tbl" style="margin:6px 0 14px"><tr><th>Name</th><th>Role</th><th>Dealer lot</th><th>Login</th><th></th></tr>${users.map(u => `<tr><td><b>${esc(u.name || '')}</b><div class="muted" style="font-size:12.5px">${esc(u.email)}${u.phone ? ' · ' + esc(u.phone) : ''}</div></td>
-        <td>${u.id === me.id ? `<span class="pill">${ROLE_LABEL[u.role]} (you)</span>` : roleSel(u.role, `data-ur="${u.id}"`)}</td>
+        <td>${u.id === me.id ? `<span class="pill">${me.devops ? 'Developer' : ROLE_LABEL[u.role]} (you)</span>` : u.devops ? '<span class="pill">Developer</span>' : roleSel(u.role, `data-ur="${u.id}"`)}</td>
         <td>${u.role === 'admin' ? '<span class="muted">—</span>' : lotSel(u.dealer_id, `data-ul="${u.id}"`)}</td>
         <td>${u.id === me.id ? '<span class="pill on">On</span>' : `<label class="chk" title="Turn a login off without deleting it"><input type="checkbox" data-ua="${u.id}" ${u.active ? 'checked' : ''}>${u.active ? 'On' : 'Off'}</label>`}</td>
         <td class="num">${u.id === me.id ? '' : `<button class="icon-btn" data-del="${u.id}">${TRASH}</button>`}</td></tr>`).join('')}</table></div>

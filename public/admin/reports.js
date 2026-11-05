@@ -99,9 +99,13 @@ const tipRows = (title, rows) => `<b>${esc(title)}</b>${rows.map(([c, l, v]) => 
 // ---------------------------------------------------------------------------
 // page section
 // ---------------------------------------------------------------------------
-export async function renderReports(host) {
-  let st = { mode: 'mtd', metric: 'sales_value', compare: true, dealer: '' };
+/** show: { sales, leads } — sales figures need Point of sale, lead figures need the CRM. Quotes are always shown. */
+export async function renderReports(host, show = { sales: true, leads: true }) {
+  const metricOk = k => (k.startsWith('sales') ? show.sales : k === 'leads' ? show.leads : true);
+  const metrics = Object.fromEntries(Object.entries(METRICS).filter(([k]) => metricOk(k)));
+  let st = { mode: 'mtd', metric: show.sales ? 'sales_value' : 'quotes', compare: true, dealer: '' };
   try { st = { ...st, ...JSON.parse(localStorage.getItem('sb-report') || '{}') }; } catch { /* */ }
+  if (!metricOk(st.metric)) st.metric = show.sales ? 'sales_value' : 'quotes';
   let data = null;
   const load = async () => { data = await api('GET', '/api/admin/reports' + (st.dealer ? '?dealer=' + encodeURIComponent(st.dealer) : '')); };
   await load();
@@ -114,13 +118,14 @@ export async function renderReports(host) {
     const P = periodOf(st, data.today), days = data.days;
     const cur = sumRange(days, P.from, P.to), prev = P.all ? null : sumRange(days, P.pFrom, P.pTo);
     const cmp = st.compare && !P.all;
-    const tiles = [
+    const tiles0 = [
       ['Sales', money(cur.sales_value), `${cur.sales} sold · ${cur.cash} cash · ${cur.rto} rent-to-own`, cmp ? [cur.sales_value, prev.sales_value, money(prev.sales_value)] : null],
       ['Leads', cur.leads.toLocaleString(), `${cur.leads_3d} from the 3D builder`, cmp ? [cur.leads, prev.leads, prev.leads] : null],
       ['Quotes', cur.quotes.toLocaleString(), `${money(cur.quote_value)} quoted`, cmp ? [cur.quotes, prev.quotes, prev.quotes] : null],
       ['Close rate', rate(cur.sales, cur.quotes) == null ? '—' : rate(cur.sales, cur.quotes).toFixed(0) + '%', 'sales ÷ quotes', cmp ? [rate(cur.sales, cur.quotes) || 0, rate(prev.sales, prev.quotes) ?? null, rate(prev.sales, prev.quotes) == null ? '—' : rate(prev.sales, prev.quotes).toFixed(0) + '%'] : null],
       ['Average sale', cur.sales ? money(cur.sales_value / cur.sales) : '—', 'per signed contract', cmp ? [cur.sales ? cur.sales_value / cur.sales : 0, prev.sales ? prev.sales_value / prev.sales : null, prev.sales ? money(prev.sales_value / prev.sales) : '—'] : null],
     ];
+    const tiles = tiles0.filter(([t]) => (['Sales', 'Close rate', 'Average sale'].includes(t) ? show.sales : t === 'Leads' ? show.leads : true));
     // chart A: month by month (or year by year)
     let labels, nowV, lastV, hl = new Set(), titleA;
     const m = st.metric;
@@ -176,16 +181,16 @@ export async function renderReports(host) {
       <p class="rep-period"><b>${esc(P.label)}</b>${cmp ? ` · compared with the same dates in ${P.year - 1}` : ''}</p>
       <div class="kpis">${tiles.map(([t, v, sub, c]) => `<div class="card kpi"><div class="lbl">${t}</div><div class="val">${v}</div><div class="sub">${esc(sub)}</div>${c ? `<div class="cmp">${delta(c[0], c[1])}<span>${P.year - 1}: ${esc(String(c[2]))}</span></div>` : ''}</div>`).join('')}</div>
       <div class="card card-pad viz-card" id="cardA"><div class="viz-head"><h2>${esc(titleA)}</h2>
-        <div class="seg sm" role="tablist" aria-label="Measure">${Object.entries(METRICS).map(([k, v]) => `<button class="${st.metric === k ? 'on' : ''}" data-metric="${k}">${v.label}</button>`).join('')}</div></div>
+        <div class="seg sm" role="tablist" aria-label="Measure">${Object.entries(metrics).map(([k, v]) => `<button class="${st.metric === k ? 'on' : ''}" data-metric="${k}">${v.label}</button>`).join('')}</div></div>
         ${legend(seriesA.map(s => [s.color, s.name]))}${barChart({ labels, series: seriesA, metric: m, highlight: hl, id: 'vizA' })}<div class="viz-tip" hidden></div></div>
       ${P.all ? '' : `<div class="card card-pad viz-card" id="cardB"><div class="viz-head"><h2>Running total · ${esc(METRICS[m].label)} · ${esc(P.daily ? MONTHS_LONG[P.month - 1] : 'January to December')}</h2></div>
         ${legend([[C.now, String(P.year)], ...(cmp ? [[C.last, String(P.year - 1), true]] : [])])}${lineChart({ labels: lineLabels, series: [{ color: C.now, values: runNow }, ...(cmp ? [{ color: '#8a9490', values: runLast, dash: true }] : [])], metric: m, id: 'vizB' })}<div class="viz-tip" hidden></div></div>`}
       <div class="grid g2">
-        <div class="card card-pad"><h2>Sales mix · ${esc(P.short)}</h2><p class="muted" style="margin:2px 0 12px">Signed sales by how the customer pays</p>
+        ${show.sales ? '' : '<!--'}<div class="card card-pad"><h2>Sales mix · ${esc(P.short)}</h2><p class="muted" style="margin:2px 0 12px">Signed sales by how the customer pays</p>
           ${mixTot ? `<div class="mixbar">${cur.cash_value ? `<div style="flex:${cur.cash_value};background:${C.cash}"></div>` : ''}${cur.rto_value ? `<div style="flex:${cur.rto_value};background:${C.rto}"></div>` : ''}</div>
           <div class="mixlab"><div><i style="background:${C.cash}"></i>Cash <b>${money(cur.cash_value)}</b> · ${cur.cash} sale${cur.cash === 1 ? '' : 's'} · ${(cur.cash_value / mixTot * 100).toFixed(0)}%</div><div><i style="background:${C.rto}"></i>Rent to own <b>${money(cur.rto_value)}</b> · ${cur.rto} sale${cur.rto === 1 ? '' : 's'} · ${(cur.rto_value / mixTot * 100).toFixed(0)}%</div></div>` : '<div class="muted">No signed sales in this period yet.</div>'}</div>
-        <div class="card card-pad"><h2>Where leads came from · ${esc(P.short)}</h2><p class="muted" style="margin:2px 0 12px">${cur.leads} new lead${cur.leads === 1 ? '' : 's'}</p>
-          ${srcs.map(([l, n, c]) => `<div class="hbar"><span>${esc(l)}</span><div><i style="width:${(n / srcMax) * 100}%;background:${c}"></i></div><b>${n}</b></div>`).join('')}</div>
+        ${show.sales ? '' : '-->'}${show.leads ? '' : '<!--'}<div class="card card-pad"><h2>Where leads came from · ${esc(P.short)}</h2><p class="muted" style="margin:2px 0 12px">${cur.leads} new lead${cur.leads === 1 ? '' : 's'}</p>
+          ${srcs.map(([l, n, c]) => `<div class="hbar"><span>${esc(l)}</span><div><i style="width:${(n / srcMax) * 100}%;background:${c}"></i></div><b>${n}</b></div>`).join('')}</div>${show.leads ? '' : '-->'}
       </div>
       <div class="card"><div class="card-pad" style="padding-bottom:6px"><h2>Year over year</h2><p class="muted" style="margin:2px 0 0">${ty} is year to date and compared with the same dates in ${ty - 1}</p></div>
         <div class="tbl-wrap"><table class="tbl"><tr><th>Year</th><th class="num">Leads</th><th class="num">Quotes</th><th class="num">Quoted $</th><th class="num">Sales</th><th class="num">Sales $</th><th class="num">Close rate</th><th class="num">Sales $ vs prior</th></tr>
@@ -195,6 +200,13 @@ export async function renderReports(host) {
         <tr class="tot"><td>Total</td>${['leads', 'quotes'].map(k => `<td class="num">${mRows.reduce((a, x) => a + x.r[k], 0)}</td>`).join('')}<td class="num">${money(mRows.reduce((a, x) => a + x.r.quote_value, 0))}</td>${['sales', 'cash', 'rto'].map(k => `<td class="num">${mRows.reduce((a, x) => a + x.r[k], 0)}</td>`).join('')}<td class="num"><b>${money(mRows.reduce((a, x) => a + x.r.sales_value, 0))}</b></td><td></td></tr></table></div></div>`}
     </div>`;
 
+    // drop table columns for modules this install doesn't have
+    const hideCol = t => (!show.sales && (['Sales', 'Sales $', 'Close rate', 'Sales $ vs prior', 'Cash', 'RTO'].includes(t) || /^vs \d{4}$/.test(t))) || (!show.leads && t === 'Leads');
+    for (const tbl of $$('table', host)) {
+      const heads = [...tbl.rows[0].cells].map(c => c.textContent.trim()), drop = heads.map(hideCol);
+      if (!drop.some(Boolean)) continue;
+      for (const row of [...tbl.rows]) if (row.cells.length === heads.length) for (let i = heads.length - 1; i >= 0; i--) if (drop[i]) row.deleteCell(i);
+    }
     $$('[data-mode]', host).forEach(b => (b.onclick = () => { st.mode = b.dataset.mode; if (st.mode === 'month' && !st.month) st.month = tm; draw(); }));
     $$('[data-metric]', host).forEach(b => (b.onclick = () => { st.metric = b.dataset.metric; draw(); }));
     if ($('#rMonth', host)) $('#rMonth', host).onchange = e => { st.month = Number(e.target.value); draw(); };
