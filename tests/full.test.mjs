@@ -364,7 +364,7 @@ test('API: role limits on the Open API, OpenAPI document matches the real routes
     const r = await admin.get(url); assert.ok(r.status < 400, `${url} → ${r.status}`);
   }
   assert.equal((await anon.get('/docs', { raw: true })).status, 200);
-  assert.deepEqual((await anon.get('/healthz')).data, { ok: true });
+  const hz = (await anon.get('/healthz')).data; assert.equal(hz.ok, true); assert.ok(hz.version && hz.checks.database && hz.checks.login);
   assert.equal((await anon.get('/api/v1/nope')).status, 401);
 });
 

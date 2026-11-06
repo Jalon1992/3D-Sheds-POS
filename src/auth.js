@@ -2,6 +2,8 @@
 import crypto from 'node:crypto';
 import { get, run, getSettings, setSettings } from './db.js';
 
+/** Health check: the key that signs login cookies is available (created on first use). */
+export function sessionKeyReady() { try { return secret().length >= 16; } catch { return false; } }
 function secret() {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   let s = getSettings()._session_secret;

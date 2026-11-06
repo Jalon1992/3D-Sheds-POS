@@ -14,7 +14,8 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = n => money(n);
 const ftIn = v => { const t = Math.round(Number(v || 0) * 12 * 4) / 4, f = Math.floor(t / 12), i = +(t - f * 12).toFixed(2); return `${f}' ${i}"`; };
-const fmtDate = s => s ? new Date(s.replace(' ', 'T') + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+// accepts the database's "2026-11-05 14:03:00" (UTC) and full timestamps like "2026-11-05T14:03:00.000Z"
+const fmtDate = s => { if (!s) return ''; const t = String(s); const d = new Date(/[TZ]|[+-]\d\d:\d\d$/.test(t) ? t : t.replace(' ', 'T') + 'Z'); return isNaN(d) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); };
 const CHECK = '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>';
 const PENCIL = '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>';
 const TRASH = '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
@@ -147,7 +148,7 @@ $('#logout').onclick = async () => { await api('POST', '/api/auth/logout'); loca
 
 const ROUTES = { dashboard, quotes, crm: crmContacts, conversations: crmConversations, pipeline: crmPipeline, tasks: crmTasks, pos: posPage, orders: ordersBoard,
   templates: (arg, rest) => posPage('templates', ['templates', ...rest]), 'pos-settings': () => posPage('settings'),
-  styles, colors, options, pricing: pricingPage, integrations, messaging: messagingPage, settings: settingsPage, 'configurator-settings': configuratorSettingsPage, account, modules: modulesPage };
+  styles, colors, options, pricing: pricingPage, integrations, messaging: messagingPage, settings: settingsPage, 'configurator-settings': configuratorSettingsPage, account, modules: modulesPage, system: systemPage };
 const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', production: 'Production', delivery: 'Delivery' };
 const isAdmin = () => (me?.role || 'admin') === 'admin';
 /** Add-on modules switched on for this install ({ crm, pos, orders }). */
@@ -157,7 +158,7 @@ const canEditQuotes = () => ['admin', 'sales'].includes(me?.role || 'admin');
 const ROLE_PAGES = { sales: ['crm', 'conversations', 'pipeline', 'tasks', 'pos', 'templates', 'quotes', 'orders', 'account'], production: ['orders', 'quotes', 'account'], delivery: ['orders', 'account'] };
 const HOME = { admin: 'dashboard', sales: 'crm', production: 'orders', delivery: 'orders' };
 const homeFor = role => (role === 'admin' ? 'dashboard' : role === 'sales' ? (modOn('crm') ? 'crm' : modOn('pos') ? 'pos' : 'quotes') : modOn('orders') ? 'orders' : 'account');
-const allowed = name => (name === 'modules' ? !!me?.can_manage_modules : (isAdmin() || (ROLE_PAGES[me.role] || []).includes(name)) && pageOn(name, mods()));
+const allowed = name => (['modules', 'system'].includes(name) ? !!me?.can_manage_modules : (isAdmin() || (ROLE_PAGES[me.role] || []).includes(name)) && pageOn(name, mods()));
 const can = perm => (me?.permissions || []).includes(perm);
 /** Live updates: pages register handlers here; they're dropped on every route change. */
 const liveHandlers = new Set();
@@ -209,6 +210,7 @@ async function start() {
   $('#app').hidden = false;
   // hide admin-only navigation for sales / production accounts
   $$('#nav a').forEach(a => { a.hidden = !allowed(a.dataset.r); });
+  if (isAdmin() && me.version && $('#sideVer')) $('#sideVer').textContent = 'Version ' + me.version; // which release this company runs
   // texting + email serve the CRM, contracts and delivery; without the CRM it's just "Texts & email"
   const msgLink = $('#nav a[data-r=messaging]'); if (msgLink && !modOn('crm')) msgLink.lastChild.textContent = 'Texts & email';
   if (!modOn('crm')) { const h = $$('#nav .nav-h').find(x => /CRM/.test(x.textContent)); if (h) h.textContent = 'Sales'; }
@@ -1020,6 +1022,30 @@ function configuratorSettingsPage() { return configPage(); }
 // ---------------------------------------------------------------------------
 // Modules (developer login only): which add-ons this install has
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// System & backups (developer login): version, database, backups
+// ---------------------------------------------------------------------------
+const bytes = n => (n > 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n > 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1e3)) + ' KB');
+async function systemPage() {
+  const s = await api('GET', '/api/admin/system');
+  const last = s.last;
+  $('#main').innerHTML = head('System & backups', 'What this install is running, and its backups. A backup is the whole install in one file: database, uploaded models and images, contract templates and signed contracts.', '<button class="btn primary" id="bnow">Back up now</button>') + `
+    <div class="grid g3" style="margin-bottom:16px">
+      <div class="card card-pad"><div class="kgroup">Version</div><b style="font-size:20px">${esc(s.version.version)}</b><p class="muted" style="margin:4px 0 0;font-size:13px">${s.version.commit ? 'Commit ' + esc(s.version.commit) : 'Commit unknown'}${s.version.branch ? ' · branch ' + esc(s.version.branch) : ''}<br>Running since ${fmtDate(s.version.started_at)}</p></div>
+      <div class="card card-pad"><div class="kgroup">Database</div><b style="font-size:20px">Schema ${s.schema}</b><p class="muted" style="margin:4px 0 0;font-size:13px">${s.schema > s.schema_code ? '<span style="color:var(--warn,#b45309)">Newer than this version (expected right after undoing an update).</span>' : 'Up to date with this version.'}</p></div>
+      <div class="card card-pad"><div class="kgroup">Last backup</div><b style="font-size:20px">${last ? fmtDate(last.at) : 'None yet'}</b><p class="muted" style="margin:4px 0 0;font-size:13px">${last ? (last.error ? `<span style="color:var(--bad,#b91c1c)">${esc(last.error)}</span>` : `${bytes(last.size)} · ${esc(last.reason)}${last.offsite?.ok ? ' · copied off the server' : ''}`) : 'The first one runs a minute after start.'}</p></div>
+    </div>
+    <div class="callout ${s.offsite.on ? '' : 'warn'}" style="margin-bottom:16px">${s.offsite.on
+      ? `<b>Off-server copies are on.</b> Every backup also goes to <code>${esc(s.offsite.bucket)}</code> at ${esc(s.offsite.endpoint)}${s.offsite.prefix ? ` (folder <code>${esc(s.offsite.prefix)}</code>)` : ''}.`
+      : '<b>Backups are only on this server.</b> If the volume is lost, so are they. Add an S3-compatible bucket (Cloudflare R2, Backblaze B2, AWS S3…) with <code>BACKUP_S3_ENDPOINT</code>, <code>BACKUP_S3_BUCKET</code>, <code>BACKUP_S3_ACCESS_KEY</code> and <code>BACKUP_S3_SECRET_KEY</code> in the hosting settings.'}
+      <div class="muted" style="margin-top:4px;font-size:13px">Schedule: ${esc(s.schedule)}.</div></div>
+    <div class="card"><table class="tbl"><tr><th>Backup</th><th>Kind</th><th>Size</th><th>Made</th><th></th></tr>
+      ${s.backups.map(b => `<tr><td><code style="font-size:12px">${esc(b.name)}</code></td><td>${b.kind === 'full' ? 'Full' : 'Database, before an update'}</td><td>${bytes(b.size)}</td><td class="muted">${fmtDate(b.at)}</td>
+        <td class="num"><a class="btn ghost sm" href="/api/admin/system/backups/${encodeURIComponent(b.name)}" download>Download</a></td></tr>`).join('') || '<tr><td colspan="5" class="empty">No backups yet.</td></tr>'}</table></div>
+    <p class="muted" style="font-size:13px;margin-top:12px">To restore: stop the service, replace <code>shedbuilder.db</code> (and the <code>uploads</code> / <code>files</code> folders from a full backup) on the volume, then start it again. GO_LIVE.md has the steps.</p>`;
+  $('#bnow').onclick = guard(async () => { $('#bnow').disabled = true; $('#bnow').textContent = 'Backing up…'; try { const r = await api('POST', '/api/admin/system/backup'); toast(`Backup made (${bytes(r.size)})${r.offsite?.ok ? ' and copied off the server' : ''}`); } finally { systemPage(); } });
+}
+
 async function modulesPage() {
   const info = await api('GET', '/api/admin/modules');
   const on = { ...info.modules };

@@ -118,6 +118,9 @@ setModuleSource(demoMods);
 const meOut = () => ({ ...currentUser(), permissions: permissionsFor(currentUser()), modules: demoMods(), can_manage_modules: (currentUser().role || 'admin') === 'admin' });
 on('GET', /^\/api\/auth\/me$/, () => (loggedOut() ? err('Not logged in', 401) : json(meOut())));
 on('POST', /^\/api\/auth\/login$/, () => { try { sessionStorage.removeItem(KEY + '-out'); } catch { /* */ } return json(meOut()); });
+// System & backups: the demo lives in your browser, so there's nothing to back up
+on('GET', /^\/api\/admin\/system$/, () => json({ version: { version: 'demo', commit: null, branch: null, started_at: new Date().toISOString() }, schema: 2, schema_code: 2, backups: [], last: null, pre_update: null, offsite: { on: false }, schedule: 'off in the demo (everything stays in this browser)', dir: '' }));
+on('POST', /^\/api\/admin\/system\/backup$/, () => err('The demo keeps everything in your browser, so there is nothing to back up here. On a real install this makes a full backup.', 400));
 on('GET', /^\/api\/admin\/modules$/, () => json({ modules: demoMods(), list: MODULES, can_manage: (currentUser().role || 'admin') === 'admin', developer_login: false }));
 on('PUT', /^\/api\/admin\/modules$/, (m, b) => { if ((currentUser().role || 'admin') !== 'admin') return err('Only the developer login can change modules.', 403); db.settings.modules = normalizeModules(b || {}, demoMods()); save(); return json({ modules: db.settings.modules }); });
 on('POST', /^\/api\/auth\/logout$/, () => { try { sessionStorage.setItem(KEY + '-out', '1'); } catch { /* */ } return json({ ok: true }); });

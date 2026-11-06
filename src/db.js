@@ -1,12 +1,33 @@
 // SQLite storage using Node's built-in node:sqlite (no native build step needed).
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { mkdirSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { APP_VERSION } from './version.js';
 
 const DB_PATH = process.env.DB_PATH || './data/shedbuilder.db';
 mkdirSync(dirname(DB_PATH), { recursive: true });
+const existed = existsSync(DB_PATH);
 export const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+export const BACKUP_DIR = process.env.BACKUP_DIR || join(dirname(DB_PATH), 'backups');
+
+// ---- Backup before an update: when this install starts on a different version than last time, copy the
+// database BEFORE any table changes run, so an update can always be undone with the data as it was.
+export const PRE_UPDATE = { file: null, from: null };
+if (existed && process.env.BACKUP_DISABLED !== '1') {
+  try {
+    const raw = db.prepare("SELECT value FROM settings WHERE key = '_app_version'").get()?.value;
+    const prev = raw ? JSON.parse(raw) : null;
+    if (prev !== APP_VERSION.id) {
+      mkdirSync(BACKUP_DIR, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const f = join(BACKUP_DIR, `pre-update-${stamp}-from-${String(prev || 'unknown').replace(/[^\w.+-]/g, '_')}.db`);
+      db.exec(`VACUUM INTO '${f.replace(/'/g, "''")}'`);
+      Object.assign(PRE_UPDATE, { file: f, from: prev || 'unknown' });
+      console.log(`  Backed up the database before updating (${prev || 'unknown'} → ${APP_VERSION.id}): ${f}`);
+    }
+  } catch (e) { if (!/no such table/.test(e.message)) console.warn('  ⚠  Pre-update backup failed:', e.message); }
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -221,6 +242,27 @@ try {
   }
 } catch { /* settings table not ready */ }
 // (catalog upgrades for older databases - new doors / shelves - live in seed.js upgradeCatalog())
+
+// ---- Numbered migrations (tracked with PRAGMA user_version). The list above is for simple "add a column"
+// changes and is re-checked on every start; anything else (moving data, new indexes, backfills) goes here,
+// runs exactly once, in order, inside a transaction.
+// RULES so an update can be undone by redeploying the previous version:
+//   · only ADD tables/columns/indexes — never rename or drop a column, never change what an existing one means;
+//   · new columns need a default (or allow NULL) so older code that doesn't know them keeps working.
+const MIGRATIONS = [
+  /* 1 */ () => db.exec('CREATE INDEX IF NOT EXISTS idx_quotes_created ON quotes(created_at)'),
+  /* 2 */ () => db.exec('CREATE INDEX IF NOT EXISTS idx_quotes_contact ON quotes(contact_id)'),
+];
+export const SCHEMA_VERSION = MIGRATIONS.length;
+const dbVersion = () => db.prepare('PRAGMA user_version').get().user_version;
+for (let v = dbVersion(); v < MIGRATIONS.length; v++) {
+  db.exec('BEGIN');
+  try { MIGRATIONS[v](); db.exec(`PRAGMA user_version = ${v + 1}`); db.exec('COMMIT'); }
+  catch (e) { db.exec('ROLLBACK'); console.error(`  ✖  Database migration ${v + 1} failed:`, e.message); throw e; }
+}
+export const DB_SCHEMA = dbVersion();
+// Running older code on a newer database (after an undo) is fine as long as the rules above were followed.
+if (DB_SCHEMA > SCHEMA_VERSION) console.warn(`  ⚠  This database (schema ${DB_SCHEMA}) is newer than this version of the app (schema ${SCHEMA_VERSION}). That's expected right after undoing an update.`);
 
 // ---- JSON column helpers -----------------------------------------------------
 export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',

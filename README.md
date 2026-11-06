@@ -2,7 +2,7 @@
 
 A self-hosted 3D shed configurator with a **built-in CRM**, a **point of sale with e-signatures** (Cash and Rent-to-Own), **production & delivery boards**, an admin back office, an Open REST API, signed webhooks and a native GoHighLevel integration.
 
-**Setting up your own live copy?** Follow [GO_LIVE.md](GO_LIVE.md).
+**Adding a company?** Follow [GO_LIVE.md](GO_LIVE.md). **Sending out an update?** Follow [RELEASES.md](RELEASES.md).
 
 **New in 2.0** — see [Point of sale](#point-of-sale-contracts--e-signature), [CRM](#crm), [Texting & email](#texting--email-setup), [Team roles](#team-roles--drawing-packages) and [Testing](#testing).
 - Every 3D submission lands in the CRM as a contact + deal. Add walk-ins and phone leads by hand. Two-way texting and email, notes, tasks, saved replies, a drag-and-drop pipeline, and live updates for everyone signed in.
@@ -50,6 +50,8 @@ The first run seeds 4 sample styles (Classic Gable, Lofted Barn, Modern Lean-To,
 | `PUBLIC_URL` | — | Base URL for links in webhooks/GHL (same as **Settings → Company → Public URL**; on Railway `RAILWAY_PUBLIC_DOMAIN` is used automatically) |
 | `TRUST_PROXY` | `1` | How many proxy hops to trust for the client IP (rate limits). `1` is right for Railway/Render/Fly or one Nginx |
 | `ALLOW_PRIVATE_WEBHOOKS` | — | `1`/`true` lets webhooks call private/internal addresses (only for self-hosted setups that need it; off blocks SSRF) |
+| `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_ACCESS_KEY`, `BACKUP_S3_SECRET_KEY` | — | Copy every backup off the server to S3-compatible storage (Cloudflare R2, Backblaze B2, AWS S3…). Optional `BACKUP_S3_REGION` (default `auto`), `BACKUP_S3_PREFIX` (folder, default the company name) |
+| `BACKUP_HOUR`, `BACKUP_KEEP`, `BACKUP_DIR` | `3`, 7 (3 with off-server), `<DB folder>/backups` | Daily backup hour (company time zone), how many to keep on the volume, where. `BACKUP_DISABLED=1` turns automatic backups off |
 | `FILES_DIR` | `<DB folder>/files` | Contract templates and signed contracts (kept private — never served publicly) |
 | `MODULES` | `all` | Add-on modules on the **first** run: `all`, `none` (3D configurator only) or a list like `crm,pos`, `pos,orders`. After that they're switched on the Modules page |
 | `DEVOPS_EMAIL`, `DEVOPS_PASSWORD` | — | The developer login (password 10+ characters). Only this login sees the **Modules** page; the customer's admins can't see, change or remove it. Re-applied on every start |

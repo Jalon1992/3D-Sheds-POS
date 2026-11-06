@@ -6,9 +6,11 @@ import { mkdirSync, unlinkSync, openSync, readSync, closeSync, readFileSync } fr
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { db, all, get, run, getSettings, setSettings, getCatalog, JSON_COLS } from './src/db.js';
+import { db, all, get, run, getSettings, setSettings, getCatalog, JSON_COLS, SCHEMA_VERSION, DB_SCHEMA, BACKUP_DIR, PRE_UPDATE } from './src/db.js';
+import { APP_VERSION } from './src/version.js';
+import { backupNow, listBackups, startBackups, offsiteOn, offsite, NAME_RE } from './src/backup.js';
 import { seed } from './src/seed.js';
-import { requireAuth, requireSession, issueSession, clearSession, verifyPassword, hashPassword, createApiKey, readSession, readApiKey, ROLES, endSessions } from './src/auth.js';
+import { requireAuth, requireSession, issueSession, clearSession, verifyPassword, hashPassword, createApiKey, readSession, readApiKey, ROLES, endSessions, sessionKeyReady } from './src/auth.js';
 import { emit, deliver, formatQuote, recentLog, pushToGHL, EVENTS, blockedTarget, checkOutboundUrl } from './src/integrations.js';
 import { openapi } from './src/openapi.js';
 import { priceConfig, sanitizeConfig, stripPrices, hideQuotePrices } from './public/js/shared/pricing.js';
@@ -53,7 +55,7 @@ setModuleSource(() => MODS);
 })();
 const hasDevops = () => !!get('SELECT id FROM users WHERE COALESCE(is_devops, 0) = 1 AND COALESCE(active, 1) = 1 LIMIT 1');
 const canManageModules = u => !!u && u.role === 'admin' && (u.devops || !hasDevops());
-const meInfo = u => ({ ...u, permissions: permissionsFor(u), modules: MODS, can_manage_modules: canManageModules(u) });
+const meInfo = u => ({ ...u, permissions: permissionsFor(u), modules: MODS, can_manage_modules: canManageModules(u), version: APP_VERSION.id });
 
 const app = express();
 app.disable('x-powered-by');
@@ -139,7 +141,16 @@ app.get('/api/v1/catalog', (req, res) => {
 });
 
 // Health check for Railway/Render/Docker: answers once the database is reachable
-app.get('/healthz', (req, res) => { try { get('SELECT 1 AS ok'); res.json({ ok: true }); } catch (e) { res.status(503).json({ ok: false }); } });
+// Health check (Railway uses it to decide a new deploy is good): the database answers and can be written to,
+// logins can work (an active admin + the session key exist), and which version/commit this install runs.
+app.get('/healthz', (req, res) => {
+  const checks = {};
+  try { get('SELECT 1 AS ok'); run("INSERT INTO settings (key, value) VALUES ('_health', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(Date.now())); checks.database = true; } catch { checks.database = false; }
+  try { checks.login = !!get("SELECT id FROM users WHERE COALESCE(role, 'admin') = 'admin' AND COALESCE(active, 1) = 1 LIMIT 1") && sessionKeyReady(); } catch { checks.login = false; }
+  const ok = checks.database && checks.login;
+  const last = (() => { try { return getSettings()._backup_last || null; } catch { return null; } })();
+  res.status(ok ? 200 : 503).json({ ok, version: APP_VERSION.version, commit: APP_VERSION.commit, schema: DB_SCHEMA, checks, uptime_s: Math.round(process.uptime()), last_backup: last ? { at: last.at, ok: !last.error } : null });
+});
 app.post('/api/v1/price', rateLimit(240, 60000), (req, res) => {
   if (!canSeePrices(req)) return bad(res, 'Prices are not shown publicly. Send an API key to price a configuration.', 403);
   try {
@@ -410,6 +421,25 @@ admin.post('/account/sign-out-others', (req, res) => { endSessions(req.user.id);
 // the developer login is invisible to (and can't be changed by) the customer's own admins
 const devopsRow = id => get('SELECT id FROM users WHERE id = ? AND COALESCE(is_devops, 0) = 1', Number(id));
 admin.get('/users', (req, res) => res.json(all(`SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, COALESCE(active, 1) AS active, COALESCE(is_devops, 0) AS devops, created_at FROM users ${req.user.devops ? '' : 'WHERE COALESCE(is_devops, 0) = 0'}`)));
+// ---- System & backups (same people who can switch modules)
+admin.get('/system', (req, res) => {
+  if (!canManageModules(req.user)) return bad(res, 'Only the developer login can see this.', 403);
+  const o = offsite();
+  res.json({ version: APP_VERSION, schema: DB_SCHEMA, schema_code: SCHEMA_VERSION, node: process.version, uptime_s: Math.round(process.uptime()),
+    backups: listBackups(), last: getSettings()._backup_last || null, pre_update: PRE_UPDATE.file ? { name: PRE_UPDATE.file.split(/[\\/]/).pop(), from: PRE_UPDATE.from } : null,
+    offsite: offsiteOn() ? { on: true, endpoint: o.endpoint.replace(/^https?:\/\//, ''), bucket: o.bucket, prefix: o.prefix || null } : { on: false },
+    schedule: process.env.BACKUP_DISABLED === '1' ? 'off' : `daily at ${process.env.BACKUP_HOUR || 3}:00 (${getSettings().timezone || 'America/Chicago'}) and before every update`, dir: BACKUP_DIR });
+});
+admin.post('/system/backup', wrap(async (req, res) => {
+  if (!canManageModules(req.user)) return bad(res, 'Only the developer login can do this.', 403);
+  const r = await backupNow('manual');
+  r.error && !r.size ? bad(res, 'Backup failed: ' + r.error, 500) : res.json(r);
+}));
+admin.get('/system/backups/:name', (req, res) => {
+  if (!canManageModules(req.user)) return bad(res, 'Only the developer login can download backups.', 403);
+  const name = String(req.params.name); if (!NAME_RE.test(name) || name.includes('..')) return bad(res, 'Not found', 404);
+  res.download(join(BACKUP_DIR, name), name, err => { if (err && !res.headersSent) bad(res, 'Not found', 404); });
+});
 admin.get('/modules', (req, res) => res.json({ modules: MODS, list: MODULES, can_manage: canManageModules(req.user), developer_login: hasDevops() }));
 admin.put('/modules', (req, res) => {
   if (!canManageModules(req.user)) return bad(res, 'Only the developer login can change modules.', 403);
@@ -628,9 +658,21 @@ app.use((err, req, res, next) => {
   res.status(err.status >= 400 && err.status < 500 ? err.status : 500).json({ error: hide ? 'Something went wrong on our side. Please try again, or contact support if it keeps happening.' : (err.message || 'Server error') });
 });
 
-app.listen(PORT, () => {
-  console.log(`\n  3D Shed Builder running on http://localhost:${PORT}`);
+const server = app.listen(PORT, () => {
+  setSettings({ _app_version: APP_VERSION.id }); // started fine on this version (the next different one backs up first)
+  startBackups();
+  console.log(`\n  3D Shed Builder ${APP_VERSION.id} running on http://localhost:${PORT}`);
   console.log(`  Configurator:  http://localhost:${PORT}/`);
   console.log(`  Admin:         http://localhost:${PORT}/admin/`);
   console.log(`  API docs:      http://localhost:${PORT}/docs\n`);
+});
+
+// Redeploys stop the old copy with SIGTERM: finish open requests, then close the database cleanly (no half-written data).
+let stopping = false;
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
+  if (stopping) return; stopping = true;
+  console.log(`  ${sig}: shutting down…`);
+  const done = () => { try { db.close(); } catch { /* already closed */ } process.exit(0); };
+  server.close(done);
+  setTimeout(done, 8000).unref(); // live-update streams never end on their own
 });
