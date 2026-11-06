@@ -76,12 +76,12 @@ export function floorPlanSVG(catalog, config, meta = {}) {
           out.push(`<line x1="${-w / 2}" y1="0" x2="${w / 2}" y2="0" stroke="#1d2624" stroke-width="2" stroke-dasharray="6 4"/>`);
           out.push(`<rect x="${-w / 2}" y="${-T / 2}" width="${w}" height="${T}" fill="none" stroke="#1d2624" stroke-width="1"/>`);
         } else {
-          const leaves = (kind === 'door_double' || kind === 'door_french') ? 2 : 1;
+          const leaves = (kind === 'door_double' || kind === 'door_french' || kind === 'door_carriage_double' || kind === 'door_panel_double') ? 2 : 1;
           const lw = w / leaves;
           out.push(`<line x1="${-w / 2}" y1="0" x2="${w / 2}" y2="0" stroke="#fff" stroke-width="${T + 2}"/>`);
           for (let k = 0; k < leaves; k++) {
             // swing inward (local -y)
-            const hinge = leaves === 2 ? (k === 0 ? -w / 2 : w / 2) : -w / 2;
+            const hinge = leaves === 2 ? (k === 0 ? -w / 2 : w / 2) : (kind === 'door_panel' || kind === 'door_carriage_right' ? w / 2 : -w / 2);
             const dir = hinge < 0 ? 1 : -1;
             out.push(`<line x1="${hinge}" y1="${-T / 2}" x2="${hinge}" y2="${-T / 2 - lw}" stroke="#1d2624" stroke-width="3"/>`);
             out.push(`<path d="M ${hinge} ${-T / 2 - lw} A ${lw} ${lw} 0 0 ${dir > 0 ? 1 : 0} ${hinge + dir * lw} ${-T / 2}" fill="none" stroke="#1d2624" stroke-width="1.2" stroke-dasharray="4 3"/>`);
@@ -101,7 +101,7 @@ export function floorPlanSVG(catalog, config, meta = {}) {
     }
     if (o.placement === 'wall_interior' || o.placement === 'floor') {
       const p = wallPoint(it.wall, it.offset, size);
-      const w = o.width * S, d = Math.max(0.3, o.depth || 1) * S;
+      const w = iw(o, it) * S, d = Math.max(0.3, o.depth || 1) * S;
       const ang = Math.atan2(p.nz, p.nx) * 180 / Math.PI - 90;
       const cx = X(p.x) - p.nx * T, cz = Z(p.z) - p.nz * T;
       out.push(`<g transform="translate(${cx} ${cz}) rotate(${ang})">`);
@@ -115,7 +115,7 @@ export function floorPlanSVG(catalog, config, meta = {}) {
         out.push(`<rect x="${-w / 2}" y="${-Math.max(d, 10)}" width="${w}" height="${Math.max(d, 10)}" fill="#1d2624"/><text x="0" y="${-Math.max(d, 10) - 6}" font-size="11" font-weight="bold" text-anchor="middle" fill="#1d2624" transform="rotate(${-ang} 0 ${-Math.max(d, 10) - 10})">PANEL</text>`);
         elec.add('breaker');
       } else {
-        out.push(`<rect x="${-w / 2}" y="${-d}" width="${w}" height="${d}" fill="${kind === 'workbench' ? '#efe6d6' : 'none'}" stroke="#55615e" stroke-width="1.5" ${kind === 'shelf' ? 'stroke-dasharray="6 3"' : ''}/>`);
+        out.push(`<rect x="${-w / 2}" y="${-d}" width="${w}" height="${d}" fill="${kind === 'workbench' ? '#efe6d6' : 'none'}" stroke="#55615e" stroke-width="1.5" ${kind.startsWith('shelf') ? 'stroke-dasharray="6 3"' : ''}/>`);
         out.push(`<text x="0" y="${-d / 2 + 4}" font-size="11" text-anchor="middle" fill="#3b4744" transform="rotate(${-ang} 0 ${-d / 2})">${esc(shortName(o))}</text>`);
       }
       out.push(`</g>`);

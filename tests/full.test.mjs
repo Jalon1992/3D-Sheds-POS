@@ -68,14 +68,16 @@ function makeGLB() {
 }
 
 let srv, dir, cat, gable;
-const opt = name => cat.options.find(o => o.name === name);
+// sample catalog names (newer catalogs renamed a few)
+const ALIASES = { '36" Single Door': ['36" Standard Door'], "2' x 3' Window": ["2' x 3' Window (top & bottom grids)"] };
+const opt = name => cat.options.find(o => o.name === name) || cat.options.find(o => (ALIASES[name] || []).includes(o.name));
 async function setS(o) { const r = await admin.put('/api/admin/settings', o); assert.equal(r.status, 200, JSON.stringify(r.data)); }
 async function price(cfg, c = anon) { return c.post('/api/v1/price', cfg); }
 
 before(async () => {
   await new Promise(r => recv.listen(0, '127.0.0.1', r)); RECV = `http://127.0.0.1:${recv.address().port}`;
   dir = mkdtempSync(join(tmpdir(), 'shedfull-'));
-  srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: ROOT, env: { ...process.env, PORT, DB_PATH: join(dir, 'db.sqlite'), UPLOAD_DIR: join(dir, 'uploads'), MESSAGING_TEST_MODE: '1', GHL_API_BASE: RECV, ADMIN_EMAIL: 'owner@test.com', ADMIN_PASSWORD: 'owner-pass-1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: ROOT, env: { ...process.env, PORT, DB_PATH: join(dir, 'db.sqlite'), UPLOAD_DIR: join(dir, 'uploads'), MESSAGING_TEST_MODE: '1', ALLOW_PRIVATE_WEBHOOKS: '1', GHL_API_BASE: RECV, ADMIN_EMAIL: 'owner@test.com', ADMIN_PASSWORD: 'owner-pass-1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = ''; srv.stdout.on('data', d => (log += d)); srv.stderr.on('data', d => (log += d)); srv.on('exit', c => c && console.error(log));
   for (let i = 0; i < 60; i++) { try { if ((await fetch(B + '/healthz')).ok) break; } catch { /* starting */ } await sleep(200); }
   await admin.login('owner@test.com', 'owner-pass-1');
@@ -362,7 +364,7 @@ test('API: role limits on the Open API, OpenAPI document matches the real routes
     const r = await admin.get(url); assert.ok(r.status < 400, `${url} → ${r.status}`);
   }
   assert.equal((await anon.get('/docs', { raw: true })).status, 200);
-  assert.deepEqual((await anon.get('/healthz')).data, { ok: true });
+  const hz = (await anon.get('/healthz')).data; assert.equal(hz.ok, true); assert.ok(hz.version && hz.checks.database && hz.checks.login);
   assert.equal((await anon.get('/api/v1/nope')).status, 401);
 });
 
@@ -534,4 +536,50 @@ test('contracts: edge cases — bad tokens, voided/superseded links, deposit san
   const t = k.data.signers[0].link.split('/sign/')[1];
   assert.equal((await anon.post(`/api/sign/${t}/sign`, { consent: true, values: 'nope' })).status, 400);
   assert.equal((await anon.post(`/api/sign/${t}/sign`, { consent: true, values: { x: { y: 1 } } })).status, 400);
+});
+
+// =============================================================================
+// NEW 3D PARTS (from the 3D-Sheds builder): carriage + panel doors, double shelves with lengths, window heights
+// =============================================================================
+test('new 3D parts: carriage + panel doors, double shelves in chosen lengths, window heights — priced on the server, drawn, and tamper-proof', async () => {
+  const fresh = (await admin.get('/api/admin/catalog')).data;
+  const byKind = k => fresh.options.find(o => o.kind === k && o.active !== 0);
+  const carriage2 = byKind('door_carriage_double'), carriage1 = byKind('door_carriage_right') || byKind('door_carriage'), panel36 = fresh.options.find(o => o.name === '36" Standard Door');
+  const shelf = byKind('shelf_double'), vent = fresh.options.find(o => o.name === 'Gable Vent');
+  const win = fresh.options.find(o => o.placement === 'opening' && String(o.kind).startsWith('window') && o.name.startsWith("2' x 3'"));
+  assert.ok(carriage2 && carriage1 && panel36 && shelf && win, 'new parts are in the catalog: ' + JSON.stringify({ c2: !!carriage2, c1: !!carriage1, p: !!panel36, s: !!shelf, w: !!win }));
+  const g = fresh.styles.find(s => s.name === 'Garage') || fresh.styles[0];
+  const size = [...g.sizes].sort((a, b) => b.width * b.depth - a.width * a.depth)[0];
+  const stdDoor = g.standard_options.find(so => fresh.options.find(o => o.id === so.option_id)?.category === 'doors');
+  const cfg = { style_id: g.id, size_id: size.id, items: [
+    { uid: 'cd', option_id: carriage2.id, wall: 'front', offset: 0, ...(stdDoor ? { standard_of: stdDoor.option_id } : {}) },
+    { uid: 'c1', option_id: carriage1.id, wall: 'left', offset: -3 },
+    { uid: 'p1', option_id: panel36.id, wall: 'right', offset: 2 },
+    { uid: 'sh', option_id: shelf.id, wall: 'back', offset: 0, w: 10 },
+    { uid: 'wn', option_id: win.id, wall: 'right', offset: -3, elev: 4 },
+  ] };
+  const p = (await price(cfg)).data;
+  const line = uid => p.lines.find(l => l.uid === uid) || p.lines.find(l => l.label === ({ cd: carriage2, c1: carriage1, p1: panel36, sh: shelf, wn: win })[uid].name);
+  for (const u of ['cd', 'c1', 'p1', 'sh', 'wn']) assert.ok(line(u), `${u} priced: ` + JSON.stringify(p.lines.map(l => l.label)));
+  assert.equal(line('sh').amount, r2(Number(shelf.price) * 10), 'double shelves priced per ft of the chosen 10 ft');
+  assert.match(line('sh').detail || '', /10'.*long/, 'length shown on the quote');
+  assert.match(line('wn').detail || '', /48" off floor/, 'raised window shown on the quote');
+  // tampering: a length that isn't offered snaps to the nearest choice; lengths/heights on other parts are ignored
+  const t = (await price({ ...cfg, items: [{ ...cfg.items[3], w: 0.25 }, { uid: 'v', option_id: vent.id, wall: 'front', offset: 0, w: 0.25, elev: 0 }] })).data;
+  assert.equal(t.lines.find(l => l.label === shelf.name).amount, r2(Number(shelf.price) * Math.min(...String(shelf.length_choices).split(/[,\s]+/).map(Number).filter(Boolean))), 'snapped to the shortest offered length, not 0.25 ft');
+  assert.equal(t.lines.find(l => l.label === vent.name).amount, Number(vent.price), 'a made-up length on a fixed-size part is ignored');
+  await setS({ customer_window_height: false });
+  const fixed = (await price(cfg)).data; assert.doesNotMatch(fixed.lines.find(l => l.label === win.name).detail || '', /off floor/, 'window heights locked when the setting is off');
+  await setS({ customer_window_height: true });
+  // saved as a quote → drawings (floor plan + elevations) include the new parts without errors
+  const q = await admin.post('/api/v1/quotes', { config: cfg, customer: { first_name: 'Car', email: 'car@test.com' } });
+  assert.equal(q.status, 201); assert.equal(q.data.pricing.total, p.total, 'quote = price API');
+  const plan = await (await fetch(B + `/api/v1/quotes/${q.data.id}/floorplan.svg`, { headers: { cookie: admin.cookie } })).text();
+  assert.match(plan, /^<svg/); assert.doesNotMatch(plan, /NaN|undefined/);
+  const { elevationSVG } = await import('../public/js/shared/elevations.js');
+  const pub = (await admin.get('/api/v1/catalog')).data, saved = (await admin.get('/api/v1/quotes/' + q.data.id)).data;
+  for (const wall of ['front', 'back', 'left', 'right']) {
+    const svg = elevationSVG(pub, saved.config, wall).svg; assert.match(svg, /^<svg/); assert.doesNotMatch(svg, /NaN|undefined/, wall + ' elevation');
+  }
+  assert.ok(elevationSVG(pub, saved.config, 'front').svg.length > elevationSVG(pub, { ...saved.config, items: [] }, 'front').svg.length + 500, 'carriage doors drawn on the front');
 });

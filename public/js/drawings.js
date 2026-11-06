@@ -110,7 +110,7 @@ export async function buildDrawingPackage(catalog, quote, { company = '', withPr
   y += 8; doc.setFont('helvetica', 'bold'); doc.text('Options', x, y); y += 14; doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
   for (const o of quote.options || []) {
     if (y > area.y + area.h - 10) { doc.text('…', x, y); break; }
-    const lines = doc.splitTextToSize(`• ${o.name}${o.wall ? ` — ${o.wall} wall` : ''}${o.note === 'Standard' ? ' (standard)' : ''}`, colW);
+    const lines = doc.splitTextToSize(`• ${o.name}${o.wall ? ` — ${o.wall} wall` : ''}${o.detail ? ` (${o.detail})` : ''}${o.note === 'Standard' ? ' (standard)' : ''}`, colW);
     doc.text(lines, x, y); y += 11.5 * lines.length;
   }
   if (withPricing && quote.pricing) {
@@ -152,7 +152,7 @@ export async function buildDrawingPackage(catalog, quote, { company = '', withPr
       const name = doc.splitTextToSize(String(l.label), colNote - area.x - 14);
       doc.text(name, area.x + 6, py);
       doc.setTextColor(...MUTED); doc.setFontSize(9);
-      const det = [l.note, l.wall ? `${l.wall} wall` : ''].filter(Boolean).join(' · ');
+      const det = [l.note, l.wall ? `${l.wall} wall` : '', l.detail].filter(Boolean).join(' · ');
       if (det) doc.text(doc.splitTextToSize(det, colAmt - colNote - 80), colNote, py);
       doc.setFontSize(10); doc.setTextColor(...(l.amount < 0 ? [6, 118, 71] : INK));
       doc.text(l.note === 'Standard' ? 'Included' : money(l.amount), colAmt - 6, py, { align: 'right' });

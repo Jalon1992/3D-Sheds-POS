@@ -5,7 +5,7 @@ export function formatQuote(q, baseUrl, linkFor) {
   const lines = p.lines || [];
   const colors = lines.filter(l => l.type === 'color').reduce((a, l) => (a[l.category] = l.label.split(': ')[1], a), {});
   const options = lines.filter(l => l.type === 'option').map(l => ({
-    name: l.label, category: l.category, wall: l.wall, price: l.amount, note: l.note || undefined,
+    name: l.label, category: l.category, wall: l.wall, price: l.amount, note: l.note || undefined, detail: l.detail || undefined,
   }));
   const roofLine = lines.find(l => l.type === 'roof');
   const roofing = roofLine ? roofLine.label.replace(/^Roofing:\s*/, '') : undefined;

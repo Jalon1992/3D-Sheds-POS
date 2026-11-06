@@ -17,7 +17,7 @@ export function seed() {
   if (getSettings().company_name === undefined) {
     setSettings({
       company_name: 'Your Shed Co.', headline: 'Design your shed in 3D', logo_url: '', brand_color: '#2f6b4f',
-      currency_symbol: '$', tax_rate: 0, tax_delivery: false, delivery_fee: 0, show_prices: true, require_phone: true,
+      currency_symbol: '$', tax_rate: 0, tax_delivery: false, delivery_fee: 0, show_prices: true, customer_window_height: true, require_phone: true,
       phone: '', website: '', privacy_url: '',
       success_message: 'Thanks! Your quote is on its way. A member of our team will reach out shortly.',
       consent_text: 'I agree to receive calls and text messages about my quote. Msg & data rates may apply. Reply STOP to opt out.',
@@ -41,11 +41,12 @@ export function seed() {
     ],
     zip_tiers: [],
   });
+  if (getSettings().customer_window_height === undefined) setSettings({ customer_window_height: true });
   if (getSettings().quote_terms === undefined) setSettings({ customer_pdf: true, quote_terms: 'Prices valid for 30 days. Delivery subject to level site and clear access. Final price confirmed at order.' });
   if (getSettings().color_groups === undefined) setSettings({ color_groups: { siding: true, trim: true, roof: true, door: true, window: true } });
   if (getSettings().downgrade_credit === undefined) setSettings({ downgrade_credit: true, remove_credit: true });
 
-  if (get('SELECT id FROM styles LIMIT 1')) return;
+  if (get('SELECT id FROM styles LIMIT 1')) { upgradeCatalog(); return; }
 
   const ins = (table, obj) => {
     const keys = Object.keys(obj);
@@ -75,10 +76,10 @@ export function seed() {
   const O = {};
   const opt = (key, o) => { O[key] = ins('options', o); };
   let s = 0;
-  opt('door36', { name: '36" Single Door', category: 'doors', kind: 'door_single', placement: 'opening', swap_group: 'door', width: 3, height: 6.67, price: 275, sort: s++, description: 'Pre-hung wood door with lock set.' });
+  opt('door36', { name: '36" Standard Door', category: 'doors', kind: 'door_panel', placement: 'opening', swap_group: 'door', width: 3, height: 6.33, price: 275, sort: s++, description: 'Matches one side of the 6\' Double Doors. Hinged on the right.' });
   opt('door9lite', { name: '9-Lite Glass Door', category: 'doors', kind: 'door_glass', placement: 'opening', swap_group: 'door', width: 3, height: 6.67, price: 595, sort: s++, description: 'Residential steel door with 9-lite glass.' });
   opt('dbl4', { name: "4' Double Doors", category: 'doors', kind: 'door_double', placement: 'opening', swap_group: 'door', width: 4, height: 6.33, price: 425, sort: s++ });
-  opt('dbl6', { name: "6' Double Doors", category: 'doors', kind: 'door_double', placement: 'opening', swap_group: 'door', width: 6, height: 6.33, price: 625, sort: s++ });
+  opt('dbl6', { name: "6' Double Doors", category: 'doors', kind: 'door_panel_double', placement: 'opening', swap_group: 'door', width: 6, height: 6.33, price: 625, sort: s++ });
   opt('french', { name: 'French Doors (5\')', category: 'doors', kind: 'door_french', placement: 'opening', swap_group: 'door', width: 5, height: 6.67, price: 1150, sort: s++ });
   opt('roll6', { name: "6' x 6' Roll-Up Door", category: 'doors', kind: 'door_rollup', placement: 'opening', swap_group: 'door', width: 6, height: 6, price: 895, sort: s++ });
   opt('roll8', { name: "8' x 7' Roll-Up Door", category: 'doors', kind: 'door_rollup', placement: 'opening', swap_group: 'door', width: 8, height: 7, price: 1295, sort: s++ });
@@ -88,7 +89,7 @@ export function seed() {
   opt('winsh', { name: 'Window w/ Shutters', category: 'windows', kind: 'window_shutters', placement: 'opening', swap_group: 'window', width: 2, height: 3, elevation: 3.5, price: 235, sort: s++ });
   opt('transom', { name: 'Transom Window', category: 'windows', kind: 'window_transom', placement: 'opening', swap_group: 'window', gable_mode: 'allow', width: 3, height: 1.25, elevation: 5.5, price: 175, sort: s++ });
   opt('vent', { name: 'Gable Vent', category: 'exterior', kind: 'vent', placement: 'opening', swap_group: 'vent', width: 1.5, height: 1, elevation: -1, price: 45, sort: 0, description: 'Auto-placed high in the gable.' });
-  opt('flower', { name: 'Flower Box', category: 'exterior', kind: 'flowerbox', placement: 'wall_exterior', width: 2.5, height: 0.7, depth: 0.75, elevation: 2.7, price: 95, sort: 1 });
+  opt('flower', { name: 'Flower Box', category: 'exterior', kind: 'flowerbox', placement: 'wall_exterior', width: 2.5, height: 0.7, depth: 0.75, elevation: 2.4, price: 95, sort: 1 });
   opt('ramp', { name: 'Wood Ramp', category: 'exterior', kind: 'ramp', placement: 'ground', width: 4, height: 0.7, depth: 3.5, price: 295, sort: 2 });
   opt('cupola', { name: 'Cupola', category: 'exterior', kind: 'cupola', placement: 'roof', width: 2, height: 2.5, depth: 2, price: 349, sort: 3 });
   opt('extlight', { name: 'Exterior Barn Light', category: 'electrical', kind: 'ext_light', placement: 'wall_exterior', width: 0.8, height: 1, depth: 1, elevation: 6.9, price: 125, sort: 4 });
@@ -110,6 +111,12 @@ export function seed() {
   opt('switch', { name: 'Light Switch', category: 'electrical', kind: 'switch', placement: 'wall_interior', width: 0.25, height: 0.4, depth: 0.08, elevation: 3.8, price: 45, sort: 11 });
   opt('gablewin', { name: 'Gable Window (24" x 16")', description: 'Small fixed window up in the gable end.', category: 'windows', kind: 'window', placement: 'opening', swap_group: 'window', gable_mode: 'only', width: 2, height: 1.33, elevation: 0, price: 145, sort: 99 });
 
+  // Carriage-house doors (built-in models: body takes the door color, window grids take the trim color)
+  opt('carriage72', { name: '72" Carriage House Double Doors', category: 'doors', kind: 'door_carriage_double', placement: 'opening', swap_group: 'door', width: 6, height: 71.5 / 12, price: 895, sort: 7, description: 'Double doors with 5-lite transom windows, raised panels and black strap hinges.' });
+  opt('carriage36', { name: '36" Carriage House Door', category: 'doors', kind: 'door_carriage_right', placement: 'opening', swap_group: 'door', width: 3, height: 71.5 / 12, price: 450, sort: 8, description: 'Matches one side of the 72" Carriage House Double Doors: 5-lite window, raised panels, black hinges. Hinged on the right.' });
+  opt('shelf2', { name: 'Double Shelves (20" deep)', description: 'Two shelf levels, 20" deep. Pick the length that fits your wall.', category: 'interior', kind: 'shelf_double', placement: 'wall_interior', width: 6, height: 2.5, depth: 20 / 12, elevation: 2.5, price: 24, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10, 12', sort: 3 });
+  // A window with separate top & bottom grids (single-hung look)
+  opt('win23sh', { name: "2' x 3' Window (top & bottom grids)", category: 'windows', kind: 'window', placement: 'opening', swap_group: 'window', gable_mode: '', width: 2, height: 3, elevation: 3.5, grid_top: '2x2', grid_bottom: '2x2', price: 175, sort: 5 });
   // What comes in the Electrical Package, and where each part goes (wall + feet from the wall centre, seen from outside)
   run('UPDATE options SET package_items = ? WHERE id = ?', JSON.stringify([
     { option_id: O.breaker, qty: 1, wall: 'back', offset: -2 },
@@ -148,5 +155,38 @@ export function seed() {
     standard_options: [{ option_id: O.roll8, wall: 'front', offset: 0 }, { option_id: O.door36, wall: 'right', offset: 2 }, { option_id: O.win23, wall: 'left', offset: 0 }],
   }, [[10, 12], [10, 16], [12, 16], [12, 20], [12, 24], [14, 24]], 42, 2400);
 
+  setSettings({ migr_catalog_v3: true });
   console.log('  Seeded sample catalog (styles, sizes, colors, options).');
+}
+
+// Door / shelf models added after the first release. A database made by an older version only gets its
+// catalog seeded once, so bring it up to date one time: switch the stock doors to the new models and add
+// the new options if they're missing. Options the shop renamed or rebuilt are left alone.
+export const NEW_OPTIONS = [
+  { kind: 'door_panel', name: '36" Standard Door', description: 'Matches one side of the 6\' Double Doors. Hinged on the right.', category: 'doors', placement: 'opening', swap_group: 'door', width: 3, height: 6.33, price: 275, sort: 0 },
+  { kind: 'door_carriage_double', name: '72" Carriage House Double Doors', description: 'Double doors with 5-lite transom windows, raised panels and black strap hinges.', category: 'doors', placement: 'opening', swap_group: 'door', width: 6, height: 71.5 / 12, price: 895, sort: 7 },
+  { kind: 'door_carriage_right', name: '36" Carriage House Door', description: 'Matches one side of the 72" Carriage House Double Doors: 5-lite window, raised panels, black hinges. Hinged on the right.', category: 'doors', placement: 'opening', swap_group: 'door', width: 3, height: 71.5 / 12, price: 450, sort: 8 },
+  { kind: 'shelf_double', name: 'Double Shelves (20" deep)', description: 'Two shelf levels, 20" deep. Pick the length that fits your wall.', category: 'interior', placement: 'wall_interior', width: 6, height: 2.5, depth: 20 / 12, elevation: 2.5, price: 24, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10, 12', sort: 3 },
+];
+export function upgradeCatalog() {
+  if (getSettings().migr_catalog_v3) return;
+  // stock doors -> new models (X-braced barn doors become the plain panel doors)
+  run(`UPDATE options SET kind = 'door_panel_double' WHERE kind = 'door_double' AND name = '6'' Double Doors'`);
+  run(`UPDATE options SET kind = 'door_panel', description = 'Matches one side of the 6'' Double Doors. Hinged on the right.' WHERE kind = 'door_single' AND name = '36" Standard Door'`);
+  run(`UPDATE options SET name = '36" Standard Door', height = 6.33, description = 'Matches one side of the 6'' Double Doors. Hinged on the right.' WHERE kind = 'door_panel' AND name = '36" Single Door'`);
+  run(`UPDATE options SET kind = 'door_carriage_right', name = '36" Carriage House Door' WHERE kind = 'door_carriage' AND (name = '36" Single Carriage House Door' OR name = '36" Carriage House Door')`);
+  run(`UPDATE options SET length_choices = '4, 6, 8, 10, 12', price_unit = 'per_ft_item' WHERE kind = 'shelf_double' AND (length_choices IS NULL OR length_choices = '')`);
+  const added = [];
+  for (const o of NEW_OPTIONS) {
+    if (get('SELECT id FROM options WHERE kind = ?', o.kind)) continue;
+    const keys = Object.keys(o);
+    added.push(Number(run(`INSERT INTO options (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, ...keys.map(k => o[k])).lastInsertRowid));
+  }
+  // styles limited to a list of options also get the new ones
+  if (added.length) for (const st of db.prepare('SELECT id, available_options FROM styles WHERE available_options IS NOT NULL').all()) {
+    let list; try { list = JSON.parse(st.available_options); } catch { continue; }
+    if (Array.isArray(list)) run('UPDATE styles SET available_options = ? WHERE id = ?', JSON.stringify([...new Set([...list, ...added])]), st.id);
+  }
+  setSettings({ migr_catalog_v3: true });
+  if (added.length) console.log(`  Catalog updated: added ${added.length} new option(s) (doors / double shelves).`);
 }

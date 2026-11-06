@@ -112,7 +112,7 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
     const op = optById[it.option_id]; if (!op) continue;
     const p = resolvePlacement(geo, op, it);
     const x0 = X(p.offset - p.w / 2), x1 = X(p.offset + p.w / 2), y0 = Y(F + p.elev + p.h), y1 = Y(F + p.elev), wpx = x1 - x0, hpx = y1 - y0;
-    const kind = op.kind || '';
+    const kind = op.kind || '', o2 = op;
     if (op.placement === 'opening') {
       const cas = (style.casing_trim ?? 4) / 12 * S;
       o.push(`<rect x="${x0 - cas}" y="${y0 - cas}" width="${wpx + 2 * cas}" height="${hpx + cas + (kind.startsWith('door') ? 0 : cas)}" fill="#ffffff" stroke="#1d2624" stroke-width="1.2"/>`);
@@ -123,17 +123,39 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
           o.push(`<line x1="${(x0 + x1) / 2}" y1="${y0}" x2="${(x0 + x1) / 2}" y2="${y1}" stroke="#1d2624" stroke-width="1.4"/>`);
           if (kind === 'door_double') for (const [a, b] of [[x0, (x0 + x1) / 2], [(x0 + x1) / 2, x1]]) o.push(`<path d="M${a} ${y0}L${b} ${y1}M${b} ${y0}L${a} ${y1}" stroke="#1d2624" stroke-opacity=".5" fill="none"/>`);
           else for (const [a, b] of [[x0, (x0 + x1) / 2], [(x0 + x1) / 2, x1]]) o.push(`<rect x="${a + 6}" y="${y0 + 6}" width="${b - a - 12}" height="${hpx * 0.75}" fill="#dfe8ee" stroke="#1d2624" stroke-opacity=".6"/>`);
+        } else if (kind === 'door_carriage' || kind === 'door_carriage_right' || kind === 'door_carriage_double' || kind === 'door_panel' || kind === 'door_panel_double') {
+          const nL = kind === 'door_carriage_double' || kind === 'door_panel_double' ? 2 : 1, lwp = (x1 - x0) / nL, win = kind.startsWith('door_carriage');
+          for (let L = 0; L < nL; L++) {
+            const a = x0 + L * lwp, b = a + lwp, st = lwp * 0.12, wt = y0 + hpx * 0.04, wb = wt + hpx * 0.16, mid = y0 + hpx * 0.56;
+            if (L) o.push(`<line x1="${a}" y1="${y0}" x2="${a}" y2="${y1}" stroke="#1d2624"/>`);
+            if (!win) { o.push(`<rect x="${a + st}" y="${y0 + hpx * 0.06}" width="${lwp - 2 * st}" height="${mid - y0 - hpx * 0.09}" fill="none" stroke="#1d2624" stroke-opacity=".6"/>`); o.push(`<rect x="${a + st}" y="${mid + hpx * 0.03}" width="${lwp - 2 * st}" height="${y1 - mid - hpx * 0.1}" fill="none" stroke="#1d2624" stroke-opacity=".6"/>`); continue; }
+            o.push(`<rect x="${a + st}" y="${wt}" width="${lwp - 2 * st}" height="${wb - wt}" fill="#3a4448" stroke="#1d2624"/>`);
+            for (let k = 1; k < 5; k++) o.push(`<line x1="${a + st + (lwp - 2 * st) * k / 5}" y1="${wt}" x2="${a + st + (lwp - 2 * st) * k / 5}" y2="${wb}" stroke="#ffffff" stroke-width="1.5"/>`);
+            o.push(`<rect x="${a + st}" y="${wb + hpx * 0.05}" width="${lwp - 2 * st}" height="${mid - wb - hpx * 0.08}" fill="none" stroke="#1d2624" stroke-opacity=".6"/>`);
+            o.push(`<rect x="${a + st}" y="${mid + hpx * 0.03}" width="${lwp - 2 * st}" height="${y1 - mid - hpx * 0.1}" fill="none" stroke="#1d2624" stroke-opacity=".6"/>`);
+          }
         } else if (kind === 'door_glass') o.push(`<rect x="${x0 + wpx * 0.18}" y="${y0 + hpx * 0.08}" width="${wpx * 0.64}" height="${hpx * 0.4}" fill="#dfe8ee" stroke="#1d2624" stroke-opacity=".6"/>`);
         else { o.push(`<rect x="${x0 + wpx * 0.15}" y="${y0 + hpx * 0.08}" width="${wpx * 0.7}" height="${hpx * 0.36}" fill="none" stroke="#1d2624" stroke-opacity=".5"/><rect x="${x0 + wpx * 0.15}" y="${y0 + hpx * 0.54}" width="${wpx * 0.7}" height="${hpx * 0.36}" fill="none" stroke="#1d2624" stroke-opacity=".5"/>`); }
-        if (kind !== 'door_rollup') o.push(`<circle cx="${kind === 'door_double' || kind === 'door_french' ? (x0 + x1) / 2 + 7 : x1 - 9}" cy="${y0 + hpx * 0.53}" r="3" fill="#1d2624"/>`);
+        if (kind !== 'door_rollup') o.push(`<circle cx="${kind === 'door_carriage_double' || kind === 'door_panel_double' ? (x0 + x1) / 2 + 9 : kind === 'door_double' || kind === 'door_french' ? (x0 + x1) / 2 + 7 : kind === 'door_panel' || kind === 'door_carriage_right' ? x0 + 9 : x1 - 9}" cy="${y0 + hpx * 0.53}" r="3" fill="#1d2624"/>`);
       } else if (kind === 'vent') {
         o.push(`<rect x="${x0}" y="${y0}" width="${wpx}" height="${hpx}" fill="#ffffff" stroke="#1d2624" stroke-width="1.2"/>`);
         for (let k = 1; k < 5; k++) o.push(`<line x1="${x0}" y1="${y0 + hpx * k / 5}" x2="${x1}" y2="${y0 + hpx * k / 5}" stroke="#1d2624" stroke-opacity=".6"/>`);
       } else {
         o.push(`<rect x="${x0}" y="${y0}" width="${wpx}" height="${hpx}" fill="#dfe8ee" stroke="#1d2624" stroke-width="1.6"/>`);
-        const cols = kind === 'window_transom' ? Math.max(2, Math.round(p.w / 1.2)) : p.w >= 3 ? 3 : 2, rows = kind === 'window_transom' ? 1 : 2;
-        for (let k = 1; k < cols; k++) o.push(`<line x1="${x0 + wpx * k / cols}" y1="${y0}" x2="${x0 + wpx * k / cols}" y2="${y1}" stroke="#1d2624"/>`);
-        for (let k = 1; k < rows; k++) o.push(`<line x1="${x0}" y1="${y0 + hpx * k / rows}" x2="${x1}" y2="${y0 + hpx * k / rows}" stroke="#1d2624"/>`);
+        const pg = v => { if (v === undefined || v === null || v === '') return null; const m = String(v).match(/^(\d+)\s*[x×]\s*(\d+)$/i); return m ? [+m[1], +m[2]] : [1, 1]; };
+        const gT = kind !== 'window_transom' && pg(o2.grid_top), gB = kind !== 'window_transom' && pg(o2.grid_bottom);
+        const lines = (cols, rows, ya, yb) => {
+          for (let k = 1; k < cols; k++) o.push(`<line x1="${x0 + wpx * k / cols}" y1="${ya}" x2="${x0 + wpx * k / cols}" y2="${yb}" stroke="#1d2624"/>`);
+          for (let k = 1; k < rows; k++) o.push(`<line x1="${x0}" y1="${ya + (yb - ya) * k / rows}" x2="${x1}" y2="${ya + (yb - ya) * k / rows}" stroke="#1d2624"/>`);
+        };
+        if (gT || gB) {
+          const ym = (y0 + y1) / 2;
+          o.push(`<line x1="${x0}" y1="${ym}" x2="${x1}" y2="${ym}" stroke="#1d2624" stroke-width="2.4"/>`);
+          lines(...(gT || [1, 1]), y0, ym - 1.2); lines(...(gB || [1, 1]), ym + 1.2, y1);
+        } else {
+          const cols = kind === 'window_transom' ? Math.max(2, Math.round(p.w / 1.2)) : p.w >= 3 ? 3 : 2, rows = kind === 'window_transom' ? 1 : 2;
+          lines(cols, rows, y0, y1);
+        }
         if (kind === 'window_shutters') for (const sx of [-1, 1]) { const sw = wpx * 0.5, xs = sx < 0 ? x0 - cas - sw - 2 : x1 + cas + 2; o.push(`<rect x="${xs}" y="${y0 - 3}" width="${sw}" height="${hpx + 6}" fill="#ffffff" stroke="#1d2624"/>`); for (let k = 1; k < 9; k++) o.push(`<line x1="${xs + 3}" y1="${y0 + hpx * k / 9}" x2="${xs + sw - 3}" y2="${y0 + hpx * k / 9}" stroke="#1d2624" stroke-opacity=".5"/>`); }
       }
       labels.push({ x: (x0 + x1) / 2, text: `${shortName(op)} (${ftIn(p.w)} × ${ftIn(p.h)})` });

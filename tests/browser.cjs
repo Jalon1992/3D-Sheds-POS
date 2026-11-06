@@ -81,6 +81,32 @@ function makeGLB() {
       assert(warns.some(w => /Model failed to load/.test(w)), 'failure logged as a warning, not an error');
     });
 
+    await step('new 3D parts draw in 3D: carriage + panel doors, double shelves at a picked length, a window raised; price = server', async () => {
+      await openBuilder(cust);
+      const r = await cust.evaluate(async () => {
+        const { state, optById, addOption, setLength, setElev, scene, pricing } = window.__shed;
+        const st = state.catalog.styles.find(x => x.name === 'Garage') || state.catalog.styles[0];
+        const z = [...st.sizes].sort((a, b) => b.width * b.depth - a.width * a.depth)[0];
+        state.config.style_id = st.id; state.config.size_id = z.id; state.config.items = [];
+        const byKind = k => Object.values(optById).find(o => o.kind === k);
+        const want = ['door_carriage_double', 'door_carriage_right', 'door_panel', 'shelf_double'].map(byKind).filter(Boolean);
+        for (const o of want) addOption(o);
+        const shelf = state.config.items.find(i => optById[i.option_id].kind === 'shelf_double'); if (shelf) setLength(shelf.uid, 8);
+        const win = Object.values(optById).find(o => o.placement === 'opening' && String(o.kind).startsWith('window')); addOption(win);
+        const wi = state.config.items.find(i => i.option_id === win.id); setElev(wi.uid, 1); setElev(wi.uid, 1);
+        await new Promise(res => setTimeout(res, 800));
+        const drawn = state.config.items.map(i => { let m = 0; scene.items.get(i.uid)?.traverse(x => { if (x.isMesh) m++; }); return [optById[i.option_id].kind, m]; });
+        const server = await (await fetch('/api/v1/price', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.config) })).json();
+        return { kinds: want.map(o => o.kind), drawn, shelfW: shelf?.w, winElev: wi.elev, client: Math.round(pricing().total * 100), server: Math.round(server.total * 100) };
+      });
+      assert(r.kinds.length === 4, 'new parts in the catalog: ' + r.kinds);
+      assert(r.drawn.every(([, m]) => m > 0), 'every part has a 3D model: ' + JSON.stringify(r.drawn));
+      assert(r.shelfW === 8, 'shelf length picked: ' + r.shelfW);
+      assert(r.winElev > 0, 'window raised: ' + r.winElev);
+      assert(r.client === r.server, `price matches the server (${r.client} vs ${r.server})`);
+      await cust.screenshot({ path: join(OUT, 'b0-new-3d-parts.png') });
+    });
+
     await step('the price the customer sees matches the server, across every style and several options', async () => {
       const res = await cust.evaluate(async () => {
         const { state, optById, addOption, pricing } = window.__shed; const out = [];

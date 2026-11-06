@@ -1,6 +1,6 @@
 {
   "name": "3d-sheds",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "3D shed configurator with built-in CRM, point of sale & e-signature, production/delivery boards, admin, Open API, webhooks and GoHighLevel integration",
   "type": "module",
   "main": "server.js",
@@ -11,24 +11,26 @@
     "start": "node --disable-warning=ExperimentalWarning server.js",
     "postinstall": "node scripts/copy-vendor.js",
     "build:demo": "node demo/build.mjs",
-    "test": "node --test tests/api.test.mjs tests/messaging.test.mjs tests/full.test.mjs tests/modules.test.mjs",
+    "test": "node --test tests/api.test.mjs tests/messaging.test.mjs tests/full.test.mjs tests/modules.test.mjs tests/security.test.mjs tests/ops.test.mjs",
+    "test:security": "node --test tests/security.test.mjs",
     "test:browser": "node tests/browser.cjs && node tests/modules-ui.cjs",
     "test:e2e": "node tests/e2e.cjs",
     "test:messaging": "node --test tests/messaging.test.mjs",
     "test:sweep": "node --disable-warning=ExperimentalWarning tests/sweep.cjs"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "jspdf": "^2.5.2",
-    "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.16",
+    "express": "^4.22.3",
+    "jspdf": "^4.2.1",
+    "multer": "^2.5.0",
+    "nodemailer": "^10.3.1",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
-    "svg2pdf.js": "^2.2.4",
+    "svg2pdf.js": "^2.9.0",
+    "tar": "^7.5.22",
     "three": "^0.169.0"
   },
   "devDependencies": {
-    "esbuild": "0.24.0",
+    "esbuild": "^0.25.12",
     "mailparser": "^3.7.2",
     "smtp-server": "^3.13.6"
   }
