@@ -26,12 +26,25 @@ function privateIp(ip) {
   if (v.startsWith('::ffff:')) return privateIp(v.slice(7));
   return v === '::' || v === '::1' || /^f[cd]/.test(v) || /^fe[89ab]/.test(v) || v.startsWith('64:ff9b:') || v.startsWith('ff');
 }
+const allowPrivate = () => ['1', 'true'].includes(String(process.env.ALLOW_PRIVATE_WEBHOOKS || '').toLowerCase());
+export const isPrivateIp = ip => privateIp(ip);
+/** Quick check without a DNS lookup (used when saving a webhook): '' when fine, otherwise the reason. */
+export function checkOutboundUrl(raw) {
+  let u; try { u = new URL(String(raw || '')); } catch { return 'url must be a full http(s):// address'; }
+  if (!['http:', 'https:'].includes(u.protocol)) return 'url must start with http(s)://';
+  if (u.username || u.password) return 'url must not contain a username or password (use the headers field instead)';
+  if (allowPrivate()) return '';
+  const host = u.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
+  if (host === 'localhost' || /\.(localhost|local|internal|lan|home\.arpa)$/.test(host) || (!host.includes('.') && !net.isIP(host))) return 'url must be a public internet address';
+  if (net.isIP(host) && privateIp(host)) return 'url must be a public internet address';
+  return '';
+}
 /** Returns a reason when this URL may not be called, or null when it's fine. */
 export async function blockedTarget(url) {
   let u; try { u = new URL(url); } catch { return 'is not a valid web address'; }
   if (!/^https?:$/.test(u.protocol)) return 'must start with http:// or https://';
   if (u.username || u.password) return 'must not contain a username or password';
-  if (process.env.ALLOW_PRIVATE_WEBHOOKS === '1') return null; // tests / self-hosted setups that need it
+  if (allowPrivate()) return null; // tests / self-hosted setups that need it
   const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (host === 'localhost' || /\.(localhost|local|internal|lan|home\.arpa)$/.test(host)) return 'points at a private address';
   const addrs = net.isIP(host) ? [host] : (await dns.lookup(host, { all: true }).catch(() => [])).map(a => a.address);
@@ -50,7 +63,7 @@ async function postJSON(url, body, headers = {}, timeoutMs = 10000) {
     const text = r.status >= 300 && r.status < 400 ? `Not followed: redirected to ${r.headers.get('location') || 'another address'}` : await r.text();
     return { status: r.status, ok: r.ok, text };
   } catch (e) {
-    return { status: 0, ok: false, text: e.message };
+    return { status: 0, ok: false, text: e.message, blocked: String(e.message).startsWith('Blocked') };
   } finally { clearTimeout(t); }
 }
 
@@ -59,7 +72,8 @@ export async function deliver(hook, event, data) {
   const payload = JSON.stringify({ event, delivery_id: crypto.randomUUID(), sent_at: new Date().toISOString(), data });
   const headers = { 'User-Agent': 'ShedBuilder-Webhooks/1.0', 'X-ShedBuilder-Event': event };
   if (hook.secret) headers['X-ShedBuilder-Signature'] = 'sha256=' + crypto.createHmac('sha256', hook.secret).update(payload).digest('hex');
-  Object.assign(headers, hook.headers || {});
+  for (const [k, v] of Object.entries(hook.headers && typeof hook.headers === 'object' ? hook.headers : {}))
+    if (/^[!#$%&'*+.^_`|~0-9a-z-]{1,100}$/i.test(k) && !/[\r\n]/.test(String(v))) headers[k] = String(v);
   const delays = [0, 1000, 5000, 25000];
   let last;
   for (let i = 0; i < delays.length; i++) {

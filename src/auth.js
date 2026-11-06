@@ -69,7 +69,7 @@ function readApiKey(req) {
   let key = req.headers['x-api-key'];
   const auth = req.headers.authorization || '';
   if (!key && auth.startsWith('Bearer ')) key = auth.slice(7).trim();
-  if (!key) return null;
+  if (!key || String(key).length > 200) return null;
   const hash = crypto.createHash('sha256').update(String(key)).digest('hex');
   const row = get('SELECT * FROM api_keys WHERE key_hash = ?', hash);
   if (row) run("UPDATE api_keys SET last_used = datetime('now') WHERE id = ?", row.id);

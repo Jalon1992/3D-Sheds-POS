@@ -207,7 +207,20 @@ for (const sql of [
   'ALTER TABLE contracts ADD COLUMN prev_status TEXT',
   'ALTER TABLE contracts ADD COLUMN change_note TEXT',
   "ALTER TABLE contracts ADD COLUMN payload TEXT DEFAULT '{}'",
+  'ALTER TABLE options ADD COLUMN grid_top TEXT',
+  'ALTER TABLE options ADD COLUMN grid_bottom TEXT',
+  'ALTER TABLE options ADD COLUMN length_choices TEXT',
 ]) { try { db.exec(sql); } catch { /* column already exists */ } }
+
+// One-time data fixes for existing databases
+try {
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_flat_window_trim'").get()) {
+    // windows now have a flat bottom casing (no sill) - drop the default flower box so it sits under the trim
+    db.prepare("UPDATE options SET elevation = 2.4 WHERE kind = 'flowerbox' AND elevation = 2.7").run();
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_flat_window_trim', 'true')").run();
+  }
+} catch { /* settings table not ready */ }
+// (catalog upgrades for older databases - new doors / shelves - live in seed.js upgradeCatalog())
 
 // ---- JSON column helpers -----------------------------------------------------
 export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
@@ -242,7 +255,7 @@ export function setSettings(obj) {
 export const PUBLIC_SETTINGS = ['company_name', 'logo_url', 'brand_color', 'currency_symbol', 'tax_rate', 'tax_delivery',
   'delivery_fee', 'show_prices', 'success_message', 'consent_text', 'phone', 'website', 'privacy_url', 'require_phone',
   'headline', 'thank_you_url', 'roofing', 'downgrade_credit', 'remove_credit', 'color_groups',
-  'pricing_mode', 'price_tiers', 'default_tier', 'dealers', 'zip_tiers', 'customer_pdf', 'quote_terms'];
+  'pricing_mode', 'price_tiers', 'default_tier', 'dealers', 'zip_tiers', 'customer_pdf', 'quote_terms', 'customer_window_height'];
 
 // ---- Catalog (what the configurator needs) ----------------------------------
 export function getCatalog({ includeInactive = false } = {}) {

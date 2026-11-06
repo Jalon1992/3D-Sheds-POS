@@ -360,3 +360,11 @@ body.has-pos-bar .layout { height: calc(100vh - var(--top-h) - 48px); height: ca
   .pos-bar { height: 40px; }
   body.has-pos-bar .layout { height: calc(100vh - var(--top-h) - 40px); height: calc(100dvh - var(--top-h) - 40px); min-height: 0; }
 }
+.ic-row.hgt { align-items: center; gap: 12px; } .ic-row.hgt .mv { margin-left: 0; }
+.link-sm { border: 0; background: none; padding: 0; color: var(--brand); font-weight: 700; font-size: 12px; text-decoration: underline; cursor: pointer; }
+.mv button:disabled { opacity: .35; cursor: not-allowed; }
+/* phones: give the item card room while it's open */
+@media (max-width: 900px) and (min-height: 501px) {
+  body.card-open .viewport { height: 70vh; height: 70dvh; transition: height .2s; }
+  body.card-open .itemcard { max-height: calc(100% - 104px); }
+}

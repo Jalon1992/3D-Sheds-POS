@@ -110,13 +110,13 @@ export function inGable(geo, opt, item) {
   const m = gableMode(opt); return m === 'only' || (m === 'allow' && !!item.gable);
 }
 
-/** Trim around an opening (ft): side casing, head casing, sill below and sill ears past the casing. */
+/** Trim around an opening (ft): side casing, head casing and (windows/vents) the flat bottom casing. */
 function trimPad(geo, opt) {
   if (opt.placement !== 'opening') return { side: 0, head: 0, sill: 0 };
   const win = String(opt.kind || '').startsWith('window'), cw = geo.casing ?? 0.33;
   let side = cw + (win ? 0.1 : 0.05);
   if (opt.kind === 'window_shutters') side = Math.max(side, cw + (Number(opt.width) || 2) * 0.55);
-  return { side, head: cw, sill: win || opt.kind === 'vent' ? 0.12 : 0 };
+  return { side, head: cw, sill: win || opt.kind === 'vent' ? cw : 0 };
 }
 
 /** Resolve where an item actually sits (clamped to the wall, clear of the corner boards, under the roof line).
@@ -139,7 +139,7 @@ export function resolvePlacement(geo, opt, item) {
   let elev = baseElev;
   if (opt.placement === 'opening' || opt.placement === 'wall_exterior' || opt.placement === 'wall_interior') {
     const top = Math.min(geo.topAt(item.wall, offset - w / 2 - pad.side), geo.topAt(item.wall, offset + w / 2 + pad.side));
-    const maxTop = top - (opt.placement === 'opening' ? pad.head + 0.15 : 0.15);
+    const maxTop = top - (opt.placement === 'opening' ? pad.head + 0.08 : 0.15);
     if (inGable(geo, opt, item)) {
       // centred in the gable: above the top of the wall, head trim clear of the rake board
       const lo = geo.H + 0.15 + pad.sill, hi = maxTop - 0.15;
@@ -180,8 +180,8 @@ function collides(geo, optById, items, opt, cand, ignoreUid) {
     else if (!(f.layer === e.layer || f.layer === 'through' || e.layer === 'through')) continue;
     const eps = 0.01;
     const hOverlap = e.a < f.b - eps && f.a < e.b - eps;
-    // a flower box tucks right under a window sill
-    const vTol = (e.kind === 'flowerbox' || f.kind === 'flowerbox') ? 0.05 : eps;
+    // a flower box tucks right under a window's bottom trim (its flowers may overlap the trim a little)
+    const vTol = (e.kind === 'flowerbox' || f.kind === 'flowerbox') ? 0.25 : eps;
     const vOverlap = e.layer === 'ground' || (e.y0 < f.y1 - vTol && f.y0 < e.y1 - vTol);
     if (hOverlap && vOverlap) return true;
   }
