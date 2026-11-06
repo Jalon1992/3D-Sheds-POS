@@ -11,14 +11,30 @@ import { MODULES, normalizeModules } from '../public/js/shared/modules.js';
 const KEY = 'shedbuilder-demo-v2';
 const PUBLIC = ['company_name', 'logo_url', 'brand_color', 'currency_symbol', 'tax_rate', 'tax_delivery', 'delivery_fee', 'show_prices',
   'success_message', 'consent_text', 'phone', 'website', 'privacy_url', 'require_phone', 'headline', 'thank_you_url', 'roofing',
-  'downgrade_credit', 'remove_credit', 'color_groups', 'pricing_mode', 'price_tiers', 'default_tier', 'dealers', 'zip_tiers', 'customer_pdf', 'quote_terms'];
+  'downgrade_credit', 'remove_credit', 'color_groups', 'pricing_mode', 'price_tiers', 'default_tier', 'dealers', 'zip_tiers', 'customer_pdf', 'quote_terms', 'customer_window_height'];
 const JSONISH = { styles: ['standard_options', 'default_colors', 'roof_choices', 'available_options'], webhooks: ['events', 'headers'] };
 
 // ---- storage -----------------------------------------------------------------
 let db = null;
+const CATALOG_VERSION = 3;
 function load() {
-  try { const raw = localStorage.getItem(KEY); if (raw) return JSON.parse(raw); } catch { /* storage unavailable */ }
+  try { const raw = localStorage.getItem(KEY); if (raw) return upgrade(JSON.parse(raw)); } catch { /* storage unavailable */ }
   return fresh();
+}
+// A browser that opened an older demo keeps its saved catalog: bring the stock doors/shelves up to date
+// (new door models, the 36" right-half doors, double shelves) without losing the visitor's own edits or quotes.
+function upgrade(d) {
+  if ((d.catalogVersion || 0) >= CATALOG_VERSION) return d;
+  const OLD_KINDS = { door_double: 'door_panel_double', door_single: 'door_panel', door_carriage: 'door_carriage_right' };
+  for (const so of seed.catalog.options) {
+    const cur = d.options.find(o => o.id === so.id);
+    if (!cur) { if (!d.options.some(o => o.kind === so.kind && o.name === so.name)) d.options.push(structuredClone(so)); continue; }
+    if (cur.kind !== so.kind && OLD_KINDS[cur.kind] === so.kind) Object.assign(cur, { kind: so.kind, name: so.name, description: so.description, height: so.height });
+    for (const k of ['length_choices', 'price_unit', 'grid_top', 'grid_bottom', 'gable_mode']) if (cur[k] === undefined && so[k] !== undefined && cur.kind === so.kind) cur[k] = so[k];
+  }
+  for (const [k, v] of Object.entries(seed.settings)) if (d.settings[k] === undefined) d.settings[k] = structuredClone(v);
+  d.catalogVersion = CATALOG_VERSION;
+  db = d; save(); return d;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch { /* full or blocked: keep in memory */ } }
 function fresh() {
@@ -33,7 +49,7 @@ function fresh() {
       { id: 3, email: 'sales@example.com', name: 'Sam Sales', role: 'sales', created_at: now() },
       { id: 4, email: 'driver@example.com', name: 'Dee Delivery', role: 'delivery', created_at: now() },
     ],
-    seq: 1000,
+    seq: 1000, catalogVersion: CATALOG_VERSION,
   };
   db = d; for (const fn of hooks.fresh) fn(d); sampleQuotes(); return d;
 }
@@ -102,6 +118,9 @@ setModuleSource(demoMods);
 const meOut = () => ({ ...currentUser(), permissions: permissionsFor(currentUser()), modules: demoMods(), can_manage_modules: (currentUser().role || 'admin') === 'admin' });
 on('GET', /^\/api\/auth\/me$/, () => (loggedOut() ? err('Not logged in', 401) : json(meOut())));
 on('POST', /^\/api\/auth\/login$/, () => { try { sessionStorage.removeItem(KEY + '-out'); } catch { /* */ } return json(meOut()); });
+// System & backups: the demo lives in your browser, so there's nothing to back up
+on('GET', /^\/api\/admin\/system$/, () => json({ version: { version: 'demo', commit: null, branch: null, started_at: new Date().toISOString() }, schema: 2, schema_code: 2, backups: [], last: null, pre_update: null, offsite: { on: false }, schedule: 'off in the demo (everything stays in this browser)', dir: '' }));
+on('POST', /^\/api\/admin\/system\/backup$/, () => err('The demo keeps everything in your browser, so there is nothing to back up here. On a real install this makes a full backup.', 400));
 on('GET', /^\/api\/admin\/modules$/, () => json({ modules: demoMods(), list: MODULES, can_manage: (currentUser().role || 'admin') === 'admin', developer_login: false }));
 on('PUT', /^\/api\/admin\/modules$/, (m, b) => { if ((currentUser().role || 'admin') !== 'admin') return err('Only the developer login can change modules.', 403); db.settings.modules = normalizeModules(b || {}, demoMods()); save(); return json({ modules: db.settings.modules }); });
 on('POST', /^\/api\/auth\/logout$/, () => { try { sessionStorage.setItem(KEY + '-out', '1'); } catch { /* */ } return json({ ok: true }); });

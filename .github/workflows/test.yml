@@ -1,0 +1,43 @@
+# Runs every test suite on every push and pull request. Turn on branch protection for `pilot` and `stable`
+# (Settings → Branches → require the "tests" check) so nothing untested reaches a company.
+name: tests
+on:
+  push:
+  pull_request:
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Known vulnerabilities in production packages
+        run: npm audit --omit=dev --audit-level=high
+      - name: API, messaging, pricing, modules, security, operations
+        run: npm test
+      - name: Browser for the end-to-end suites
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Multi-role walkthrough (sales, production, delivery, contracts)
+        run: npm run test:e2e
+        env: { E2E_OUT: '${{ runner.temp }}/shots' }
+      - name: Every page × every role × desktop and phone
+        run: npm run test:sweep
+      - name: 3D configurator + modules in a real browser
+        run: npm run test:browser
+        env: { E2E_OUT: '${{ runner.temp }}/shots' }
+      - name: Screenshots (when something failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore

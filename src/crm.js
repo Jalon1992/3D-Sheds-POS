@@ -526,7 +526,7 @@ async function inboundMessage({ channel, from, to, subject, body, provider, prov
 export function hooksRouter({ baseUrl }) {
   const r = express.Router();
   r.use(express.urlencoded({ extended: false, limit: '5mb' }));
-  const keyOk = req => { const k = getSettings().inbound_key; return !!k && req.params.key === k; };
+  const keyOk = req => { const k = String(getSettings().inbound_key || ''), g = String(req.params.key || ''); return !!k && g.length === k.length && crypto.timingSafeEqual(Buffer.from(g), Buffer.from(k)); };
   // Twilio signs the exact URL it was configured with. Accept the Public URL form and the address the request
   // actually arrived on (custom domain vs onrender.com), and remember why a text was refused so the
   // Messaging page can explain it instead of replies silently disappearing.

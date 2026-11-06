@@ -12,6 +12,18 @@ import { broadcast } from './realtime.js';
 import { formatQuote } from '../public/js/shared/quote-format.js';
 import { FIELD_TYPES, TAGS, DEFAULT_RTO, rtoCalc, usd, saleTypeLabel, DRAWING_INITIALS_BOX } from '../public/js/shared/contract.js';
 import { inspectPdf, preparePdf, finalizePdf, sha256, buildSampleTemplate } from './contract-pdf.js';
+import { PDFDocument } from 'pdf-lib';
+
+/** A signature must be a real PNG the PDF library can embed. Checked before the signer is marked as signed,
+ *  so a corrupted image can't leave a contract stuck half-finished. */
+async function validPng(dataUrl) {
+  try {
+    const buf = Buffer.from(String(dataUrl).split(',')[1] || '', 'base64');
+    if (buf.length < 60 || buf.readUInt32BE(0) !== 0x89504e47) return false;
+    await (await PDFDocument.create()).embedPng(buf);
+    return true;
+  } catch { return false; }
+}
 import { buildData, signerFirst } from '../public/js/shared/contract-data.js';
 import { addActivity, notify, messageContact, moveSalesStage, createOrder, salesPipeline, ordersPipeline, upsertContact } from './crm.js';
 import { fill, sendEmail, sendSMS, toE164, prettyPhone, messagingStatus } from './messaging.js';
@@ -515,13 +527,14 @@ export function signRouter() {
     if (expired(k)) return bad(res, 'This signing link has expired. Ask your sales rep to send a new one.', 410);
     const b = req.body || {};
     if (b.consent !== true) return bad(res, 'Please agree to sign electronically.');
+    if (b.values != null && (typeof b.values !== 'object' || Array.isArray(b.values))) return bad(res, 'Nothing to sign was sent. Please try again.');
     const mine = k.fields.filter(f => FIELD_TYPES[f.type]?.signer && f.role === s.role);
     const values = {};
     for (const f of mine) {
       const v = (b.values || {})[f.id];
       if (f.type === 'signature' || f.type === 'initials') {
         if (v) {
-          if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(v) || v.length > 1_500_000) return bad(res, 'Signature image is not valid. Please sign again.');
+          if (typeof v !== 'string' || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(v) || v.length > 1_500_000 || !(await validPng(v))) return bad(res, 'Signature image is not valid. Please sign again.');
           values[f.id] = v;
         } else if (f.required) return bad(res, `Please ${f.type === 'initials' ? 'initial' : 'sign'} every highlighted ${f.type === 'initials' ? 'initials box' : 'signature box'}.`);
       } else if (f.type === 'text') {

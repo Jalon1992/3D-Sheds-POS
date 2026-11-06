@@ -1,7 +1,7 @@
 // Shared pricing + configuration helpers. Used by the browser AND the server
 // (the server re-prices every quote with this same code, so prices can't be tampered with).
 
-import { shedGeometry, roofArea, WALLS, wallLength, canPlace, findSpot, gableMode } from './geometry.js';
+import { shedGeometry, roofArea, WALLS, wallLength, canPlace, findSpot, gableMode, resolvePlacement } from './geometry.js';
 export { WALLS, wallLength };
 
 /** Roofing materials. Admin can rename/re-price these in Settings → Roofing. */
@@ -97,9 +97,18 @@ export function money(n, symbol = '$') {
 }
 
 /** Price of one option for a given shed size, before standard-option credit. */
-export function optionPrice(opt, size, qty = 1, wall = null) {
+/** Lengths (ft) a customer may pick for an option, e.g. "4, 6, 8, 10" → [4, 6, 8, 10]. Empty = fixed length. */
+export function lengthChoices(opt) {
+  return [...new Set(String(opt?.length_choices || '').split(/[,\s]+/).map(Number).filter(n => n > 0 && n <= 40))].sort((a, b) => a - b);
+}
+/** Window heights are customer-adjustable when the setting is on (default on). */
+export const windowHeightAdjustable = catalog => catalog?.settings?.customer_window_height !== false;
+export const isWindow = o => o?.placement === 'opening' && String(o.kind || '').startsWith('window');
+
+export function optionPrice(opt, size, qty = 1, wall = null, item = null) {
   const p = Number(opt.price) || 0;
   switch (opt.price_unit) {
+    case 'per_ft_item': return p * (Number(item?.w) > 0 ? Number(item.w) : Number(opt.width) || 1) * qty;
     case 'per_ft_wall': return p * (wall && wall !== 'ceiling' && wall !== 'roof' ? wallLength(wall, size) : size.width) * qty;
     case 'per_ft_width': return p * size.width * qty;
     case 'per_ft_depth': return p * size.depth * qty;
@@ -154,6 +163,14 @@ export function defaultConfig(catalog, styleId, sizeId) {
  * Standard options are included in the base price. Swapping a standard option for another
  * charges only the difference (never a credit). Removing a standard option gives no credit.
  */
+const inchTxt = ft => { const t = Math.round(ft * 12); return t >= 12 ? `${Math.floor(t / 12)}'${t % 12 ? `-${t % 12}"` : ''}` : `${t}"`; };
+function lineDetail(o, it) {
+  const d = [];
+  if (lengthChoices(o).length && Number(it.w) > 0) d.push(`${inchTxt(Number(it.w))} long`);
+  if (isWindow(o) && Number.isFinite(Number(it.elev)) && it.elev !== null && it.elev !== '' && it.elev !== undefined) d.push(`bottom ${Math.round(Number(it.elev) * 12)}" off floor`);
+  if (it.gable) d.push('in gable');
+  return d.join(' · ');
+}
 export function priceConfig(catalog, config) {
   if (!catalog._tiered) catalog = tierCatalog(catalog, resolveTier(catalog, config));
   const tier = catalog._tier;
@@ -193,7 +210,7 @@ export function priceConfig(catalog, config) {
   for (const it of config.items || []) {
     const o = optById[it.option_id];
     if (!o) continue;
-    let amt = optionPrice(o, size, it.qty || 1, it.wall);
+    let amt = optionPrice(o, size, it.qty || 1, it.wall, it);
     let note = '';
     const pkgIt = it.package_of && (config.items || []).find(x => x.uid === it.package_of);
     if (pkgIt && optById[pkgIt.option_id]) { amt = 0; note = `Included in ${optById[pkgIt.option_id].name}`; }
@@ -201,7 +218,7 @@ export function priceConfig(catalog, config) {
       if (it.standard_of === it.option_id) { amt = 0; note = 'Standard'; }
       else {
         const orig = optById[it.standard_of];
-        const credit = orig ? optionPrice(orig, size, 1, it.wall) : 0;
+        const credit = orig ? optionPrice(orig, size, 1, it.wall, it) : 0;
         amt = amt - credit;
         if (!credits) amt = Math.max(0, amt);
         note = orig ? `${amt < 0 ? 'Change' : 'Upgrade'} from ${orig.name}` : 'Upgrade';
@@ -210,6 +227,7 @@ export function priceConfig(catalog, config) {
     lines.push({
       type: 'option', label: o.name, amount: round2(amt), option_id: o.id, uid: it.uid,
       category: o.category, wall: it.wall || null, note, ...(it.package_of ? { package_of: it.package_of } : {}),
+      ...(lineDetail(o, it) ? { detail: lineDetail(o, it) } : {}),
     });
   }
 
@@ -296,6 +314,8 @@ function fitAll(style, size, optById, items) {
     if (o.placement === 'none') { if (counts[o.id] > 1) continue; it.wall = null; keep.push(it); continue; }
     if (o.placement === 'ceiling' || o.placement === 'roof') { it.wall = o.placement; keep.push(it); continue; }
     if (it.gable && !(WALLS.includes(it.wall) && geo.isGable(it.wall) && gableMode(o) === 'allow')) delete it.gable;
+    // record the height a customer-set window really ends up at (kept under the roof line)
+    if (it.elev !== undefined && !it.package_of && WALLS.includes(it.wall)) it.elev = Math.round(resolvePlacement(geo, o, it).elev * 48) / 48;
     if (WALLS.includes(it.wall) && canPlace(geo, optById, keep, o, it, it.uid)) { keep.push(it); continue; }
     const spot = findSpot(geo, optById, keep, o, WALLS.includes(it.wall) ? it.wall : null, it.offset || 0, it.uid, { w: it.w, h: it.h, gable: it.gable, elev: it.elev });
     if (spot) { const n = { ...it, ...spot }; if (!n.gable) delete n.gable; keep.push(n); }
@@ -335,6 +355,17 @@ export function sanitizeConfig(catalog, raw) {
       ...(i.package_of ? { package_of: String(i.package_of).slice(0, 60) } : {}),
       ...(finite(i.elev) ? { elev: clampNum(i.elev, 0, 30) } : {}),
     }));
+  for (const it of items) {
+    const o = optById[it.option_id];
+    const lc = lengthChoices(o);
+    if (lc.length && Number(it.w) > 0) it.w = lc.reduce((a, b) => (Math.abs(b - it.w) < Math.abs(a - it.w) ? b : a), lc[0]);
+    // only options with a list of lengths can be resized: a length sent for anything else would change a
+    // "per ft of its length" price (e.g. a 0.25 ft shelf), so it's ignored and the catalog width is used
+    else if (!lc.length && 'w' in it && !it.package_of) delete it.w;
+    // customer window heights only when the setting allows it (package parts keep their admin-set heights)
+    if (it.elev !== undefined && !it.package_of && (!isWindow(o) || !windowHeightAdjustable(catalog))) delete it.elev;
+    else if (it.elev !== undefined && !it.package_of) it.elev = Math.max(1, it.elev); // windows at least 12" off the floor
+  }
   for (const it of [...items]) {
     if (!isPackage(optById[it.option_id]) || items.some(x => x.package_of === it.uid)) continue;
     items.push(...placePackage(catalog, style, size, items, it).added);

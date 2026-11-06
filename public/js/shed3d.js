@@ -265,11 +265,70 @@ function rbox(w, h, d, r, mat, x, y, z, parent) {
 // z = outward. For "opening" kinds, z = 0 is the CENTRE of the wall (exterior face at +T/2).
 // ---------------------------------------------------------------------------
 function casing(g, w, h, M, zOut, withSill) {
+  if (M.noCasing) return; // exported .glb files: the builder adds its own trim around the opening
   const cw = M.cw ?? 0.33, ct = 0.06;
-  box(cw, h + cw, ct, M.trim, -w / 2 - cw / 2, (h + cw) / 2, zOut + ct / 2, g);
-  box(cw, h + cw, ct, M.trim, w / 2 + cw / 2, (h + cw) / 2, zOut + ct / 2, g);
-  box(w + cw * 2 + 0.1, cw, ct + 0.02, M.trim, 0, h + cw / 2, zOut + ct / 2, g);
-  if (withSill) box(w + cw * 2 + 0.2, 0.12, 0.28, M.trim, 0, -0.06, zOut + 0.1, g);
+  // windows/vents: flat picture-frame casing all the way around (no projecting sill); doors: sides + head only
+  const lo = withSill ? -cw : 0, sh = h + cw - lo;
+  box(cw, sh, ct, M.trim, -w / 2 - cw / 2, lo + sh / 2, zOut + ct / 2, g);
+  box(cw, sh, ct, M.trim, w / 2 + cw / 2, lo + sh / 2, zOut + ct / 2, g);
+  // windows: head and bottom are flush with the sides (a clean flat frame); doors keep the small head-trim ears
+  box(w + cw * 2 + (withSill ? 0 : 0.1), cw, ct + (withSill ? 0 : 0.02), M.trim, 0, h + cw / 2, zOut + ct / 2, g);
+  if (withSill) box(w + cw * 2, cw, ct, M.trim, 0, -cw / 2, zOut + ct / 2, g);
+}
+// Carriage-house door leaf (matches the 72" double / 36" single carriage doors): 5-lite window across the top,
+// framed upper & lower panels of vertical boards, black strap hinges on the hinge side.
+// Body = door color, window grid = trim color, hardware black.
+function carriageLeaf(g, w, h, M, x, zf, hingeSide, { window: hasWin = true } = {}) {
+  const T0 = 0.1, F = 0.05;                     // slab and frame-board thickness
+  const groove = M.doorGroove || (M.doorGroove = M.door.clone());
+  groove.color = M.door.color.clone().multiplyScalar(0.72);
+  box(w, h, T0, M.door, x, h / 2, zf, g);
+  const zb = zf + T0 / 2 + F / 2, s = Math.min(0.36, w * 0.12);   // stile width ~4.3"
+  // top rail is wide enough (4") to carry the top hinge above the window
+  const topR = 0.34, winH = hasWin ? Math.min(0.95, h * 0.16) : 0, underWin = hasWin ? 0.3 : 0, midR = 0.36, botR = 0.42;
+  const yWinTop = h - topR, yWinBot = yWinTop - winH, yMid = h * 0.44;
+  // stiles & rails (raised boards)
+  box(s, h, F, M.door, x - w / 2 + s / 2, h / 2, zb, g);
+  box(s, h, F, M.door, x + w / 2 - s / 2, h / 2, zb, g);
+  const iw = w - 2 * s;
+  box(iw, topR, F, M.door, x, h - topR / 2, zb, g);
+  if (hasWin) box(iw, underWin, F, M.door, x, yWinBot - underWin / 2, zb, g);
+  box(iw, midR, F, M.door, x, yMid, zb, g);
+  box(iw, botR, F, M.door, x, botR / 2, zb, g);
+  // vertical board grooves in the two panels
+  const panels = [[botR, yMid - midR / 2], [yMid + midR / 2, yWinBot - underWin]];
+  const boards = Math.max(3, Math.round(iw / 0.33));
+  for (const [y0, y1] of panels) for (let k = 1; k < boards; k++) box(0.018, y1 - y0, 0.004, groove, x - iw / 2 + iw * k / boards, (y0 + y1) / 2, zf + T0 / 2 + 0.002, g);
+  // shadow line where the raised frame meets each panel, so the frame reads like the real door
+  const zl = zf + T0 / 2 + 0.003;
+  for (const [y0, y1] of panels) {
+    box(iw, 0.03, 0.006, groove, x, y0 + 0.015, zl, g); box(iw, 0.03, 0.006, groove, x, y1 - 0.015, zl, g);
+    box(0.03, y1 - y0, 0.006, groove, x - iw / 2 + 0.015, (y0 + y1) / 2, zl, g); box(0.03, y1 - y0, 0.006, groove, x + iw / 2 - 0.015, (y0 + y1) / 2, zl, g);
+  }
+  // 5-lite window: dark glass, trim-colored frame and muntins
+  if (hasWin) {
+  const wy = (yWinTop + yWinBot) / 2, gz = zf + T0 / 2;
+  box(iw, winH, 0.02, M.glassDark || (M.glassDark = new THREE.MeshStandardMaterial({ color: 0x1b2226, roughness: 0.12, metalness: 0.4 })), x, wy, gz, g);
+  const fb = 0.06, mz = gz + 0.02;
+  box(iw, fb, 0.04, M.trim, x, yWinTop - fb / 2, mz, g); box(iw, fb, 0.04, M.trim, x, yWinBot + fb / 2, mz, g);
+  box(fb, winH, 0.04, M.trim, x - iw / 2 + fb / 2, wy, mz, g); box(fb, winH, 0.04, M.trim, x + iw / 2 - fb / 2, wy, mz, g);
+  for (let k = 1; k < 5; k++) box(0.045, winH, 0.035, M.trim, x - iw / 2 + iw * k / 5, wy, mz, g);
+  }
+  // T-hinges on the hinge edge (top, middle, bottom): an upright plate at the edge and a short strap that
+  // tapers to a point across the door
+  const ex = x + hingeSide * (w / 2), hz = zb + F / 2 + 0.006, dir = -hingeSide;   // strap runs toward the door's centre
+  const strapLen = Math.min(0.72, w * 0.3), plateW = 0.11, plateH = 0.4;
+  const strap = new THREE.Shape([new THREE.Vector2(0, -0.07), new THREE.Vector2(strapLen * 0.35, -0.045), new THREE.Vector2(strapLen, -0.012),
+    new THREE.Vector2(strapLen, 0.012), new THREE.Vector2(strapLen * 0.35, 0.045), new THREE.Vector2(0, 0.07)]);
+  const strapGeo = new THREE.ExtrudeGeometry(strap, { depth: 0.02, bevelEnabled: false });
+  // top hinge sits on the top rail (above the window), middle on the mid rail, bottom on the bottom rail
+  for (const [y, ph] of [[h - topR / 2, Math.min(plateH, topR - 0.04)], [yMid, plateH], [botR / 2 + 0.03, Math.min(plateH, botR - 0.04)]]) {
+    box(plateW, ph, 0.022, M.metal, ex + dir * plateW / 2, y, hz + 0.011, g);   // upright plate at the edge
+    const st = new THREE.Mesh(strapGeo, M.metal); st.castShadow = true;
+    st.position.set(ex + dir * (plateW - 0.01), y, hz); st.scale.x = dir; g.add(st);
+    for (const d of [0.2, 0.42]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * (plateW + d), y, hz + 0.024); g.add(b); }
+    for (const dy of [-ph * 0.33, ph * 0.33]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * plateW / 2, y + dy, hz + 0.026); g.add(b); }
+  }
 }
 function panelDoorLeaf(g, w, h, M, x, z) {
   box(w, h, 0.12, M.door, x, h / 2, z, g);
@@ -308,22 +367,38 @@ function windowUnit(g, w, h, M, opts = {}) {
   box(w, fw, fd, MW, 0, fw / 2, 0.0, g);
   box(fw, h, fd, MW, -w / 2 + fw / 2, h / 2, 0.0, g);
   box(fw, h, fd, MW, w / 2 - fw / 2, h / 2, 0.0, g);
-  const cols = opts.cols ?? 2, rows = opts.rows ?? 2;
   const iw = w - 2 * fw, ih = h - 2 * fw;
-  for (let i = 1; i < cols; i++) box(0.05, ih, 0.08, MW, -iw / 2 + iw * i / cols, h / 2, 0.02, g);
-  for (let i = 1; i < rows; i++) box(iw, 0.05, 0.08, MW, 0, fw + ih * i / rows, 0.02, g);
+  const grid = (cols, rows, y0, hh) => {   // muntins inside one glass area
+    for (let i = 1; i < cols; i++) box(0.05, hh, 0.08, MW, -iw / 2 + iw * i / cols, y0 + hh / 2, 0.02, g);
+    for (let i = 1; i < rows; i++) box(iw, 0.05, 0.08, MW, 0, y0 + hh * i / rows, 0.02, g);
+  };
+  if (opts.top || opts.bottom) {
+    // two sashes (single-hung look): a meeting rail across the middle, each half with its own grid
+    const rail = Math.max(0.09, fw), half = (ih - rail) / 2;
+    box(w, rail, 0.12, MW, 0, fw + half + rail / 2, 0.01, g);
+    const [tc, tr] = opts.top || [1, 1], [bc, br] = opts.bottom || [1, 1];
+    grid(bc, br, fw, half); grid(tc, tr, fw + half + rail, half);
+  } else grid(opts.cols ?? 2, opts.rows ?? 2, fw, ih);
   // interior casing (trim color)
-  box(w + 0.3, 0.15, 0.04, M.trim, 0, h + 0.07, -T / 2 - 0.02, g);
-  box(w + 0.3, 0.15, 0.2, M.trim, 0, -0.07, -T / 2 - 0.05, g);
+  box(w + 0.3, 0.15, 0.04, M.trim, 0, h + 0.075, -T / 2 - 0.02, g);
+  box(w + 0.3, 0.15, 0.04, M.trim, 0, -0.075, -T / 2 - 0.02, g);
+  for (const sx of [-1, 1]) box(0.15, h, 0.04, M.trim, sx * (w / 2 + 0.075), h / 2, -T / 2 - 0.02, g);
 }
 
 export const BUILTIN_KINDS = {
-  breaker: 'Breaker box (sub-panel)', switch: 'Light switch', door_single: 'Single door', door_glass: 'Glass/lite door', door_double: 'Double barn doors', door_french: 'French doors',
+  breaker: 'Breaker box (sub-panel)', switch: 'Light switch', door_single: 'Single door', door_carriage: 'Carriage-house door (single, hinged left)', door_carriage_right: 'Carriage-house door (single, right half of the 72", hinged right)', door_panel: 'Standard door (single, right half of the 6\' double, hinged right)', door_panel_double: 'Panel double doors (no windows)', door_carriage_double: 'Carriage-house double doors', door_glass: 'Glass/lite door', door_double: 'Double barn doors', door_french: 'French doors',
   door_rollup: 'Roll-up door', window: 'Window', window_shutters: 'Window with shutters', window_transom: 'Transom window',
-  vent: 'Gable vent', flowerbox: 'Flower box', ext_light: 'Exterior light', shelf: 'Shelf', workbench: 'Workbench',
+  vent: 'Gable vent', flowerbox: 'Flower box', ext_light: 'Exterior light', shelf: 'Shelf', shelf_double: 'Double shelves (two levels)', workbench: 'Workbench',
   loft: 'Loft', light: 'Ceiling light', outlet: 'Outlet', ramp: 'Ramp', cupola: 'Cupola', box: 'Generic box', none: 'No model (line item only)',
 };
 
+/** "3x2" → [3 cols, 2 rows]; "none" / blank → no muntins ([1,1]); undefined when not set. */
+export function parseGrid(v) {
+  if (v === undefined || v === null || v === '') return undefined;
+  const m = String(v).match(/^(\d+)\s*[x×]\s*(\d+)$/i);
+  return m ? [Math.max(1, Math.min(8, +m[1])), Math.max(1, Math.min(8, +m[2]))] : [1, 1];
+}
+const sashGrids = o => { const t = parseGrid(o?.grid_top), b = parseGrid(o?.grid_bottom); return t || b ? { top: t || [1, 1], bottom: b || [1, 1] } : {}; };
 function buildKind(kind, w, h, d, M, ctx = {}) {
   const g = new THREE.Group();
   const zOut = T / 2;
@@ -345,6 +420,45 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       glassLeaf(g, w / 2 - 0.04, h - 0.04, M, -w / 4, zOut - 0.12, [2, 5], 0.82);
       glassLeaf(g, w / 2 - 0.04, h - 0.04, M, w / 4, zOut - 0.12, [2, 5], 0.82);
       handle(g, -0.18, 3.1, zOut - 0.02, M); handle(g, 0.18, 3.1, zOut - 0.02, M);
+      break;
+    }
+    case 'door_carriage': { // 36" single carriage-house door: hinges on the left, knob on the right
+      casing(g, w, h, M, zOut);
+      carriageLeaf(g, w - 0.04, h - 0.02, M, 0, zOut - 0.06, -1);
+      const k = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), M.metal); k.position.set(w / 2 - 0.42, h * 0.47, zOut + 0.08); g.add(k);
+      box(0.12, 0.22, 0.03, M.metal, w / 2 - 0.42, h * 0.47, zOut + 0.02, g);
+      break;
+    }
+    case 'door_carriage_double': { // 72" carriage-house double doors: hinges on the outer edges, knob + top latch at the centre
+      casing(g, w, h, M, zOut);
+      const lw = w / 2 - 0.025;
+      carriageLeaf(g, lw, h - 0.02, M, -w / 4, zOut - 0.06, -1);
+      carriageLeaf(g, lw, h - 0.02, M, w / 4, zOut - 0.06, 1);
+      box(0.07, h - 0.06, 0.03, M.door, -0.035, h / 2, zOut + 0.02, g);          // astragal on the left (inactive) door over the meeting edge
+      // knob on the RIGHT door, on its stile next to the meeting edge
+      const kx = 0.2;
+      const k = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), M.metal); k.position.set(kx, h * 0.47, zOut + 0.1); g.add(k);
+      box(0.12, 0.22, 0.03, M.metal, kx, h * 0.47, zOut + 0.04, g);
+      break;
+    }
+    case 'door_panel_double': { // 6' double doors: carriage-house look without the windows; knob on the right door
+      casing(g, w, h, M, zOut);
+      const lw = w / 2 - 0.025;
+      carriageLeaf(g, lw, h - 0.02, M, -w / 4, zOut - 0.06, -1, { window: false });
+      carriageLeaf(g, lw, h - 0.02, M, w / 4, zOut - 0.06, 1, { window: false });
+      box(0.07, h - 0.06, 0.03, M.door, -0.035, h / 2, zOut + 0.02, g);
+      const k = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), M.metal); k.position.set(0.2, h * 0.47, zOut + 0.1); g.add(k);
+      box(0.12, 0.22, 0.03, M.metal, 0.2, h * 0.47, zOut + 0.04, g);
+      break;
+    }
+    case 'door_panel':            // 36" standard door = the RIGHT half of the 6' double doors
+    case 'door_carriage_right': { // 36" carriage-house door = the RIGHT half of the 72" carriage doors
+      // hinges on the right edge, knob on the left stile exactly where it sits on the double door's right leaf
+      casing(g, w, h, M, zOut);
+      carriageLeaf(g, w - 0.04, h - 0.02, M, 0, zOut - 0.06, 1, { window: kind === 'door_carriage_right' });
+      const kx = -w / 2 + 0.2;
+      const k = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), M.metal); k.position.set(kx, h * 0.47, zOut + 0.1); g.add(k);
+      box(0.12, 0.22, 0.03, M.metal, kx, h * 0.47, zOut + 0.04, g);
       break;
     }
     case 'door_double': {
@@ -383,10 +497,10 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       box(0.6, 0.12, 0.08, M.metal, 0, 0.5, zOut - 0.04, g);
       break;
     }
-    case 'window': windowUnit(g, w, h, M, { cols: w >= 3 ? 3 : 2, rows: 2 }); break;
+    case 'window': windowUnit(g, w, h, M, { cols: w >= 3 ? 3 : 2, rows: 2, ...sashGrids(ctx.opt) }); break;
     case 'window_transom': windowUnit(g, w, h, M, { cols: Math.max(2, Math.round(w / 1.2)), rows: 1 }); break;
     case 'window_shutters': {
-      windowUnit(g, w, h, M, { cols: 2, rows: 2 });
+      windowUnit(g, w, h, M, { cols: 2, rows: 2, ...sashGrids(ctx.opt) });
       for (const sx of [-1, 1]) {
         const sw = w * 0.5, x = sx * (w / 2 + (M.cw ?? 0.33) + sw / 2 + 0.02);
         box(sw, h + 0.2, 0.08, M.door, x, h / 2, zOut + 0.05, g);
@@ -422,6 +536,16 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
     case 'shelf': {
       box(w, 0.08, d, M.wood, 0, 0, d / 2, g);
       for (const x of [-w / 2 + 0.4, 0, w / 2 - 0.4]) { if (w < 3 && x === 0) continue; box(0.08, 0.8, 0.08, M.metal, x, -0.4, 0.06, g); const br = box(0.06, 0.06, d * 0.95, M.metal, x, -0.04, d / 2, g); }
+      break;
+    }
+    case 'shelf_double': { // two shelves, one above the other (h = spacing), on wood standards with metal brackets
+      const n = Math.max(2, Math.round(w / 2) + 1);
+      for (let i = 0; i < n; i++) {
+        const x = -w / 2 + 0.25 + (w - 0.5) * i / (n - 1);
+        box(0.12, h + 0.9, 0.06, M.wood, x, (h + 0.9) / 2 - 0.85, 0.04, g);                       // upright
+        for (const y of [0, h]) { box(0.06, 0.06, d * 0.92, M.metal, x, y - 0.06, d / 2, g); const br = box(0.05, 0.42, 0.05, M.metal, x, y - 0.27, d * 0.38, g); br.rotation.x = -0.75; }
+      }
+      for (const y of [0, h]) { box(w, 0.08, d, M.wood, 0, y, d / 2, g); box(w, 0.12, 0.05, M.wood, 0, y - 0.02, d - 0.025, g); }
       break;
     }
     case 'workbench': {
@@ -1063,7 +1187,7 @@ export class ShedScene {
         default: continue;
       }
       const opening = o.placement === 'opening';
-      const model = buildKind(o.kind || 'box', kindW, kindH, kindD, M, { floorY: y0 });
+      const model = buildKind(o.kind || 'box', kindW, kindH, kindD, M, { floorY: y0, opt: o });
       holder.add(model);
       if (o.model_url) {
         loadGLB(o.model_url).then(src => {
@@ -1109,10 +1233,10 @@ export class ShedScene {
   /** Export one option's built-in 3D model as a .glb (a starting file to edit in Blender/SketchUp). */
   async exportOptionGLB(opt, colors = {}) {
     const M = makeMaterials({ siding_type: 'lap', roof_material: 'shingle' }, { siding: '#c2b49a', trim: '#f4f4ef', roof: '#3a3c3e', door: '#f4f4ef', ...colors });
-    M.cw = 4 / 12;
+    M.cw = 4 / 12; M.noCasing = opt.placement === 'opening';
     const w = Math.max(Number(opt.width) || 1, 0.3), h = Math.max(Number(opt.height) || 1, 0.1), d = Number(opt.depth) || 0.3;
     const g = new THREE.Group(); g.name = opt.name || 'option';
-    g.add(buildKind(opt.kind || 'box', w, h, d, M, { floorY: 0.75 }));
+    g.add(buildKind(opt.kind || 'box', w, h, d, M, { floorY: 0.75, opt }));
     g.scale.setScalar(0.3048); // feet → metres (glTF units)
     const data = await new Promise((res, rej) => new GLTFExporter().parse(g, res, rej, { binary: true }));
     return new Blob([data], { type: 'model/gltf-binary' });
@@ -1138,7 +1262,7 @@ export class ShedScene {
       holder.position.set(0, pl === 'ground' ? 0 : elev, pl === 'opening' ? -T / 2 : (flip ? T + 0.01 : 0));
       if (pl === 'ground') holder.position.y = 0;
       g.add(holder);
-      const model = buildKind(opt.kind || 'box', w, h, d, M, { floorY: 0.75 });
+      const model = buildKind(opt.kind || 'box', w, h, d, M, { floorY: 0.75, opt });
       holder.add(model);
       if (opt.model_url) loadGLB(opt.model_url).then(src => { holder.remove(model); holder.add(fitModel(src, w, h, pl === 'opening' ? T + 0.15 : d, pl === 'opening')); }).catch(() => {});
       this.geo = { W: L, D: 4, H: Hh, peak: 0 };

@@ -1,5 +1,7 @@
 // Outbound integrations: generic signed webhooks + native GoHighLevel (LeadConnector API v2).
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { all, get, run, getSettings } from './db.js';
 import { formatQuote } from '../public/js/shared/quote-format.js';
 
@@ -13,15 +15,55 @@ function log(webhook_id, target, event, status, ok, attempt, response) {
   run('DELETE FROM webhook_log WHERE id NOT IN (SELECT id FROM webhook_log ORDER BY id DESC LIMIT 1000)');
 }
 
+// ---- Outgoing requests may only go to the public internet: a webhook pointed at this server's own network
+// (localhost, 10.x, 169.254.169.254 cloud metadata, *.railway.internal…) is refused, and redirects aren't followed.
+function privateIp(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19)) || a >= 224;
+  }
+  const v = String(ip).toLowerCase();
+  if (v.startsWith('::ffff:')) return privateIp(v.slice(7));
+  return v === '::' || v === '::1' || /^f[cd]/.test(v) || /^fe[89ab]/.test(v) || v.startsWith('64:ff9b:') || v.startsWith('ff');
+}
+const allowPrivate = () => ['1', 'true'].includes(String(process.env.ALLOW_PRIVATE_WEBHOOKS || '').toLowerCase());
+export const isPrivateIp = ip => privateIp(ip);
+/** Quick check without a DNS lookup (used when saving a webhook): '' when fine, otherwise the reason. */
+export function checkOutboundUrl(raw) {
+  let u; try { u = new URL(String(raw || '')); } catch { return 'url must be a full http(s):// address'; }
+  if (!['http:', 'https:'].includes(u.protocol)) return 'url must start with http(s)://';
+  if (u.username || u.password) return 'url must not contain a username or password (use the headers field instead)';
+  if (allowPrivate()) return '';
+  const host = u.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
+  if (host === 'localhost' || /\.(localhost|local|internal|lan|home\.arpa)$/.test(host) || (!host.includes('.') && !net.isIP(host))) return 'url must be a public internet address';
+  if (net.isIP(host) && privateIp(host)) return 'url must be a public internet address';
+  return '';
+}
+/** Returns a reason when this URL may not be called, or null when it's fine. */
+export async function blockedTarget(url) {
+  let u; try { u = new URL(url); } catch { return 'is not a valid web address'; }
+  if (!/^https?:$/.test(u.protocol)) return 'must start with http:// or https://';
+  if (u.username || u.password) return 'must not contain a username or password';
+  if (allowPrivate()) return null; // tests / self-hosted setups that need it
+  const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || /\.(localhost|local|internal|lan|home\.arpa)$/.test(host)) return 'points at a private address';
+  const addrs = net.isIP(host) ? [host] : (await dns.lookup(host, { all: true }).catch(() => [])).map(a => a.address);
+  if (!addrs.length) return "can't be found (check the address)";
+  if (addrs.some(privateIp)) return 'points at a private or internal address';
+  return null;
+}
+
 async function postJSON(url, body, headers = {}, timeoutMs = 10000) {
+  const why = await blockedTarget(url);
+  if (why) return { status: 0, ok: false, text: `Blocked: the address ${why}.` };
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body, signal: ctrl.signal });
-    const text = await r.text();
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body, signal: ctrl.signal, redirect: 'manual' });
+    const text = r.status >= 300 && r.status < 400 ? `Not followed: redirected to ${r.headers.get('location') || 'another address'}` : await r.text();
     return { status: r.status, ok: r.ok, text };
   } catch (e) {
-    return { status: 0, ok: false, text: e.message };
+    return { status: 0, ok: false, text: e.message, blocked: String(e.message).startsWith('Blocked') };
   } finally { clearTimeout(t); }
 }
 
@@ -30,14 +72,15 @@ export async function deliver(hook, event, data) {
   const payload = JSON.stringify({ event, delivery_id: crypto.randomUUID(), sent_at: new Date().toISOString(), data });
   const headers = { 'User-Agent': 'ShedBuilder-Webhooks/1.0', 'X-ShedBuilder-Event': event };
   if (hook.secret) headers['X-ShedBuilder-Signature'] = 'sha256=' + crypto.createHmac('sha256', hook.secret).update(payload).digest('hex');
-  Object.assign(headers, hook.headers || {});
+  for (const [k, v] of Object.entries(hook.headers && typeof hook.headers === 'object' ? hook.headers : {}))
+    if (/^[!#$%&'*+.^_`|~0-9a-z-]{1,100}$/i.test(k) && !/[\r\n]/.test(String(v))) headers[k] = String(v);
   const delays = [0, 1000, 5000, 25000];
   let last;
   for (let i = 0; i < delays.length; i++) {
     if (delays[i]) await new Promise(r => setTimeout(r, delays[i]));
     last = await postJSON(hook.url, payload, headers);
     log(hook.id || null, hook.url, event, last.status, last.ok, i + 1, last.text);
-    if (last.ok || (last.status >= 400 && last.status < 500 && last.status !== 429)) break;
+    if (last.ok || (last.status >= 300 && last.status < 500 && last.status !== 429) || /^Blocked:/.test(last.text)) break;
   }
   return last;
 }

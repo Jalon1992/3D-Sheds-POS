@@ -2,7 +2,7 @@
 
 A self-hosted 3D shed configurator with a **built-in CRM**, a **point of sale with e-signatures** (Cash and Rent-to-Own), **production & delivery boards**, an admin back office, an Open REST API, signed webhooks and a native GoHighLevel integration.
 
-**Setting up your own live copy?** Follow [GO_LIVE.md](GO_LIVE.md).
+**Adding a company?** Follow [GO_LIVE.md](GO_LIVE.md). **Sending out an update?** Follow [RELEASES.md](RELEASES.md).
 
 **New in 2.0** — see [Point of sale](#point-of-sale-contracts--e-signature), [CRM](#crm), [Texting & email](#texting--email-setup), [Team roles](#team-roles--drawing-packages) and [Testing](#testing).
 - Every 3D submission lands in the CRM as a contact + deal. Add walk-ins and phone leads by hand. Two-way texting and email, notes, tasks, saved replies, a drag-and-drop pipeline, and live updates for everyone signed in.
@@ -46,7 +46,12 @@ The first run seeds 4 sample styles (Classic Gable, Lofted Barn, Modern Lean-To,
 | `DB_PATH` | `./data/shedbuilder.db` | SQLite database file |
 | `UPLOAD_DIR` | `./uploads` | Uploaded 3D models and images |
 | `SESSION_SECRET` | auto-generated | Cookie signing secret |
-| `COOKIE_SECURE` | `false` | Set `true` when served over HTTPS |
+| `COOKIE_SECURE` | auto | Login cookies are marked Secure automatically on https; `true` forces it, `false` turns it off |
+| `PUBLIC_URL` | — | Base URL for links in webhooks/GHL (same as **Settings → Company → Public URL**; on Railway `RAILWAY_PUBLIC_DOMAIN` is used automatically) |
+| `TRUST_PROXY` | `1` | How many proxy hops to trust for the client IP (rate limits). `1` is right for Railway/Render/Fly or one Nginx |
+| `ALLOW_PRIVATE_WEBHOOKS` | — | `1`/`true` lets webhooks call private/internal addresses (only for self-hosted setups that need it; off blocks SSRF) |
+| `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_ACCESS_KEY`, `BACKUP_S3_SECRET_KEY` | — | Copy every backup off the server to S3-compatible storage (Cloudflare R2, Backblaze B2, AWS S3…). Optional `BACKUP_S3_REGION` (default `auto`), `BACKUP_S3_PREFIX` (folder, default the company name) |
+| `BACKUP_HOUR`, `BACKUP_KEEP`, `BACKUP_DIR` | `3`, 7 (3 with off-server), `<DB folder>/backups` | Daily backup hour (company time zone), how many to keep on the volume, where. `BACKUP_DISABLED=1` turns automatic backups off |
 | `FILES_DIR` | `<DB folder>/files` | Contract templates and signed contracts (kept private — never served publicly) |
 | `MODULES` | `all` | Add-on modules on the **first** run: `all`, `none` (3D configurator only) or a list like `crm,pos`, `pos,orders`. After that they're switched on the Modules page |
 | `DEVOPS_EMAIL`, `DEVOPS_PASSWORD` | — | The developer login (password 10+ characters). Only this login sees the **Modules** page; the customer's admins can't see, change or remove it. Re-applied on every start |
@@ -70,7 +75,7 @@ Any host that runs Node or Docker works. It needs a **persistent disk** for `dat
 ```bash
 docker build -t shed-builder .
 docker run -d -p 3000:3000 -v shed_data:/app/data -v shed_uploads:/app/uploads \
-  -e ADMIN_EMAIL=you@co.com -e ADMIN_PASSWORD='…' -e COOKIE_SECURE=true shed-builder
+  -e ADMIN_EMAIL=you@co.com -e ADMIN_PASSWORD='…' -e PUBLIC_URL=https://builder.yourdomain.com shed-builder
 ```
 
 **Render / Railway / Fly.io:** create a Node (or Docker) web service from this folder, add a persistent volume mounted at `/app/data` (and one for `/app/uploads`, or set `UPLOAD_DIR` inside the same volume, e.g. `/app/data/uploads`), set the env vars above, start command `npm start`.
@@ -142,6 +147,14 @@ Every option has a category, price, size and a **placement**:
 **Door & window sizes:** each option's width × height is set in its editor with a live preview; per-style sizes can be overridden in the style's standard options.
 
 **Standard window heights:** Options → Windows has a *Standard window heights* table. For each window type, enter the bottom or the top in inches above the floor (the other follows). The option editor shows the same as *Standard height*, with the top and head-trim heights worked out for you.
+
+**Customer window heights:** Settings → *Let customers raise or lower windows*. When on, clicking a window on the model shows ▲/▼ buttons that move it in 2" steps, from 12" off the floor up to the roof line, never overlapping anything. *standard* puts it back. The chosen height shows on the quote, the PDF and in GHL/webhooks ("bottom 36\" off floor"). When off, windows stay at each window type's standard height, and the server ignores heights sent by anyone.
+
+**Top & bottom window grids:** in a window's editor, set *Top half grid* and *Bottom half grid* (e.g. 2 × 2 over 2 × 2, or 3 × 2 over none). The window gets two sashes with a meeting rail, each with its own grid, in 3D and on the drawings. Leave both on *Standard grid* for the regular one-piece grid.
+
+**Customer-picked lengths (double shelves, workbenches…):** fill in *Lengths customers can pick* (e.g. `4, 6, 8, 10, 12`) and set *Priced* to *Per ft of its length*. Customers get length buttons on the model (lengths longer than the wall are greyed out; a no-room pop-up appears if the length doesn't fit). The sample **Double Shelves (20" deep)** are two shelf levels at $24/ft.
+
+**Door styles:** built-in models include the **72" carriage-house double doors** and **36" single carriage-house door** (5-lite windows, raised panels, black T-hinges at the top, middle and bottom rails), plus **panel double doors** and a **36" panel door** — the same look without the windows (the single is the right half of the double: hinges on the right, knob on the left). All take the customer's door color; window grids take the trim color.
 
 **Gable windows:** each window/vent has *Can it go up in the gable?*: **No** (walls only), **Yes** (the customer gets *On the wall / Up in the gable* buttons when it's on a gable end) or **Gable only**. Up in the gable, the window is centred between the top of the wall and the rake. If it's too tall for that gable, the customer is told so and it stays put. Standard options have an *In gable* tick too. A sample *Gable Window (24" × 16")* is included.
 
@@ -424,6 +437,40 @@ public/admin/                Admin dashboard
 demo/                        Single-file demo build
 render.yaml, Dockerfile      Deployment
 ```
+
+## Updating an existing install
+
+Pushing a new version keeps your catalog, prices and quotes. The first start after an update also brings an older
+catalog up to date once: the stock **6' Double Doors** switch to the plain panel look (no X braces), and the
+**36" Standard Door** (right half of the 6' double), **36" Carriage House Door** (right half of the 72"),
+**72" Carriage House Double Doors** and **Double Shelves** are added if they're missing. Options you renamed or
+rebuilt are left alone. The browser demo does the same for a browser that opened an older demo.
+
+## Security
+
+What's in place (each item has an attack test in `tests/security.test.mjs`, run by `npm test`):
+
+- **Logins:** passwords hashed with scrypt; the same response time for unknown emails; 10 tries a minute per email.
+  - Cookies are HttpOnly, SameSite=Lax, and Secure on https.
+  - Changing a password, turning a login off, or changing its role or lot signs that person out on every device at once. **Account → Sign out other devices** does the same on demand.
+- **Cross-site requests:** a signed-in request that changes something must come from this site, on top of SameSite cookies. API keys work from anywhere, as intended.
+- **Clickjacking:** the admin, the signing page, the docs and the API can't be framed by other sites. The 3D configurator stays embeddable.
+- **Uploads:**
+  - .glb, .gltf and image contents are checked, not just the file name.
+  - Uploaded SVGs are served sandboxed, so a script inside one never runs.
+  - Paths can't escape the uploads folder.
+- **Webhooks (SSRF):** they can't be pointed at the server's own network (localhost, 10.x/192.168.x, cloud metadata, `*.railway.internal`). Redirects aren't followed.
+- **Signing:** tokens are 192-bit and rate-limited. Signature images are verified before anything is saved, so a broken one can't leave a contract stuck. The token is never sent to other sites (no-referrer).
+- **Permissions:** checked on the server for every role, dealer lot and module.
+  - The developer login can't be seen, edited or impersonated by customer admins.
+  - Secrets (Twilio, SMTP, GHL, session key) are never sent to the browser, and hidden settings can't be written.
+- **Account lockout + default password:** 20 failed logins lock that account for 15 minutes, and the dashboard warns while the default `changeme123` password is still in use.
+- **API keys** are stored hashed and can't reach users, settings or API-key management.
+- **Exports:** customer-typed values in the quotes CSV can't run as Excel formulas.
+- **Errors:** in production (`NODE_ENV=production`, set by the Dockerfile) server errors don't reveal internals.
+- **Dependencies:** `npm audit` reports 0 known vulnerabilities.
+
+Keep it that way: run `npm audit` before deploying updates, use strong admin passwords, and give each person their own login.
 
 ## Notes
 - E-signatures: each signer gets a unique link, agrees to an ESIGN/UETA consent, and every view/sign is logged with time, IP and device on the certificate. This is the standard approach for e-signing sales contracts, but it is not legal advice — have your attorney approve your templates and your rent-to-own disclosures for your state.
