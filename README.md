@@ -12,7 +12,7 @@ A self-hosted 3D shed configurator with a **built-in CRM**, a **point of sale wi
 
 - **Customers:** pick a Style & Size (one screen) → Roof & Colors (Architectural Shingles or Ag Panel Metal) → Options → submit a Quote. Standard options are already on the shed. Customers **drag and drop** doors, windows and every other option to a new spot on the 3D model (along a wall, around a corner to another wall, across the ceiling), and click any of them to upgrade, swap or remove it. After submitting they can download their **3D model (.glb)** and a **to-scale floor plan** (SVG / print to PDF).
 - **You (admin):** log in at `/admin` to manage styles, sizes & prices, colors, options (each with a built-in 3D model or your own uploaded `.glb`), quotes, GHL, webhooks, API keys and branding — with a live 3D preview while you edit.
-- **Integrations:** every quote can go to GoHighLevel (contact + opportunity + note, or a workflow Inbound Webhook), to any number of webhooks (Zapier, Make, n8n, your server), and everything is available through a documented REST API (`/docs`).
+- **Integrations:** every quote can go to GoHighLevel (contact + opportunity + note + the quote PDF with pricing, or a workflow Inbound Webhook), to any number of webhooks (Zapier, Make, n8n, your server), and everything is available through a documented REST API (`/docs`).
 
 ---
 

@@ -335,7 +335,8 @@ async function quoteDetail(id, refresh) {
         <dt>SMS consent</dt><dd>${c.sms_consent ? 'Yes' : 'No'}</dd><dt>Notes</dt><dd>${esc(c.notes) || '—'}</dd>
         <dt>Submitted</dt><dd>${fmtDate(x.created_at)}</dd><dt>Source</dt><dd>${esc(x.source) || '—'}</dd>
         <dt>Dealer lot</dt><dd>${x.dealer ? esc(x.dealer.name) : '—'}</dd><dt>Price tier</dt><dd>${esc(x.pricing.tier || '—')}${x.pricing.pricing_zip ? ' (ZIP ' + esc(x.pricing.pricing_zip) + ')' : ''}</dd>
-        <dt>GHL</dt><dd>${x.integrations.ghl_contact_id ? `Contact <code>${esc(x.integrations.ghl_contact_id)}</code>` : 'Not synced'}</dd>
+        <dt>GHL</dt><dd>${x.integrations.ghl_contact_id ? `Contact <code>${esc(x.integrations.ghl_contact_id)}</code>${x.ghl_pdf_url ? ` · <a href="${esc(x.ghl_pdf_url)}" target="_blank" rel="noopener">PDF sent</a>` : ''}` : 'Not synced'}</dd>
+        ${window.__planUrl ? '' : `<dt>Quote PDF</dt><dd><a href="/api/v1/quotes/${x.id}/quote.pdf">Download (with pricing)</a></dd>`}
       </dl></div>
       ${canEditQuotes() ? `<div class="card card-pad" style="margin-top:14px;display:grid;gap:12px">
         <label class="fld"><span>Status</span><select id="qStatus">${STATUSES.map(s => `<option ${s === x.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
@@ -829,13 +830,17 @@ function optionEditor(row) {
 const GHL_FIELDS = [
   { type: 'section', label: 'Option A — Native API (creates contact, opportunity and note)' },
   { key: 'ghl_enabled', label: 'Send every new quote to GoHighLevel', type: 'checkbox', full: true },
-  { key: 'ghl_token', label: 'Private Integration token', full: true, help: 'GHL → Settings → Private Integrations → Create. Scopes: contacts.write, opportunities.write.' },
+  { key: 'ghl_token', label: 'Private Integration token', full: true, help: 'GHL → Settings → Private Integrations → Create. Scopes: contacts.write, opportunities.write, and medias.write (to store quote PDFs in GHL).' },
   { key: 'ghl_location_id', label: 'Location (sub-account) ID', help: 'GHL → Settings → Business Profile.' },
   { key: 'ghl_tags', label: 'Tags', help: 'Comma separated.' },
   { key: 'ghl_pipeline_id', label: 'Pipeline ID (optional)', help: 'Leave blank to skip creating an opportunity.' },
   { key: 'ghl_stage_id', label: 'Pipeline stage ID (optional)' },
   { key: 'ghl_source', label: 'Contact source' },
-  { key: 'ghl_add_note', label: 'Add the full quote as a contact note', type: 'checkbox' },
+  { key: 'ghl_add_note', label: 'Add the full quote as a contact note', type: 'checkbox', default: true },
+  { key: 'ghl_send_pdf', label: 'Send the quote PDF with pricing', type: 'checkbox', default: true, full: true,
+    help: 'A pricing page plus the drawings (3D view, elevations, floor plan) is uploaded to GHL (Media) and linked in a note on the contact, so it shows on the opportunity too. Without the <b>medias.write</b> scope the note links to a private copy on this app instead (set Settings → Public URL).' },
+  { key: 'ghl_pdf_field', label: 'Put the PDF link in this custom field (optional)', ph: 'quote_pdf', full: true,
+    help: 'The key of a single-line text or URL custom field. It goes on the <b>opportunity</b> when one is created, otherwise on the contact. Use it to show the link on the opportunity card, or in a workflow (for example to email the PDF).' },
   { key: 'ghl_custom_fields', label: 'Custom field mapping (optional)', type: 'json', full: true, empty: {},
     help: 'Map GHL custom field keys to quote values, e.g. <code>{"shed_style": "shed.style", "shed_size": "shed.size", "quote_total": "pricing.total", "shed_3d_link": "links.view_3d"}</code>' },
   { type: 'section', label: 'Option B — Workflow “Inbound Webhook” trigger (no token needed)' },

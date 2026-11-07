@@ -780,7 +780,7 @@ async function submitQuote() {
   const btn = $('#next'); btn.disabled = true; btn.textContent = 'Sending…';
   const utm = {}; for (const [k, v] of params) if (k.startsWith('utm_') || k === 'gclid' || k === 'fbclid') utm[k] = v;
   try {
-    const body = { config: state.config, customer: data, utm, source: params.get('source') || document.referrer || 'configurator' };
+    const body = { config: state.config, customer: data, utm, source: params.get('source') || document.referrer || 'configurator', with_drawings: true };
     // the contact id is kept even when the CRM is off (the lookup above fails), so the design stays on the same customer
     if (state.pos) Object.assign(body, { pos: true, contact_id: state.pos.contact?.id || state.pos.contactId || null, source: 'Point of sale' });
     const r = await fetch('/api/v1/quotes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -793,7 +793,8 @@ async function submitQuote() {
     try { window.parent !== window && window.parent.postMessage({ type: 'shedbuilder:quote', quote: j }, '*'); } catch { /* ignore */ }
     history.replaceState(null, '', `?q=${j.token}`);
     renderSteps(); renderPanel();
-    if (S().thank_you_url) setTimeout(() => { (window.top || window).location.href = S().thank_you_url + (S().thank_you_url.includes('?') ? '&' : '?') + 'quote=' + encodeURIComponent(j.number); }, 2500);
+    const sent = j.drawings_upload ? sendDrawings(j) : Promise.resolve();
+    if (S().thank_you_url) Promise.race([sent, new Promise(r => setTimeout(r, 25000))]).then(() => setTimeout(() => { (window.top || window).location.href = S().thank_you_url + (S().thank_you_url.includes('?') ? '&' : '?') + 'quote=' + encodeURIComponent(j.number); }, 2500));
   } catch (e) { err.textContent = e.message; err.hidden = false; }
   finally { btn.disabled = false; if (!state.submitted) btn.textContent = quoteBtnLabel(); }
 }
@@ -803,6 +804,15 @@ async function submitQuote() {
 // ---------------------------------------------------------------------------
 function fileBase() { const q = state.submitted; const st = curStyle(), z = curSize(); return (q ? q.number + '-' : '') + `${st.name}-${z.width}x${z.depth}`.replace(/[^a-z0-9-]+/gi, '-'); }
 function saveBlob(blob, name) { if (window.__shedSave) return window.__shedSave(blob, name); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
+/** The company's quote PDF (sent to their CRM) needs the drawings; the server adds its own pricing page. */
+async function sendDrawings(q) {
+  try {
+    const quote = { ...q, config: state.config, created_at: new Date().toISOString().replace('T', ' ').slice(0, 19) };
+    const blob = await buildDrawingPackage(state.catalog, quote, { company: S().company_name || '', withPricing: false });
+    const fd = new FormData(); fd.append('drawings', blob, `${q.number}-drawings.pdf`);
+    await fetch(q.drawings_upload, { method: 'POST', body: fd });
+  } catch (e) { console.warn('Drawings not sent:', e); } // the company still gets the pricing pages
+}
 async function downloadQuotePDF(btn) {
   const q = state.submitted; if (!q) return;
   const label = btn.innerHTML; btn.disabled = true; btn.textContent = 'Building your PDF…';

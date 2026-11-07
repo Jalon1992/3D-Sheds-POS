@@ -83,7 +83,7 @@ Everyone can be logged in at the same time.
 
 ## 8. Optional integrations
 **Settings → Integrations & API:**
-- **GoHighLevel:** push every new quote to your GHL account as a contact, opportunity and note.
+- **GoHighLevel:** push every new quote to your GHL account as a contact, opportunity and note. It also sends the **quote PDF with pricing** (a pricing page plus the 3D view, floor plan and elevations), stored in GHL Media and linked on the contact and opportunity. Give the Private Integration token the `medias.write` scope; to show the link on the opportunity card, create a text custom field (for example `quote_pdf`) and enter its key under **Integrations → GoHighLevel**.
 - **Webhooks:** send quotes to Zapier, Make or your own systems.
 - **API keys:** let your website or other tools read and create quotes (docs at `/docs`).
 
