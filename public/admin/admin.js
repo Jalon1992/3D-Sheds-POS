@@ -335,7 +335,8 @@ async function quoteDetail(id, refresh) {
         <dt>SMS consent</dt><dd>${c.sms_consent ? 'Yes' : 'No'}</dd><dt>Notes</dt><dd>${esc(c.notes) || '—'}</dd>
         <dt>Submitted</dt><dd>${fmtDate(x.created_at)}</dd><dt>Source</dt><dd>${esc(x.source) || '—'}</dd>
         <dt>Dealer lot</dt><dd>${x.dealer ? esc(x.dealer.name) : '—'}</dd><dt>Price tier</dt><dd>${esc(x.pricing.tier || '—')}${x.pricing.pricing_zip ? ' (ZIP ' + esc(x.pricing.pricing_zip) + ')' : ''}</dd>
-        <dt>GHL</dt><dd>${x.integrations.ghl_contact_id ? `Contact <code>${esc(x.integrations.ghl_contact_id)}</code>` : 'Not synced'}</dd>
+        <dt>GHL</dt><dd>${x.integrations.ghl_contact_id ? `Contact <code>${esc(x.integrations.ghl_contact_id)}</code>${x.ghl_pdf_url ? ` · <a href="${esc(x.ghl_pdf_url)}" target="_blank" rel="noopener">PDF sent</a>` : ''}` : 'Not synced'}</dd>
+        ${window.__planUrl ? '' : `<dt>Quote PDF</dt><dd><a href="/api/v1/quotes/${x.id}/quote.pdf">Download (with pricing)</a></dd>`}
       </dl></div>
       ${canEditQuotes() ? `<div class="card card-pad" style="margin-top:14px;display:grid;gap:12px">
         <label class="fld"><span>Status</span><select id="qStatus">${STATUSES.map(s => `<option ${s === x.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
@@ -455,7 +456,10 @@ function styleEditor(style) {
       <div class="muted" style="font-size:12px;margin-top:6px">Untick anything this style shouldn't offer — customers won't see it on this style. Standard options are always offered. While everything is ticked, options you add later are offered here automatically; once something is unticked, tick new options here to offer them.</div>`;
   };
 
-  const optSel = (v, i) => `<select data-std="${i}" data-k="option_id">${catalog.options.filter(o => o.placement !== 'none' || (Array.isArray(o.package_items) && o.package_items.length)).map(o => `<option value="${o.id}" ${o.id === v ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
+  // form fields hand back text: option ids and sizes are stored as numbers, or the row's dropdown can't find the
+  // chosen option and shows the first one in the list instead (what was saved was right; what was shown wasn't)
+  const stdVal = (k, el) => (k === 'gable' ? el.checked : k === 'option_id' ? Number(el.value) : ['offset', 'w', 'h'].includes(k) ? (el.value === '' ? undefined : Number(el.value)) : el.value);
+  const optSel = (v, i) => `<select data-std="${i}" data-k="option_id">${catalog.options.filter(o => o.placement !== 'none' || (Array.isArray(o.package_items) && o.package_items.length)).map(o => `<option value="${o.id}" ${o.id === Number(v) ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
   const colorSel = cat => `<label class="fld"><span>Default ${cat} color</span><select name="dc_${cat}"><option value="">First in list</option>${catalog.colors.filter(c => c.category === cat).map(c => `<option value="${c.id}" ${c.id === s.default_colors?.[cat] ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
   const isBarn = () => (document.querySelector('#sf [name=roof_type]')?.value || s.roof_type) === 'barn';
   const styleVal = k => document.querySelector(`#sf [name=${k}]`)?.value || s[k] || '';
@@ -526,7 +530,7 @@ function styleEditor(style) {
       root.addEventListener('input', e => {
         const d = e.target.dataset;
         if (d.sz !== undefined) { sizes[d.sz][d.k] = d.k === 'active' ? (e.target.checked ? 1 : 0) : e.target.value; later(); }
-        if (d.std !== undefined) { stds[d.std][d.k] = d.k === 'gable' ? e.target.checked : e.target.value; later(); }
+        if (d.std !== undefined) { stds[d.std][d.k] = stdVal(d.k, e.target); later(); }
         if (d.av !== undefined) {
           const ticked = $$('[data-av]', root).filter(x => x.checked && !x.disabled).map(x => Number(x.dataset.av));
           const free = catalog.options.filter(o => !stds.some(x => Number(x.option_id) === o.id)).map(o => o.id);
@@ -534,7 +538,7 @@ function styleEditor(style) {
           redrawAvail();
         }
       });
-      root.addEventListener('change', e => { const d = e.target.dataset; if (d.std !== undefined) { stds[d.std][d.k] = d.k === 'gable' ? e.target.checked : e.target.value; if (d.k === 'option_id') redrawStd(); else later(); } if (d.sz !== undefined && d.k === 'active') sizes[d.sz].active = e.target.checked ? 1 : 0; });
+      root.addEventListener('change', e => { const d = e.target.dataset; if (d.std !== undefined) { stds[d.std][d.k] = stdVal(d.k, e.target); if (d.k === 'option_id') redrawStd(); else later(); } if (d.sz !== undefined && d.k === 'active') sizes[d.sz].active = e.target.checked ? 1 : 0; });
       root.addEventListener('click', e => {
         const b = e.target.closest('button'); if (!b) return;
         if (b.id === 'addSize') { const l = sizes.at(-1) || { width: 8, depth: 8, price: 0 }; sizes.push({ width: l.width, depth: Number(l.depth) + 2, price: l.price, active: 1 }); redrawSizes(); }
@@ -826,13 +830,17 @@ function optionEditor(row) {
 const GHL_FIELDS = [
   { type: 'section', label: 'Option A — Native API (creates contact, opportunity and note)' },
   { key: 'ghl_enabled', label: 'Send every new quote to GoHighLevel', type: 'checkbox', full: true },
-  { key: 'ghl_token', label: 'Private Integration token', full: true, help: 'GHL → Settings → Private Integrations → Create. Scopes: contacts.write, opportunities.write.' },
+  { key: 'ghl_token', label: 'Private Integration token', full: true, help: 'GHL → Settings → Private Integrations → Create. Scopes: contacts.write, opportunities.write, and medias.write (to store quote PDFs in GHL).' },
   { key: 'ghl_location_id', label: 'Location (sub-account) ID', help: 'GHL → Settings → Business Profile.' },
   { key: 'ghl_tags', label: 'Tags', help: 'Comma separated.' },
   { key: 'ghl_pipeline_id', label: 'Pipeline ID (optional)', help: 'Leave blank to skip creating an opportunity.' },
   { key: 'ghl_stage_id', label: 'Pipeline stage ID (optional)' },
   { key: 'ghl_source', label: 'Contact source' },
-  { key: 'ghl_add_note', label: 'Add the full quote as a contact note', type: 'checkbox' },
+  { key: 'ghl_add_note', label: 'Add the full quote as a contact note', type: 'checkbox', default: true },
+  { key: 'ghl_send_pdf', label: 'Send the quote PDF with pricing', type: 'checkbox', default: true, full: true,
+    help: 'A pricing page plus the drawings (3D view, elevations, floor plan) is uploaded to GHL (Media) and linked in a note on the contact, so it shows on the opportunity too. Without the <b>medias.write</b> scope the note links to a private copy on this app instead (set Settings → Public URL).' },
+  { key: 'ghl_pdf_field', label: 'Put the PDF link in this custom field (optional)', ph: 'quote_pdf', full: true,
+    help: 'The key of a single-line text or URL custom field. It goes on the <b>opportunity</b> when one is created, otherwise on the contact. Use it to show the link on the opportunity card, or in a workflow (for example to email the PDF).' },
   { key: 'ghl_custom_fields', label: 'Custom field mapping (optional)', type: 'json', full: true, empty: {},
     help: 'Map GHL custom field keys to quote values, e.g. <code>{"shed_style": "shed.style", "shed_size": "shed.size", "quote_total": "pricing.total", "shed_3d_link": "links.view_3d"}</code>' },
   { type: 'section', label: 'Option B — Workflow “Inbound Webhook” trigger (no token needed)' },
