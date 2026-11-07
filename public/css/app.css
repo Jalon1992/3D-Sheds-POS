@@ -368,3 +368,20 @@ body.has-pos-bar .layout { height: calc(100vh - var(--top-h) - 48px); height: ca
   body.card-open .viewport { height: 70vh; height: 70dvh; transition: height .2s; }
   body.card-open .itemcard { max-height: calc(100% - 104px); }
 }
+
+/* ---------- Selected item: small toolbar beside it (never on top of it) ---------- */
+.itemchip { position: absolute; z-index: 4; display: flex; align-items: center; gap: 4px; padding: 5px 5px 5px 12px; background: #fff; border-radius: 999px; box-shadow: 0 6px 24px rgba(16,24,22,.22); max-width: calc(100% - 16px); animation: pop .15s ease-out; }
+.itemchip .ch-name { font-weight: 700; font-size: 13px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 4px; }
+.itemchip button { border: 0; background: var(--bg); min-width: 40px; height: 40px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ink); font: inherit; font-size: 14px; font-weight: 700; touch-action: manipulation; }
+.itemchip button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.itemchip .ch-edit { background: var(--brand); color: #fff; padding: 0 16px; }
+.itemchip .ch-rm { color: #b42318; }
+.itemchip .ch-x { font-size: 22px; font-weight: 400; }
+.viewport.dragging .itemchip { display: none; }
+/* full editor docked to the side away from the item (tablets, computers) */
+.itemcard.dock-left, .itemcard.dock-right { top: 64px; bottom: 60px; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+.itemcard.dock-left { left: 16px; right: auto; }
+.itemcard.dock-right { right: 16px; left: auto; }
+/* phones: a bottom sheet that takes at most about half the 3D view */
+.itemcard.sheet, body.card-open .itemcard.sheet { left: 8px; right: 8px; width: auto; bottom: 50px; top: auto; max-height: 52%; overflow-y: auto; overscroll-behavior: contain; padding: 12px; }
+@media (max-width: 520px) { .itemchip .ch-name { max-width: 96px; } .itemchip button { min-width: 38px; height: 38px; } }

@@ -33,13 +33,14 @@
         <button class="chip" id="btnGlb" title="Download 3D model (.glb)">
           <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/></svg><span>3D model</span></button>
       </div>
-      <div class="hint" id="hint">Tip: drag doors, windows and options to move them · click one to change it</div>
+      <div class="hint" id="hint">Tip: drag doors, windows and options to move them · tap one for more</div>
       <div class="views" id="views">
         <button data-v="front34" class="on" title="3D view">3D</button>
         <button data-v="front">Front</button><button data-v="left">Left</button>
         <button data-v="right">Right</button><button data-v="back">Back</button><button data-v="top">Top</button>
       </div>
-      <div class="itemcard" id="itemcard" hidden></div>
+      <div class="itemchip" id="itemchip" role="toolbar" aria-label="Selected item" hidden></div>
+      <div class="itemcard" id="itemcard" role="dialog" aria-label="Edit item" hidden></div>
       <div class="loading" id="loading"><div class="spin"></div>Loading your shed…</div>
     </section>
 

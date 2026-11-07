@@ -719,7 +719,8 @@ export class ShedScene {
     }, true);
     el.addEventListener('pointermove', e => {
       if (this.drag) {
-        if (!this.drag.moved && down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 5) return;
+        // a finger wobbles more than a mouse: a touch only becomes a drag after it really moves
+        if (!this.drag.moved && down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < (e.pointerType === 'touch' ? 10 : 5)) return;
         if (!this.drag.moved) { this.drag.moved = true; this.select(this.drag.uid); this.onSelect(this.drag.uid, { dragging: true }); }
         const hit = this.dragTarget(e, this.drag.uid);
         if (hit) this.onDrag(this.drag.uid, hit);
@@ -732,11 +733,13 @@ export class ShedScene {
       const d = this.drag; this.drag = null; this.controls.enabled = true;
       if (d) { try { el.releasePointerCapture(d.pointerId); } catch { /* ignore */ } el.style.cursor = 'grab'; }
       if (d && d.moved) { this.onDragEnd(d.uid); return; }
-      if (e.type === 'pointercancel' || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
+      if (e.type === 'pointercancel' || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > (e.pointerType === 'touch' ? 14 : 6)) return;
       const uid = this.pick(e); this.select(uid); this.onSelect(uid);
     };
     el.addEventListener('pointerup', end);
     el.addEventListener('pointercancel', end);
+    // double-click / double-tap an item: open its editor straight away
+    el.addEventListener('dblclick', e => { const uid = this.pick(e); if (uid) { this.select(uid); this.onSelect(uid, { edit: true }); } });
 
     this.resize = this.resize.bind(this);
     new ResizeObserver(this.resize).observe(container);
@@ -749,6 +752,33 @@ export class ShedScene {
     const w = this.container.clientWidth || 300, h = this.container.clientHeight || 300;
     this.renderer.setSize(w, h, false); this.renderer.domElement.style.width = '100%'; this.renderer.domElement.style.height = '100%';
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    this.applyInset();
+  }
+
+  /** Part of the view is covered by a panel (px from each edge): slide the picture so the shed sits in the open part.
+   *  Uses a view offset, so picking and dragging still line up with what's on screen. */
+  setInset(inset) { this.inset = { left: 0, right: 0, top: 0, bottom: 0, ...(inset || {}) }; this.applyInset(); }
+  applyInset() {
+    const i = this.inset || {}, w = this.container.clientWidth || 300, h = this.container.clientHeight || 300;
+    const sx = ((i.left || 0) - (i.right || 0)) / 2, sy = ((i.top || 0) - (i.bottom || 0)) / 2;
+    if (!sx && !sy) { if (this.camera.view?.enabled) this.camera.clearViewOffset(); return; }
+    this.camera.setViewOffset(w, h, -sx, -sy, w, h);
+  }
+
+  /** Where an item is on screen, in px relative to the 3D view (null when it isn't drawn / is behind the camera). */
+  screenRect(uid) {
+    const obj = uid && this.items.get(uid); if (!obj) return null;
+    this.root.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(obj); if (b.isEmpty()) return null;
+    const w = this.container.clientWidth, h = this.container.clientHeight, v = new THREE.Vector3();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, behind = 0;
+    for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+      v.set(x, y, z).project(this.camera); if (v.z > 1) behind++;
+      const px = (v.x + 1) / 2 * w, py = (1 - v.y) / 2 * h;
+      x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+    }
+    if (behind === 8) return null;
+    return { left: x0, top: y0, right: x1, bottom: y1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
   }
 
   pick(e) {

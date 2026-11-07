@@ -11,6 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { PDFDocument } from 'pdf-lib';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4300 + Math.floor(Math.random() * 90);
@@ -36,9 +37,10 @@ class Client {
 const anon = new Client(), admin = new Client();
 
 // ---- a fake outside world: webhook receivers + the GoHighLevel API -----------------------
-const hits = []; let flaky = 0;
+const hits = []; let flaky = 0; let mediaDown = false;
 const recv = http.createServer((req, res) => {
-  let body = ''; req.on('data', d => (body += d)); req.on('end', () => {
+  const chunks = []; req.on('data', d => chunks.push(d)); req.on('end', () => {
+    const body = Buffer.concat(chunks).toString();
     let json = null; try { json = JSON.parse(body); } catch { /* */ }
     hits.push({ method: req.method, path: req.url, headers: req.headers, body, json });
     const send = (st, o) => { res.writeHead(st, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
@@ -49,6 +51,8 @@ const recv = http.createServer((req, res) => {
     if (req.url === '/contacts/upsert') return send(200, { contact: { id: 'ghlC1' } });
     if (req.url === '/opportunities/') return send(201, { opportunity: { id: 'ghlO1' } });
     if (/^\/contacts\/ghlC1\/notes$/.test(req.url)) return send(201, { note: { id: 'n1' } });
+    if (req.url === '/medias/upload-file') return mediaDown ? send(403, { message: 'The token is not authorized for this scope.' }) : send(200, { fileId: 'f1', url: 'https://storage.example.com/media/' + hits.length + '.pdf' });
+    if (req.url === '/opportunities/ghlO1' && req.method === 'PUT') return send(200, { opportunity: { id: 'ghlO1' } });
     send(404, { e: 'unknown ' + req.url });
   });
 });
@@ -437,6 +441,48 @@ test('GoHighLevel: inbound-webhook (flat fields) and the native API push (contac
   // the token is never sent back to the browser
   const st = (await admin.get('/api/admin/settings')).data; assert.ok(!String(st.ghl_token).includes('bad-token')); assert.equal(st.ghl_token_set, true);
   await setS({ ghl_enabled: false, ghl_inbound_webhook_url: '' });
+});
+
+test('GoHighLevel: the quote PDF with pricing goes to the contact and opportunity (drawings from the browser, pricing from the server)', async () => {
+  await setS({ ghl_enabled: true, ghl_token: 'good-token', ghl_location_id: 'LOC1', ghl_pipeline_id: 'P1', ghl_stage_id: 'S1', ghl_custom_fields: {}, ghl_pdf_field: 'quote_pdf', ghl_send_pdf: 1, public_url: '' });
+  const dwg = await PDFDocument.create(); dwg.addPage([792, 612]); dwg.addPage([792, 612]); const dwgBytes = Buffer.from(await dwg.save());
+  const upload = (url, bytes, type = 'application/pdf') => { const fd = new FormData(); fd.append('drawings', new Blob([bytes], { type }), 'd.pdf'); return fetch(B + url, { method: 'POST', body: fd }); };
+  hits.length = 0;
+  const q = await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Pia', last_name: 'Dee', email: 'pia@test.com' }, with_drawings: true });
+  assert.equal(q.status, 201); assert.match(q.data.drawings_upload, /^\/api\/v1\/quote-drawings\/[a-f0-9]{32}$/, 'the configurator is asked for the drawings');
+  await sleep(300); assert.ok(!hits.some(h => h.path === '/medias/upload-file'), 'waits for the drawings before sending');
+  assert.equal((await upload(q.data.drawings_upload, Buffer.from('not a pdf at all, just text that is long enough to pass the size check........................................'))).status, 400, 'non-PDF refused');
+  assert.equal((await upload(q.data.drawings_upload, dwgBytes)).status, 202);
+  assert.equal((await upload(q.data.drawings_upload, dwgBytes)).status, 404, 'only one upload per quote');
+  assert.equal((await upload('/api/v1/quote-drawings/' + 'a'.repeat(32), dwgBytes)).status, 404);
+  const [med] = await waitHit(h => h.path === '/medias/upload-file');
+  assert.ok(med, 'PDF uploaded to GHL media'); assert.equal(med.headers.authorization, 'Bearer good-token'); assert.match(med.headers['content-type'], /multipart\/form-data/);
+  assert.match(med.body, /%PDF-/); assert.match(med.body, new RegExp(q.data.number + '-quote\\.pdf'));
+  const [note] = await waitHit(h => h.path === '/contacts/ghlC1/notes' && /Quote PDF/.test(h.json?.body));
+  assert.match(note.json.body, new RegExp(`Quote PDF ${q.data.number} .*\\(pricing \\+ drawings\\)\\nhttps://storage\\.example\\.com/media/`));
+  const [opp] = await waitHit(h => h.path === '/opportunities/ghlO1' && h.method === 'PUT');
+  assert.deepEqual(opp.json.customFields, [{ key: 'quote_pdf', field_value: note.json.body.split('\n')[1] }], 'link in the opportunity custom field');
+  // staff can download the same PDF: pricing page + the 2 drawing pages
+  for (let i = 0; i < 40 && !(await admin.get('/api/v1/quotes/' + q.data.id)).data.ghl_pdf_url; i++) await sleep(50);
+  const dl = await fetch(B + `/api/v1/quotes/${q.data.id}/quote.pdf`, { headers: { cookie: admin.cookie } });
+  assert.equal(dl.status, 200); assert.equal(dl.headers.get('content-type'), 'application/pdf');
+  assert.equal((await PDFDocument.load(Buffer.from(await dl.arrayBuffer()))).getPageCount(), 3);
+  assert.equal((await fetch(B + `/api/v1/quotes/${q.data.id}/quote.pdf`)).status, 401, 'download needs a login');
+  // a quote from the API (no browser): the pricing PDF goes right away. Without the medias scope, the note links a private copy here.
+  mediaDown = true; await setS({ public_url: B }); hits.length = 0;
+  const q2 = await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[1].id }, customer: { first_name: 'Api', email: 'api@test.com' } });
+  assert.equal(q2.data.drawings_upload, undefined);
+  const [n2] = await waitHit(h => h.path === '/contacts/ghlC1/notes' && /Quote PDF/.test(h.json?.body));
+  const link = n2.json.body.split('\n')[1]; assert.match(n2.json.body, /\(pricing\)/); assert.match(link, /\/q\/pdf\/[a-f0-9]{32}$/);
+  const pub = await fetch(link); assert.equal(pub.status, 200); assert.equal(pub.headers.get('content-type'), 'application/pdf');
+  assert.equal((await fetch(B + '/q/pdf/' + 'b'.repeat(32))).status, 404);
+  assert.ok((await admin.get('/api/admin/webhook-log')).data.some(l => /medias\/upload-file/.test(l.target) && /medias\.write/.test(l.response)), 'missing scope explained in the delivery log');
+  // switched off (the checkbox saves 0): nothing asked, nothing sent
+  mediaDown = false; await setS({ ghl_send_pdf: 0, ghl_add_note: 0 }); hits.length = 0;
+  const q3 = await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Off', email: 'off@test.com' }, with_drawings: true });
+  assert.equal(q3.data.drawings_upload, undefined); await waitHit(h => h.path === '/opportunities/'); await sleep(400);
+  assert.ok(!hits.some(h => h.path === '/medias/upload-file' || /notes$/.test(h.path)), 'no PDF and no note when both are switched off');
+  await setS({ ghl_enabled: false, ghl_send_pdf: 1, ghl_add_note: 1, ghl_pdf_field: '', public_url: '' });
 });
 
 // =============================================================================
