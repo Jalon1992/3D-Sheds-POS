@@ -255,13 +255,13 @@ function moveToWall(uid, wall) {
   if (o.placement === 'loft' && !geo().isGable(wall)) return toast('Lofts go on an end wall');
   if (gableMode(o) === 'only' && !geo().isGable(wall)) return toast(`${o.name} only fits up in a gable end`);
   const wantGable = it.gable && geo().isGable(wall);
-  let spot = findSpot(geo(), optById, state.config.items.filter(i => i.uid !== uid), o, wall, 0, uid, { w: it.w, h: it.h, elev: it.elev, gable: wantGable });
+  let spot = findSpot(geo(), optById, state.config.items.filter(i => i.uid !== uid), o, wall, 0, uid, { w: it.w, h: it.h, gable: wantGable });
   let shortened = null;
   if ((!spot || spot.wall !== wall) && lengthChoices(o).length) {
     // items sold by length (double shelves): use the longest length that has room on that wall
     for (const len of [...lengthChoices(o)].sort((a, b) => b - a)) {
       if (len >= (Number(it.w) || Number(o.width))) continue;
-      const s2 = findSpot(geo(), optById, state.config.items.filter(i => i.uid !== uid), o, wall, 0, uid, { w: len, h: it.h, elev: it.elev });
+      const s2 = findSpot(geo(), optById, state.config.items.filter(i => i.uid !== uid), o, wall, 0, uid, { w: len, h: it.h });
       if (s2 && s2.wall === wall) { spot = s2; shortened = len; break; }
     }
   }
@@ -440,7 +440,7 @@ function selectItem(uid) {
       const cur = Number(it.w) > 0 ? Number(it.w) : Number(o.width);
       const L = geo().wallLen(it.wall);
       const fit = lengthFits(it, o);
-      return `<div class="ic-label">Length</div><div class="walls">${lc.map((v, i) => { const on = Math.abs(v - cur) < 0.01; const why = v > L + 0.01 ? 'Longer than this wall' : !fit[i] && !on ? 'No open space this long on this wall' : ''; return `<button data-len="${v}" class="${on ? 'on' : ''}" ${why ? `disabled title="${why}"` : ''}>${v}'</button>`; }).join('')}</div>${fit.some((f, i) => !f && lc[i] <= L + 0.01) ? '<div class="ic-meta" style="margin-top:6px">Greyed-out lengths are blocked by a door or window on this wall — try another wall.</div>' : ''}`;
+      return `<div class="ic-label">Length</div><div class="walls">${lc.map((v, i) => { const on = Math.abs(v - cur) < 0.01; const why = v > L - 0.8 ? 'Longer than this wall' : !fit[i] && !on ? 'No open space this long on this wall' : ''; return `<button data-len="${v}" class="${on ? 'on' : ''}" ${why ? `disabled title="${why}"` : ''}>${v}'</button>`; }).join('')}</div>${fit.some((f, i) => !f && lc[i] <= L - 0.8) ? '<div class="ic-meta" style="margin-top:6px">Greyed-out lengths are blocked by a door or window on this wall — try another wall.</div>' : ''}`;
     })()}
     <div class="ic-foot">${pk ? '<span class="ic-meta">Drag it or use the arrows to move it</span>' : `<button class="link-danger" data-act="remove">Remove${removedCredit && showPrices() ? ` (${fmt(removedCredit)})` : ''}</button>`}
       <button class="btn primary sm" data-act="close">Done</button></div>`;

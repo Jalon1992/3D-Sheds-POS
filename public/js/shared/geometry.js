@@ -123,7 +123,7 @@ function trimPad(geo, opt) {
  *  fits=false means it cannot sit there at its proper size/height (e.g. a gable window that is too tall). */
 export function resolvePlacement(geo, opt, item) {
   const sz = itemSize(opt, item);
-  let w = sz.w;
+  const w = sz.w;
   let h = sz.h;
   const baseElev = item.elev !== undefined && item.elev !== null && item.elev !== '' && Number.isFinite(Number(item.elev)) ? Number(item.elev) : Number(opt.elevation) || 0;
   if (!WALLS.includes(item.wall)) return { offset: item.offset || 0, elev: baseElev, w, h, fits: true };
@@ -131,13 +131,7 @@ export function resolvePlacement(geo, opt, item) {
   const pad = trimPad(geo, opt);
   // exterior items stay clear of the corner boards; interior items clear of the inside wall face
   const exterior = opt.placement === 'opening' || opt.placement === 'wall_exterior' || opt.placement === 'ground';
-  let margin = (exterior ? Math.max(WALL_T + 0.1, (geo.corner ?? 0.42) - 0.06) : WALL_T + 0.1) + pad.side;
-  // Built-ins sold by length (double shelves) may run wall to wall: a length as long as the wall (e.g. 12' on a
-  // 12' end wall) is fitted between the inside faces of the side walls.
-  if (opt.placement === 'wall_interior' && String(opt.length_choices || '').trim()) {
-    margin = WALL_T + 0.01;
-    if (w > L - 2 * margin && w <= L + 0.01) w = L - 2 * margin;
-  }
+  const margin = (exterior ? Math.max(WALL_T + 0.1, (geo.corner ?? 0.42) - 0.06) : WALL_T + 0.1) + pad.side;
   const span = opt.placement === 'loft' ? 0 : w;
   let offset = Math.max(-L / 2 + margin + span / 2, Math.min(L / 2 - margin - span / 2, Number(item.offset) || 0));
   let fits = true;
@@ -174,32 +168,11 @@ function extents(geo, opt, item) {
 /** Nothing on a wall may overlap anything else on that wall — trim included. Inside items (shelves)
  *  and outside items (lights, flower boxes) are on opposite faces, so they only clash with openings
  *  and with items on their own face. Ramps only clash with other ramps. */
-// Floor-plan footprint of a deep interior item (shelves, workbench): along-wall span x depth into the room.
-const deepInterior = o => o?.placement === 'wall_interior' && Number(o.depth) > 0.4;
-function footprint(geo, e, wall, depth) {
-  const W = geo.wallLen('front'), D = geo.wallLen('left');
-  const wp = t => wall === 'front' ? [t, D / 2, 0, 1] : wall === 'back' ? [-t, -D / 2, 0, -1] : wall === 'right' ? [W / 2, -t, 1, 0] : [-W / 2, t, -1, 0];
-  const [x1, z1, nx, nz] = wp(e.a), [x2, z2] = wp(e.b);
-  const pa = [x1 - nx * WALL_T, z1 - nz * WALL_T], pb = [x2 - nx * (WALL_T + depth), z2 - nz * (WALL_T + depth)];
-  return { x0: Math.min(pa[0], pb[0]), x1: Math.max(pa[0], pb[0]), z0: Math.min(pa[1], pb[1]), z1: Math.max(pa[1], pb[1]) };
-}
 function collides(geo, optById, items, opt, cand, ignoreUid) {
   const e = extents(geo, opt, cand);
   if (!e.layer) return false;
   for (const it of items) {
-    if (it.uid === ignoreUid) continue;
-    if (it.wall !== cand.wall) {
-      // shelves meeting in a corner: a wall-to-wall shelf on one wall and a shelf on the side wall can't overlap
-      const o2 = optById[it.option_id];
-      if (deepInterior(opt) && deepInterior(o2) && WALLS.includes(it.wall) && WALLS.includes(cand.wall)) {
-        const f = extents(geo, o2, it);
-        if (e.y0 < f.y1 - 0.01 && f.y0 < e.y1 - 0.01) {
-          const A = footprint(geo, e, cand.wall, Number(opt.depth)), B = footprint(geo, f, it.wall, Number(o2.depth));
-          if (A.x0 < B.x1 - 0.01 && B.x0 < A.x1 - 0.01 && A.z0 < B.z1 - 0.01 && B.z0 < A.z1 - 0.01) return true;
-        }
-      }
-      continue;
-    }
+    if (it.uid === ignoreUid || it.wall !== cand.wall) continue;
     const o = optById[it.option_id]; if (!o) continue;
     const f = extents(geo, o, it);
     if (!f.layer) continue;

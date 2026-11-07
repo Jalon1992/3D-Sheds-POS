@@ -185,11 +185,6 @@ const plyTex = () => canvasTex('ply', 256, (g, n) => {
   for (let y = 0; y < n; y += 2) { g.fillStyle = `rgba(110,70,30,${Math.random() * 0.12})`; g.fillRect(0, y, n, 1 + Math.random() * 2); }
   g.fillStyle = 'rgba(80,50,20,.4)'; g.fillRect(0, n - 2, n, 2); g.fillRect(n - 2, 0, 2, n);
 }, 4);
-const lumberTex = () => canvasTex('lumber', 256, (g, n) => {   // pine 2x4: pale yellow with soft grain streaks
-  g.fillStyle = '#e8cf9e'; g.fillRect(0, 0, n, n);
-  for (let y = 0; y < n; y += 3) { g.fillStyle = `rgba(160,110,50,${Math.random() * 0.14})`; g.fillRect(0, y, n, 1 + Math.random() * 2); }
-  for (let i = 0; i < 6; i++) { g.fillStyle = 'rgba(120,75,30,.25)'; g.beginPath(); g.ellipse(Math.random() * n, Math.random() * n, 6, 2.5, 0, 0, 7); g.fill(); }
-}, 4);
 const grassTex = () => canvasTex('grass', 256, (g, n) => {
   g.fillStyle = '#7f9a5c'; g.fillRect(0, 0, n, n);
   for (let i = 0; i < 6000; i++) { g.fillStyle = `rgba(${60 + Math.random() * 70},${100 + Math.random() * 70},${30 + Math.random() * 40},.5)`; g.fillRect(Math.random() * n, Math.random() * n, 1, 2 + Math.random() * 3); }
@@ -543,25 +538,14 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       for (const x of [-w / 2 + 0.4, 0, w / 2 - 0.4]) { if (w < 3 && x === 0) continue; box(0.08, 0.8, 0.08, M.metal, x, -0.4, 0.06, g); const br = box(0.06, 0.06, d * 0.95, M.metal, x, -0.04, d / 2, g); }
       break;
     }
-    case 'shelf_double': {
-      // Built-in double shelves like a shop builds them: stands on the floor, 2x4 front legs (ends + every ~4'),
-      // 2x4 front rails and wall ledgers under each level, end/middle cleats front-to-back, 3/4" OSB tops.
-      // h = height of the top surface; the lower shelf sits at ~15".
-      const L = M.lumber || (M.lumber = new THREE.MeshStandardMaterial({ color: 0xffffff, map: lumberTex(), roughness: 0.75 }));
-      const O = M.osbTop || (M.osbTop = new THREE.MeshStandardMaterial({ color: 0xffffff, map: osbTex(), roughness: 0.9 }));
-      const t = 1.5 / 12, wd = 3.5 / 12, ply = 0.75 / 12;          // 2x4 = 1.5" x 3.5", OSB 3/4"
-      const top = h, low = Math.min(h - 1.2, Math.max(0.9, h * 0.42));
-      const spans = Math.max(1, Math.ceil((w - 0.3) / 4)), legX = [];
-      for (let i = 0; i <= spans; i++) legX.push(-w / 2 + wd / 2 + (w - wd) * i / spans);
-      const zf = d - t / 2;                                           // front legs, wide face to the front
-      for (const x of legX) box(wd, top - ply - wd, t, L, x, (top - ply - wd) / 2, zf, g);
-      for (const y of [low, top]) {
-        const ry = y - ply - wd / 2;
-        box(w, ply, d, O, 0, y - ply / 2, d / 2, g);                                  // OSB shelf
-        box(w, wd, t, L, 0, ry, y === top ? zf : zf - t, g);                         // front rail (top one caps the legs)
-        box(w, wd, t, L, 0, ry, t / 2, g);                                           // ledger on the wall studs
-        for (const x of legX) box(t, wd, d - 2 * t, L, x, ry, d / 2, g);              // cleat front-to-back at each leg
+    case 'shelf_double': { // two shelves, one above the other (h = spacing), on wood standards with metal brackets
+      const n = Math.max(2, Math.round(w / 2) + 1);
+      for (let i = 0; i < n; i++) {
+        const x = -w / 2 + 0.25 + (w - 0.5) * i / (n - 1);
+        box(0.12, h + 0.9, 0.06, M.wood, x, (h + 0.9) / 2 - 0.85, 0.04, g);                       // upright
+        for (const y of [0, h]) { box(0.06, 0.06, d * 0.92, M.metal, x, y - 0.06, d / 2, g); const br = box(0.05, 0.42, 0.05, M.metal, x, y - 0.27, d * 0.38, g); br.rotation.x = -0.75; }
       }
+      for (const y of [0, h]) { box(w, 0.08, d, M.wood, 0, y, d / 2, g); box(w, 0.12, 0.05, M.wood, 0, y - 0.02, d - 0.025, g); }
       break;
     }
     case 'workbench': {
@@ -757,10 +741,8 @@ export class ShedScene {
     this.camera.updateMatrixWorld(); this.root.updateMatrixWorld(true);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hits = this.raycaster.intersectObjects(this.root.children, true);
-    // skip anything inside a hidden group (e.g. the roof while the interior view is on) - it must not block picks
-    const shown = obj => { for (let x = obj; x; x = x.parent) if (!x.visible) return false; return true; };
     for (const h of hits) {
-      if (!shown(h.object)) continue;
+      if (!h.object.visible) continue;
       let o = h.object;
       while (o) { if (o.userData.uid) return o.userData.uid; if (o.userData.solid) return null; o = o.parent; }
     }
@@ -782,8 +764,7 @@ export class ShedScene {
       return { wall: kind, offset: g.ridgeAlongZ ? p.z : p.x };
     }
     if (kind !== 'ground') {
-      const vis = obj => { for (let x = obj; x; x = x.parent) if (!x.visible) return false; return true; };
-      const hits = this.raycaster.intersectObjects(this.wallMeshes || [], false).filter(h => vis(h.object));
+      const hits = this.raycaster.intersectObjects(this.wallMeshes || [], false);
       if (hits.length) {
         const w = hits[0].object.userData.wall;
         const local = this.wallGroups[w].worldToLocal(hits[0].point.clone());
