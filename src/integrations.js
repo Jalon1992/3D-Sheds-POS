@@ -4,6 +4,9 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { all, get, run, getSettings } from './db.js';
 import { formatQuote } from '../public/js/shared/quote-format.js';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { buildQuotePdf } from './quote-pdf.js';
 
 export const EVENTS = ['quote.created', 'quote.updated', 'quote.status_changed', 'test'];
 
@@ -98,7 +101,8 @@ export function emit(event, quoteRow, baseUrl) {
     deliver({ id: null, url: s.ghl_inbound_webhook_url, headers: {} }, event, flatForGHL(data)).catch(() => {});
   }
   if (event === 'quote.created' && s.ghl_enabled && s.ghl_token && s.ghl_location_id) {
-    pushToGHL(quoteRow, data).catch(e => log(null, 'GHL API', event, 0, false, 1, e.message));
+    ghlPushes.set(quoteRow.id, pushToGHL(quoteRow, data).catch(e => { log(null, 'GHL API', event, 0, false, 1, e.message); return null; }));
+    setTimeout(() => ghlPushes.delete(quoteRow.id), 10 * 60 * 1000).unref?.();
   }
 }
 
@@ -162,7 +166,7 @@ export async function pushToGHL(quoteRow, data) {
     });
     oppId = opp?.opportunity?.id || opp?.id || null;
   }
-  if (contactId && s.ghl_add_note !== false) {
+  if (contactId && !off(s.ghl_add_note)) {
     const body = [
       `Shed quote ${data.number} — $${Number(data.pricing.total).toFixed(2)}`,
       `${data.shed.style} ${data.shed.size}`,
@@ -178,6 +182,101 @@ export async function pushToGHL(quoteRow, data) {
   }
   run("UPDATE quotes SET ghl_contact_id = ?, ghl_opportunity_id = ?, ghl_status = 'synced' WHERE id = ?", contactId || null, oppId, quoteRow.id);
   return { contactId, oppId };
+}
+
+// ---- Quote PDF (with pricing) → GoHighLevel ------------------------------------------------
+// The customer's browser renders the drawing set (3D view, elevations, floor plan) and uploads it right after
+// the quote is sent; the server puts its own pricing page in front, uploads the PDF to the GHL media library,
+// and links it on the contact (note) and the opportunity (optional custom field). When no drawings arrive
+// in time (customer closed the page, quote sent through the API, point of sale), the pricing pages go alone.
+const ghlPushes = new Map();   // quote id → promise of { contactId, oppId } from the push above
+const pdfWaits = new Map();    // quote id → { timer, baseUrl }
+export const PDF_WAIT_MS = Number(process.env.QUOTE_PDF_WAIT_MS) || 120000;
+const QUOTE_FILES = () => join(process.env.FILES_DIR || join(dirname(process.env.DB_PATH || './data/shedbuilder.db'), 'files'), 'quotes');
+const quotePdfName = q => `${q.number || 'quote-' + q.id}-quote.pdf`;
+
+/** A checkbox setting that is on unless it was switched off (saved as false / 0). */
+const off = v => v === false || v === 0 || v === '0';
+export const ghlPdfOn = (s = getSettings()) => !!(s.ghl_enabled && s.ghl_token && s.ghl_location_id && !off(s.ghl_send_pdf));
+
+/** The company's quote PDF for a stored quote (pricing page + drawings, when the browser sent them). */
+export async function quotePdfBytes(q, baseUrl, drawings = null) {
+  const s = getSettings();
+  return buildQuotePdf({ quote: formatQuote(q, baseUrl), lines: q.pricing?.lines || [], company: s.company_name || '', terms: s.quote_terms || '', drawings });
+}
+/** Stored copy, if this quote's PDF has been made. */
+export function storedQuotePdf(q) {
+  const f = q.pdf_file && join(QUOTE_FILES(), q.pdf_file.replace(/[^\w.-]/g, ''));
+  return f && existsSync(f) ? readFileSync(f) : null;
+}
+
+/** Called when a quote is created: either wait for the browser's drawings, or make the PDF now. */
+export function expectQuotePdf(q, baseUrl, browserWillSend) {
+  if (!ghlPdfOn()) return false;
+  if (!browserWillSend) { finishQuotePdf(q.id, null, baseUrl); return false; }
+  const timer = setTimeout(() => finishQuotePdf(q.id, null, baseUrl), PDF_WAIT_MS); timer.unref?.();
+  pdfWaits.set(q.id, { timer, baseUrl });
+  return true;
+}
+/** Is the server still waiting for this quote's drawings? (one upload per quote, only for a short while) */
+export const waitingForDrawings = id => pdfWaits.has(id);
+export function drawingsArrived(id, bytes) {
+  const w = pdfWaits.get(id); if (!w) return false;
+  finishQuotePdf(id, bytes, w.baseUrl); return true;
+}
+
+export async function finishQuotePdf(id, drawings, baseUrl) {
+  const w = pdfWaits.get(id); if (w) { clearTimeout(w.timer); pdfWaits.delete(id); }
+  try {
+    const synced = await (ghlPushes.get(id) || Promise.resolve(null));
+    const q = get('SELECT * FROM quotes WHERE id = ?', id); if (!q) return;
+    const bytes = Buffer.from(await quotePdfBytes(q, baseUrl, drawings));
+    mkdirSync(QUOTE_FILES(), { recursive: true });
+    const file = `${q.id}-${crypto.randomBytes(4).toString('hex')}.pdf`, pdfToken = crypto.randomBytes(16).toString('hex');
+    writeFileSync(join(QUOTE_FILES(), file), bytes);
+    run('UPDATE quotes SET pdf_file = ?, pdf_token = ? WHERE id = ?', file, pdfToken, q.id);
+    const contactId = synced?.contactId || q.ghl_contact_id, oppId = synced?.oppId || q.ghl_opportunity_id;
+    if (contactId && ghlPdfOn()) await sendQuotePdfToGHL({ ...q, pdf_token: pdfToken }, bytes, contactId, oppId, baseUrl, !!drawings);
+  } catch (e) { log(null, 'GHL quote PDF', 'quote.created', 0, false, 1, e.message); }
+}
+
+/** "Re-send to GHL" on a quote: the PDF goes again (the stored copy, drawings included, when there is one). */
+export async function resendQuotePdf(id, baseUrl) {
+  if (!ghlPdfOn()) return;
+  const first = get('SELECT * FROM quotes WHERE id = ?', id), stored = first && storedQuotePdf(first);
+  if (!stored) return finishQuotePdf(id, null, baseUrl);
+  try {
+    const synced = await (ghlPushes.get(id) || Promise.resolve(null));
+    const q = get('SELECT * FROM quotes WHERE id = ?', id), contactId = synced?.contactId || q.ghl_contact_id;
+    if (contactId) await sendQuotePdfToGHL(q, stored, contactId, synced?.oppId || q.ghl_opportunity_id, baseUrl, null);
+  } catch (e) { log(null, 'GHL quote PDF', 'quote.created', 0, false, 1, e.message); }
+}
+
+/** Upload to the GHL media library (needs the medias.write scope), else fall back to a private link on this app. */
+async function sendQuotePdfToGHL(q, bytes, contactId, oppId, baseUrl, withDrawings) {
+  const s = getSettings(), name = quotePdfName(q);
+  let url = null;
+  try {
+    const fd = new FormData();
+    fd.append('file', new Blob([bytes], { type: 'application/pdf' }), name); fd.append('name', name); fd.append('hosted', 'false');
+    const r = await fetch(GHL_BASE() + '/medias/upload-file', { method: 'POST', headers: { Authorization: `Bearer ${s.ghl_token}`, Version: '2021-07-28', Accept: 'application/json' }, body: fd });
+    const text = await r.text(); let j = {}; try { j = JSON.parse(text); } catch { /* */ }
+    log(null, 'GHL POST /medias/upload-file', 'ghl', r.status, r.ok, 1, r.ok ? text : (r.status === 401 || r.status === 403 ? 'Give the Private Integration token the medias.write scope to store quote PDFs in GHL. ' : '') + text);
+    if (r.ok) url = j.url || j.fileUrl || j.file?.url || null;
+  } catch (e) { log(null, 'GHL POST /medias/upload-file', 'ghl', 0, false, 1, e.message); }
+  const pub = String(s.public_url || baseUrl || '').replace(/\/$/, '');
+  if (!url && pub) url = `${pub}/q/pdf/${q.pdf_token}`;
+  if (!url) return;
+  run('UPDATE quotes SET ghl_pdf_url = ? WHERE id = ?', url, q.id);
+  const t = Number(q.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  await ghl('POST', `/contacts/${contactId}/notes`, s.ghl_token, { body: `Quote PDF ${q.number} — $${t}${withDrawings === true ? ' (pricing + drawings)' : withDrawings === false ? ' (pricing)' : ''}\n${url}` });
+  const key = String(s.ghl_pdf_field || '').trim().replace(/^\{\{\s*|\s*\}\}$/g, '').replace(/^(contact|opportunity)\./, '');
+  if (key) {
+    try {
+      if (oppId) await ghl('PUT', `/opportunities/${oppId}`, s.ghl_token, { customFields: [{ key, field_value: url }] });
+      else await ghl('PUT', `/contacts/${contactId}`, s.ghl_token, { customFields: [{ key, field_value: url }] });
+    } catch { /* logged by ghl(); the note already has the link */ }
+  }
 }
 
 export function recentLog(limit = 100) {

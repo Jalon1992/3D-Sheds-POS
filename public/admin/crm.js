@@ -521,15 +521,18 @@ function orderModal(o, pipe, all, done) {
 // Messaging & alerts (admin): guided setup for texting + email, connection checks, recent message log
 // ---------------------------------------------------------------------------
 const EMAIL_PRESETS = {
+  resend: { api: true, label: 'Resend — sends over the web (works on Railway)', key: 're_…', help: 'Recommended when this app runs on Railway, which blocks normal email-server (SMTP) connections. 1) Sign up free at <a href="https://resend.com" target="_blank" rel="noopener">resend.com</a>. 2) Domains → Add domain → enter your company domain and add the DNS records (on Cloudflare, Resend can add them for you). 3) API Keys → Create API key (Sending access) and paste it below. 4) Set the From email to an address on that domain, e.g. sales@yourcompany.com.' },
+  postmark: { api: true, label: 'Postmark — sends over the web (works on Railway)', key: 'Server API token', help: 'In <a href="https://postmarkapp.com" target="_blank" rel="noopener">Postmark</a>: Sender Signatures → verify your domain or From address, then Servers → your server → API Tokens → copy the Server API token.' },
+  sendgrid_api: { api: true, label: 'SendGrid — sends over the web (works on Railway)', key: 'SG.…', help: 'In SendGrid: Settings → Sender Authentication → verify your domain or a single sender, then Settings → API Keys → Create (Restricted, with Mail Send) and paste it below.' },
   gmail: { label: 'Gmail or Google Workspace', host: 'smtp.gmail.com', port: 587, user: 'Your Gmail / Workspace address', pass: 'Google App Password (16 letters)', help: 'Google requires an <b>App Password</b>: Google Account → Security → 2-Step Verification (turn on) → App passwords → create one named "Shed Builder" and paste the 16 letters here.' },
   m365: { label: 'Microsoft 365 / Outlook.com', host: 'smtp.office365.com', port: 587, user: 'Your Microsoft 365 email', pass: 'Password (or app password)', help: 'Your Microsoft 365 admin may need to turn on <b>Authenticated SMTP</b> for this mailbox (Microsoft 365 admin center → Users → Mail → Manage email apps). If you use 2-step sign-in, create an app password.' },
   yahoo: { label: 'Yahoo Mail', host: 'smtp.mail.yahoo.com', port: 587, user: 'Your Yahoo address', pass: 'Yahoo app password', help: 'Yahoo needs an <b>app password</b>: Account security → Generate app password.' },
-  sendgrid: { label: 'SendGrid', host: 'smtp.sendgrid.net', port: 587, user: 'apikey', fixedUser: 'apikey', pass: 'Your SendGrid API key (SG.…)', help: 'Username is literally <code>apikey</code>; the password is an API key with Mail Send permission. The From address must be a verified sender in SendGrid.' },
+  sendgrid: { label: 'SendGrid (SMTP)', host: 'smtp.sendgrid.net', port: 587, user: 'apikey', fixedUser: 'apikey', pass: 'Your SendGrid API key (SG.…)', help: 'Username is literally <code>apikey</code>; the password is an API key with Mail Send permission. The From address must be a verified sender in SendGrid.' },
   mailgun: { label: 'Mailgun', host: 'smtp.mailgun.org', port: 587, user: 'SMTP login (postmaster@mg.yourdomain.com)', pass: 'SMTP password', help: 'Find the SMTP login under Sending → Domain settings → SMTP credentials.' },
   ses: { label: 'Amazon SES', host: 'email-smtp.us-east-1.amazonaws.com', port: 587, user: 'SMTP username (from SES)', pass: 'SMTP password', help: 'Create SMTP credentials in the SES console and change the host to your region. Your From address or domain must be verified in SES.' },
   other: { label: 'Other email server (SMTP)', host: '', port: 587, user: 'Username', pass: 'Password', help: 'Ask your email or web host for the SMTP server name, port (usually 587) and login.' },
 };
-const presetFor = s => (s.email_provider === 'ghl' ? 'ghl' : !s.email_provider ? '' : Object.entries(EMAIL_PRESETS).find(([, p]) => p.host && p.host === s.smtp_host)?.[0] || (s.smtp_host ? 'other' : 'gmail'));
+const presetFor = s => (s.email_provider === 'ghl' ? 'ghl' : !s.email_provider ? '' : EMAIL_PRESETS[s.email_provider]?.api ? s.email_provider : Object.entries(EMAIL_PRESETS).find(([, p]) => p.host && p.host === s.smtp_host)?.[0] || (s.smtp_host ? 'other' : 'gmail'));
 const splitFrom = f => { const m = String(f || '').match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/); return m ? { name: m[1].trim(), email: m[2].trim() } : { name: '', email: String(f || '').trim() }; };
 const checkList = r => `<div class="checks">${r.checks.map(c => `<div class="ck ${c.ok === true ? 'ok' : c.ok === false ? 'bad' : 'warn'}"><span>${c.ok === true ? '✓' : c.ok === false ? '✕' : '!'}</span><div><b>${esc(c.label)}</b>${c.detail ? `<small>${esc(c.detail)}</small>` : ''}</div></div>`).join('')}</div>`;
 
@@ -579,10 +582,13 @@ export async function messagingPage() {
     </div>
     <div class="card card-pad"><h2>2 · Email</h2><p class="muted" style="margin:2px 0 12px">Pick who hosts your company email. We fill in the technical settings.</p>
       <div class="form">
-        <label class="fld full"><span>Email provider</span><select id="ePreset"><option value="">Off — no email</option>${Object.entries(EMAIL_PRESETS).map(([k, p]) => `<option value="${k}" ${preset0 === k ? 'selected' : ''}>${p.label}</option>`).join('')}<option value="ghl" ${preset0 === 'ghl' ? 'selected' : ''}>GoHighLevel (LC Email / your connected mailbox)</option></select></label>
+        <label class="fld full"><span>Email provider</span><select id="ePreset"><option value="">Off — no email</option>${Object.entries(EMAIL_PRESETS).map(([k, p], i, a) => (p.api && !i ? '<optgroup label="Works on any host">' : '') + (!p.api && a[i - 1]?.[1].api ? '</optgroup><optgroup label="Your email server (SMTP — blocked on Railway Free/Hobby)">' : '') + `<option value="${k}" ${preset0 === k ? 'selected' : ''}>${p.label}</option>`).join('')}</optgroup><option value="ghl" ${preset0 === 'ghl' ? 'selected' : ''}>GoHighLevel (LC Email / your connected mailbox)</option></select></label>
         <div class="callout full" id="eHelp" hidden></div>
         <span data-show="ePreset=smtp" style="display:contents">
           ${F('smtp_user', 'Email login', { ph: 'sales@yourcompany.com' })}${F('smtp_pass', 'Password', { type: 'password', ph: s.smtp_pass_set ? 'Saved — leave as is to keep' : '', value: s.smtp_pass_set ? s.smtp_pass : '' })}
+        </span>
+        <span data-show="ePreset=api" style="display:contents">
+          ${F('email_api_key', 'API key', { type: 'password', full: true, ph: s.email_api_key_set ? 'Saved — leave as is to keep' : '', value: s.email_api_key_set ? s.email_api_key : '' })}
         </span>
         <span data-show="ePreset=any" style="display:contents">
           <label class="fld"><span>From name</span><input id="fromName" value="${esc(from0.name || s.company_name || '')}" placeholder="Trimline Barns"></label>
@@ -620,17 +626,19 @@ export async function messagingPage() {
   const syncShow = () => {
     $$('[data-show]', $('#main')).forEach(el => {
       const [k, v] = el.dataset.show.split('=');
-      if (k === 'ePreset') { const p = preset(); el.hidden = v === 'smtp' ? !(p && p !== 'ghl') : v === 'any' ? !p : p !== v; return; }
+      if (k === 'ePreset') { const p = preset(); el.hidden = v === 'smtp' ? !(p && p !== 'ghl' && !EMAIL_PRESETS[p]?.api) : v === 'api' ? !EMAIL_PRESETS[p]?.api : v === 'any' ? !p : p !== v; return; }
       el.hidden = (form.querySelector(`[name="${k}"]:checked`)?.value ?? form.elements[k]?.value ?? '') !== v;
     });
     const p = EMAIL_PRESETS[preset()];
     $('#eHelp').hidden = !p && preset() !== 'ghl';
     $('#eHelp').innerHTML = preset() === 'ghl' ? 'Emails go out through your GoHighLevel sub-account using the token in <a href="#/integrations">Integrations → GoHighLevel</a>. The From address must be allowed in GHL.' : p ? p.help : '';
-    if (p) { form.smtp_user.placeholder = p.user; form.smtp_pass.placeholder = s.smtp_pass_set ? 'Saved — leave as is to keep' : p.pass; }
+    if (p && !p.api) { form.smtp_user.placeholder = p.user; form.smtp_pass.placeholder = s.smtp_pass_set ? 'Saved — leave as is to keep' : p.pass; }
+    if (p?.api) { form.email_api_key.placeholder = s.email_api_key_set ? 'Saved — leave as is to keep' : p.key; $('#fromEmail').placeholder = 'sales@yourcompany.com (on your verified domain)'; }
+    else $('#fromEmail').placeholder = 'Same as the email login';
   };
   $('#ePreset').onchange = () => {
     const p = EMAIL_PRESETS[preset()];
-    if (p && p.host) { form.smtp_host.value = p.host; form.smtp_port.value = p.port; form.smtp_secure.checked = false; }
+    if (p && !p.api && p.host) { form.smtp_host.value = p.host; form.smtp_port.value = p.port; form.smtp_secure.checked = false; }
     if (p?.fixedUser) form.smtp_user.value = p.fixedUser;
     syncShow();
   };
@@ -640,8 +648,9 @@ export async function messagingPage() {
     const d = {};
     for (const el of form.elements) { if (!el.name || el.type === 'radio' && !el.checked) continue; d[el.name] = el.type === 'checkbox' ? el.checked : el.value; }
     d.sms_provider = form.querySelector('[name=sms_provider]:checked')?.value || '';
-    const p = preset(); d.email_provider = p === 'ghl' ? 'ghl' : p ? 'smtp' : '';
-    const name = $('#fromName').value.trim().replace(/"/g, ''), email = $('#fromEmail').value.trim() || (/@/.test(d.smtp_user || '') ? d.smtp_user.trim() : '');
+    const p = preset(), api = !!EMAIL_PRESETS[p]?.api; d.email_provider = p === 'ghl' ? 'ghl' : api ? p : p ? 'smtp' : '';
+    const name = $('#fromName').value.trim().replace(/"/g, ''), email = $('#fromEmail').value.trim() || (!api && /@/.test(d.smtp_user || '') ? d.smtp_user.trim() : '');
+    if (strict && api && !email) throw new Error('Enter the From email — an address on the domain you verified with ' + EMAIL_PRESETS[p].label.split(' ')[0] + '.');
     d.email_from = email ? (name ? `"${name}" <${email}>` : email) : '';
     if (strict && d.email_provider === 'smtp' && !d.smtp_host) throw new Error('Pick your email provider, or open Advanced server settings and enter the SMTP server.');
     return d;

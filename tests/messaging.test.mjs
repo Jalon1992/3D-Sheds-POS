@@ -49,6 +49,16 @@ function startMock() {
           if (u.pathname === '/ghl/conversations/messages') return send(200, { conversationId: 'cv1', messageId: 'ghlm_' + calls.length });
           if (u.pathname === '/ghl/locations/loc1') return send(200, { location: { id: 'loc1', name: 'Trimline Barns' } });
         }
+        if (u.pathname.startsWith('/mail')) { // stand-in Resend / Postmark / SendGrid
+          const k = req.headers.authorization || req.headers['x-postmark-server-token'] || '';
+          if (!/(Bearer )?(re_good|pm-good|SG\.good)$/.test(k)) return send(401, { name: 'validation_error', message: 'API key is invalid', ErrorCode: 10, Message: 'Bad token' });
+          if (u.pathname === '/mail/domains') return send(200, { data: [{ name: 'trimline.test', status: 'verified' }] });
+          if (u.pathname === '/mail/server') return send(200, { Name: 'Trimline' });
+          if (u.pathname === '/mail/v3/scopes') return send(200, { scopes: ['mail.send'] });
+          if (u.pathname === '/mail/emails') return send(200, { id: 'rs_1' });
+          if (u.pathname === '/mail/email') return send(200, { ErrorCode: 0, MessageID: 'pm_1' });
+          if (u.pathname === '/mail/v3/mail/send') { rsp.writeHead(202, { 'X-Message-Id': 'sg_1' }); return rsp.end(); }
+        }
         send(404, { message: 'not found' });
       });
     }).listen(0, '127.0.0.1', () => { mockPort = mock.address().port; res(); });
@@ -85,7 +95,7 @@ before(async () => {
   await startMock(); await startSmtp();
   dir = mkdtempSync(join(tmpdir(), 'shedmsg-'));
   srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: ROOT, stdio: 'ignore',
-    env: { ...process.env, PORT, DB_PATH: join(dir, 'db.sqlite'), UPLOAD_DIR: join(dir, 'up'), ADMIN_EMAIL: 'owner@test.com', ADMIN_PASSWORD: 'owner-pass-1', MESSAGING_TEST_MODE: '', TWILIO_API_BASE: `http://127.0.0.1:${mockPort}`, GHL_API_BASE: `http://127.0.0.1:${mockPort}/ghl` } });
+    env: { ...process.env, PORT, DB_PATH: join(dir, 'db.sqlite'), UPLOAD_DIR: join(dir, 'up'), ADMIN_EMAIL: 'owner@test.com', ADMIN_PASSWORD: 'owner-pass-1', MESSAGING_TEST_MODE: '', TWILIO_API_BASE: `http://127.0.0.1:${mockPort}`, GHL_API_BASE: `http://127.0.0.1:${mockPort}/ghl`, EMAIL_API_BASE: `http://127.0.0.1:${mockPort}/mail` } });
   for (let i = 0; i < 60; i++) { try { if ((await fetch(B + '/healthz')).ok) break; } catch { /* */ } await new Promise(r => setTimeout(r, 200)); }
   await admin.req('POST', '/api/auth/login', { email: 'owner@test.com', password: 'owner-pass-1' });
   await put({ public_url: PUBLIC, company_name: 'Trimline Barns' });
@@ -190,6 +200,34 @@ test('Email (SMTP): wrong password explained, then real emails with the right Fr
   assert.match(m2.html, /<a href="https:\/\/shed\.example\.com\/\?q=abc"/); assert.match(m2.text, /See you at/);
   // a From the server rejects is explained
   await put({ email_from: 'not-an-email' }).then(x => assert.equal(x.status, 400));
+});
+
+test('Email over the web (Resend, Postmark, SendGrid): works where SMTP ports are blocked; key checked; bad key explained', async () => {
+  for (const [prov, key, path] of [['resend', 're_good', '/mail/emails'], ['postmark', 'pm-good', '/mail/email'], ['sendgrid_api', 'SG.good', '/mail/v3/mail/send']]) {
+    await put({ email_provider: prov, email_api_key: 'bad', email_from: '"Trimline Barns" <sales@trimline.test>', email_reply_to: '' });
+    let v = (await admin.req('POST', '/api/admin/messaging/verify', { channel: 'email' })).data;
+    assert.equal(v.ok, false, prov); assert.match(v.checks.at(-1).detail, /rejected the API key/, prov);
+    await put({ email_api_key: key });
+    const shown = (await admin.req('GET', '/api/admin/settings')).data; assert.ok(shown.email_api_key_set && !shown.email_api_key.includes(key.slice(0, 4)) || key.length <= 4, 'key is masked');
+    v = (await admin.req('POST', '/api/admin/messaging/verify', { channel: 'email' })).data;
+    assert.equal(v.ok, true, prov + ' ' + JSON.stringify(v));
+    assert.equal((await admin.req('GET', '/api/admin/messaging/status')).data.email, true);
+    const t = await admin.req('POST', '/api/admin/messaging/test', { channel: 'email', to: 'owner@example.com' });
+    assert.equal(t.status, 200, prov + ' ' + JSON.stringify(t.data));
+    const c = lastCall(path), j = c.json;
+    if (prov === 'resend') { assert.deepEqual(j.to, ['owner@example.com']); assert.equal(j.from, '"Trimline Barns" <sales@trimline.test>'); assert.match(j.html, /test email/); assert.equal(c.headers.authorization, 'Bearer re_good'); }
+    if (prov === 'postmark') { assert.equal(j.To, 'owner@example.com'); assert.equal(j.MessageStream, 'outbound'); assert.equal(c.headers['x-postmark-server-token'], 'pm-good'); }
+    if (prov === 'sendgrid_api') { assert.deepEqual(j.personalizations, [{ to: [{ email: 'owner@example.com' }] }]); assert.deepEqual(j.from, { name: 'Trimline Barns', email: 'sales@trimline.test' }); assert.equal(j.content.at(-1).type, 'text/html'); }
+  }
+  // a rep emails a customer through Resend: Reply-To is the rep
+  await put({ email_provider: 'resend', email_api_key: 're_good' });
+  const tina = (await admin.req('GET', '/api/crm/contacts?q=Tina')).data.data[0];
+  assert.equal((await admin.req('POST', `/api/crm/contacts/${tina.id}/messages`, { channel: 'email', subject: 'Hi {{contact.first_name}}', body: 'Hello' })).status, 200);
+  const r = lastCall('/mail/emails').json; assert.equal(r.subject, 'Hi Tina'); assert.equal(r.reply_to, 'owner@test.com');
+  // a From is required for the web services (there's no login address to fall back on)
+  await put({ email_from: '' });
+  assert.equal((await admin.req('GET', '/api/admin/messaging/status')).data.email, false);
+  await put({ email_provider: 'smtp', email_from: '' });
 });
 
 test('Contract by text + email over the real providers, signed copy emailed as a PDF attachment, owner alerted', async () => {

@@ -11,7 +11,8 @@ import { APP_VERSION } from './src/version.js';
 import { backupNow, listBackups, startBackups, offsiteOn, offsite, NAME_RE } from './src/backup.js';
 import { seed } from './src/seed.js';
 import { requireAuth, requireSession, issueSession, clearSession, verifyPassword, hashPassword, createApiKey, readSession, readApiKey, ROLES, endSessions, sessionKeyReady } from './src/auth.js';
-import { emit, deliver, formatQuote, recentLog, pushToGHL, EVENTS, blockedTarget, checkOutboundUrl } from './src/integrations.js';
+import { emit, deliver, formatQuote, recentLog, pushToGHL, EVENTS, blockedTarget, checkOutboundUrl, expectQuotePdf, waitingForDrawings, drawingsArrived, quotePdfBytes, storedQuotePdf, resendQuotePdf } from './src/integrations.js';
+import { checkDrawings } from './src/quote-pdf.js';
 import { openapi } from './src/openapi.js';
 import { priceConfig, sanitizeConfig, stripPrices, hideQuotePrices } from './public/js/shared/pricing.js';
 import { floorPlanSVG } from './public/js/shared/floorplan.js';
@@ -208,11 +209,32 @@ app.post('/api/v1/quotes', (req, res, next) => (readSession(req) ? next() : quot
   run('UPDATE quotes SET number = ? WHERE id = ?', 'Q-' + (10000 + id), id);
   const q = get('SELECT * FROM quotes WHERE id = ?', id);
   emit('quote.created', q, baseUrl(req));
+  // GoHighLevel gets the quote PDF: the configurator sends its drawing set (3D view, elevations, floor plan) next
+  const wantDrawings = expectQuotePdf(q, baseUrl(req), req.body?.with_drawings === true && !req.body?.pos);
   const out = formatQuote(q, baseUrl(req));
+  if (wantDrawings) out.drawings_upload = `/api/v1/quote-drawings/${token}`;
   onQuoteCreated(q, baseUrl(req), out, { contact_id: posContact?.id || null, pos: !!(staffUser && req.body?.pos), user: staffUser }).catch(e => console.error('CRM:', e)); // contact + deal are created synchronously; auto-replies finish in the background
   delete out.links.admin; delete out.integrations;
   res.status(201).json(viewer || pricesPublic() ? out : hideQuotePrices(out));
 }));
+
+// The customer's browser sends the drawing set for the company's quote PDF. Only for a quote that is
+// waiting for it (a couple of minutes after it was sent), once, and it must be a real PDF.
+const drawingsUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 0 } });
+app.post('/api/v1/quote-drawings/:token', rateLimit(10, 60000), drawingsUpload.single('drawings'), wrap(async (req, res) => {
+  const q = /^[a-f0-9]{32}$/.test(req.params.token) ? get('SELECT id FROM quotes WHERE token = ?', req.params.token) : null;
+  if (!q || !waitingForDrawings(q.id)) return bad(res, 'Not expecting drawings for this quote', 404);
+  try { await checkDrawings(req.file?.buffer); } catch { return bad(res, 'Drawings must be a PDF', 400); }
+  drawingsArrived(q.id, req.file.buffer);
+  res.status(202).json({ ok: true });
+}));
+// Private link to the company's quote PDF (used in GoHighLevel when the PDF can't be stored there)
+app.get('/q/pdf/:pdfToken', (req, res) => {
+  const q = /^[a-f0-9]{32}$/.test(req.params.pdfToken) ? get('SELECT * FROM quotes WHERE pdf_token = ?', req.params.pdfToken) : null;
+  const bytes = q && storedQuotePdf(q);
+  if (!bytes) return res.status(404).send('Not found');
+  res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${q.number}-quote.pdf"`, 'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex' }).send(bytes);
+});
 
 function cleanUtm(u) {
   const out = {};
@@ -266,7 +288,7 @@ const ownQuote = (req, q) => !req.user?.dealer_id || String(q.dealer_id) === Str
 v1.get('/quotes/:id', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
   if (!q || !ownQuote(req, q)) return bad(res, 'Not found', 404);
-  res.json({ ...formatQuote(q, baseUrl(req)), internal_notes: q.internal_notes, ghl_status: q.ghl_status, pricing_lines: q.pricing.lines, contact_id: q.contact_id || null });
+  res.json({ ...formatQuote(q, baseUrl(req)), internal_notes: q.internal_notes, ghl_status: q.ghl_status, pricing_lines: q.pricing.lines, contact_id: q.contact_id || null, ghl_pdf_url: q.ghl_pdf_url || null });
 });
 v1.patch('/quotes/:id', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
@@ -281,6 +303,12 @@ v1.patch('/quotes/:id', (req, res) => {
   res.json(formatQuote(nq, baseUrl(req)));
 });
 v1.delete('/quotes/:id', (req, res) => { run('DELETE FROM quotes WHERE id = ?', Number(req.params.id)); res.sendStatus(204); });
+v1.get('/quotes/:id/quote.pdf', wrap(async (req, res) => {
+  const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
+  if (!q || !ownQuote(req, q)) return bad(res, 'Not found', 404);
+  const bytes = storedQuotePdf(q) || Buffer.from(await quotePdfBytes(q, baseUrl(req)));
+  res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${q.number}-quote.pdf"`, 'Cache-Control': 'private, no-store' }).send(bytes);
+}));
 v1.get('/quotes/:id/floorplan.svg', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
   if (!q || !ownQuote(req, q)) return res.status(404).send('Not found');
@@ -290,6 +318,7 @@ v1.post('/quotes/:id/resend', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
   if (!q) return bad(res, 'Not found', 404);
   emit('quote.created', q, baseUrl(req));
+  resendQuotePdf(q.id, baseUrl(req));
   res.status(202).json({ queued: true });
 });
 
@@ -481,7 +510,7 @@ admin.delete('/users/:id', (req, res) => {
   if (devopsRow(req.params.id) && !req.user.devops) return bad(res, 'Not found', 404);
   run('DELETE FROM users WHERE id = ?', Number(req.params.id)); res.sendStatus(204);
 });
-const SECRET_SETTINGS = ['ghl_token', 'twilio_token', 'smtp_pass'];
+const SECRET_SETTINGS = ['ghl_token', 'twilio_token', 'smtp_pass', 'email_api_key'];
 admin.get('/settings', (req, res) => {
   const s = getSettings(); delete s._session_secret;
   for (const k of SECRET_SETTINGS) { if (s[k]) s[k + '_set'] = true; s[k] = s[k] ? '••••••••' + String(s[k]).slice(-4) : ''; }
@@ -496,7 +525,7 @@ admin.put('/settings', wrap(async (req, res) => {
   for (const k of ['tax_rate', 'delivery_fee']) if (k in b) b[k] = Number(b[k]) || 0;
   for (const k of Object.keys(b)) if (k.startsWith('migr_')) delete b[k]; // one-time upgrade markers
   // pasted credentials often carry spaces; phone numbers get stored as +1XXXXXXXXXX
-  for (const k of ['twilio_sid', 'twilio_token', 'twilio_messaging_service_sid', 'smtp_host', 'smtp_user', 'email_from', 'email_reply_to', 'public_url']) if (typeof b[k] === 'string') b[k] = b[k].trim();
+  for (const k of ['twilio_sid', 'twilio_token', 'twilio_messaging_service_sid', 'smtp_host', 'smtp_user', 'email_api_key', 'email_from', 'email_reply_to', 'public_url']) if (typeof b[k] === 'string') b[k] = b[k].trim();
   if (typeof b.smtp_pass === 'string' && !/\S\s\S/.test(b.smtp_pass.trim())) b.smtp_pass = b.smtp_pass.trim();
   if (typeof b.smtp_pass === 'string' && /^([a-z]{4} ){3}[a-z]{4}$/.test(b.smtp_pass.trim())) b.smtp_pass = b.smtp_pass.replace(/ /g, ''); // Google app passwords are shown with spaces
   if (b.twilio_from) { const e = toE164(b.twilio_from); if (!e) return bad(res, 'The Twilio phone number looks wrong. Enter it like (615) 555-0123 or +16155550123.'); b.twilio_from = e; }
