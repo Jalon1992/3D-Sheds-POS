@@ -830,23 +830,69 @@ function optionEditor(row) {
 const GHL_FIELDS = [
   { type: 'section', label: 'Option A — Native API (creates contact, opportunity and note)' },
   { key: 'ghl_enabled', label: 'Send every new quote to GoHighLevel', type: 'checkbox', full: true },
-  { key: 'ghl_token', label: 'Private Integration token', full: true, help: 'GHL → Settings → Private Integrations → Create. Scopes: contacts.write, opportunities.write, and medias.write (to store quote PDFs in GHL).' },
+  { key: 'ghl_token', label: 'Private Integration token', full: true, help: 'GHL → Settings → Private Integrations → Create. Scopes: contacts.write, opportunities.write, medias.write (quote PDFs), and to fill the lists below: opportunities.readonly, users.readonly, locations/customFields.readonly.' },
   { key: 'ghl_location_id', label: 'Location (sub-account) ID', help: 'GHL → Settings → Business Profile.' },
   { key: 'ghl_tags', label: 'Tags', help: 'Comma separated.' },
-  { key: 'ghl_pipeline_id', label: 'Pipeline ID (optional)', help: 'Leave blank to skip creating an opportunity.' },
-  { key: 'ghl_stage_id', label: 'Pipeline stage ID (optional)' },
-  { key: 'ghl_source', label: 'Contact source' },
+  { key: 'ghl_source', label: 'Contact source', ph: '3D Shed Builder' },
   { key: 'ghl_add_note', label: 'Add the full quote as a contact note', type: 'checkbox', default: true },
   { key: 'ghl_send_pdf', label: 'Send the quote PDF with pricing', type: 'checkbox', default: true, full: true,
-    help: 'A pricing page plus the drawings (3D view, elevations, floor plan) is uploaded to GHL (Media) and linked in a note on the contact, so it shows on the opportunity too. Without the <b>medias.write</b> scope the note links to a private copy on this app instead (set Settings → Public URL).' },
-  { key: 'ghl_pdf_field', label: 'Put the PDF link in this custom field (optional)', ph: 'quote_pdf', full: true,
-    help: 'The key of a single-line text or URL custom field. It goes on the <b>opportunity</b> when one is created, otherwise on the contact. Use it to show the link on the opportunity card, or in a workflow (for example to email the PDF).' },
-  { key: 'ghl_custom_fields', label: 'Custom field mapping (optional)', type: 'json', full: true, empty: {},
-    help: 'Map GHL custom field keys to quote values, e.g. <code>{"shed_style": "shed.style", "shed_size": "shed.size", "quote_total": "pricing.total", "shed_3d_link": "links.view_3d"}</code>' },
+    help: 'A pricing page plus the drawings (3D view, elevations, floor plan) is uploaded to GHL (Media) and linked in a note on the contact. Map “Quote PDF link” to a field below to show it on the opportunity. Without the <b>medias.write</b> scope the link points to a private copy on this app (set Settings → Public URL).' },
+];
+const GHL_HOOK_FIELDS = [
   { type: 'section', label: 'Option B — Workflow “Inbound Webhook” trigger (no token needed)' },
   { key: 'ghl_inbound_webhook_url', label: 'Inbound webhook URL', full: true, ph: 'https://services.leadconnectorhq.com/hooks/…', help: 'In GHL: Automation → Workflows → Add trigger “Inbound Webhook” → copy the URL here. Flat fields like first_name, email, phone, shed_style, quote_total, shed_3d_link are included for easy mapping.' },
   { key: 'ghl_send_updates', label: 'Also send status changes to the inbound webhook', type: 'checkbox', full: true },
 ];
+const unbrace = k => String(k || '').trim().replace(/^\{\{\s*|\s*\}\}$/g, '');
+/** The opportunity + field-mapping cards: filled from GHL (pipelines, users, custom fields) so nobody pastes IDs. */
+function ghlMapUI(root, s) {
+  let look = null;
+  const map = {}; // "opportunity.key" / "contact.key" → value path
+  for (const [k, v] of Object.entries(s.ghl_custom_fields && typeof s.ghl_custom_fields === 'object' ? s.ghl_custom_fields : {})) { const u = unbrace(k); map[/^(contact|opportunity)\./.test(u) ? u : 'contact.' + u] = v; }
+  if (s.ghl_pdf_field) { const u = unbrace(s.ghl_pdf_field); map[/^(contact|opportunity)\./.test(u) ? u : 'opportunity.' + u] = 'links.quote_pdf'; }
+  const dealers = Array.isArray(s.dealers) ? s.dealers.filter(d => d.id) : [];
+  const opt = (list, cur, none) => `<option value="">${esc(none)}</option>` + list.map(x => `<option value="${esc(x.id)}" ${String(x.id) === String(cur || '') ? 'selected' : ''}>${esc(x.name)}</option>`).join('') + (cur && !list.some(x => String(x.id) === String(cur)) ? `<option value="${esc(cur)}" selected>Saved ID ${esc(cur)}</option>` : '');
+  const draw = () => {
+    const pipes = look?.pipelines || [], users = look?.users || [], fields = look?.fields || [], vals = look?.values || [];
+    const pipe = pipes.find(p => p.id === ($('#gPipe', root)?.value ?? s.ghl_pipeline_id)) || null;
+    const cur = { pipe: $('#gPipe', root)?.value ?? s.ghl_pipeline_id, stage: $('#gStage', root)?.value ?? s.ghl_stage_id, owner: $('#gOwner', root)?.value ?? s.ghl_owner_id };
+    const err = look ? Object.entries(look.errors || {}).map(([k, e]) => `<div class="callout warn" style="margin-top:8px">${esc({ pipelines: 'Pipelines', users: 'Users', fields: 'Custom fields', all: 'GoHighLevel' }[k] || k)}: ${esc(e)}</div>`).join('') : '';
+    const valSel = key => `<select data-map="${esc(key)}" style="width:100%"><option value="">— leave empty —</option>${vals.map(([p, l]) => `<option value="${esc(p)}" ${map[key] === p ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    const group = model => {
+      const fs = fields.filter(f => f.model === model);
+      return fs.length ? `<tr><th colspan="2" style="background:var(--bg-2,#f3f5f4)">${model === 'opportunity' ? 'Opportunity fields' : 'Contact fields'}</th></tr>` + fs.map(f => { const key = model + '.' + f.key.replace(/^(contact|opportunity)\./, ''); return `<tr><td style="word-break:break-word"><b>${esc(f.name)}</b><div class="muted mono" style="font-size:11px">{{${esc(key)}}}</div></td><td style="width:48%">${valSel(key)}</td></tr>`; }).join('') : '';
+    };
+    const unknown = Object.keys(map).filter(k => map[k] && !fields.some(f => f.model + '.' + f.key.replace(/^(contact|opportunity)\./, '') === k));
+    $('#gMap', root).innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Opportunity</h2><button type="button" class="btn ghost sm" id="gLoad">${look ? 'Reload from GoHighLevel' : 'Load from GoHighLevel'}</button></div>
+      <p class="muted" style="margin:6px 0 12px">${look ? 'Lists come from your GHL account.' : 'Save the token and Location ID, then load your pipelines, users and fields.'}</p>${err}
+      <div class="form">
+        <label class="fld"><span>Pipeline</span><select id="gPipe">${opt(pipes, cur.pipe, '— don’t create an opportunity —')}</select></label>
+        <label class="fld"><span>Stage</span><select id="gStage">${opt(pipe?.stages || [], cur.stage, '— pick a stage —')}</select></label>
+        <label class="fld"><span>Owner</span><select id="gOwner">${opt(users, cur.owner, '— unassigned —')}</select><small>Who the opportunity is assigned to.</small></label>
+        ${dealers.length ? dealers.map(d => `<label class="fld"><span>Owner for ${esc(d.name)} quotes</span><select data-downer="${esc(d.id)}">${opt(users, (s.ghl_dealer_owners || {})[d.id], '— same as Owner —')}</select></label>`).join('') : ''}
+        <label class="fld full"><span>Opportunity name</span><input id="gName" value="${esc(s.ghl_opp_name || '')}" placeholder="{customer.full_name} – {shed.style} {shed.size} ({number})"><small>Use {customer.full_name}, {shed.style}, {shed.size}, {number}, {dealer.name}, {pricing.total}…</small></label>
+        <label class="fld"><span>Forecast close date</span><input id="gDays" type="number" min="0" max="365" value="${esc(s.ghl_close_days ?? '')}" placeholder="e.g. 14"><small>Days after the quote. Blank = not set.</small></label>
+        <label class="fld"><span>Forecast probability (%)</span><input id="gProb" type="number" min="0" max="100" value="${esc(s.ghl_probability ?? '')}" placeholder="e.g. 20"></label>
+        <div class="fld full"><span>Lead value &amp; status</span><small>Lead value is the quote total; status is Open. Opportunity source is set by GHL itself and can't be filled from outside; the contact gets the Contact source above.</small></div>
+      </div>
+      <h2 style="margin:22px 0 4px">Fill in your GHL fields</h2>
+      <p class="muted" style="margin:0 0 10px">Pick which quote value goes in each custom field. Create the fields in GHL first (Settings → Custom Fields; single line works for everything).</p>
+      ${fields.length ? `<div class="tbl-wrap"><table class="tbl">${group('opportunity')}${group('contact')}</table></div>` : `<div class="empty">${look ? 'No custom fields found (or the token can’t read them).' : 'Load from GoHighLevel to see your fields.'}</div>`}
+      ${unknown.length ? `<div class="muted" style="margin-top:10px">Also saved (not found in GHL): ${unknown.map(k => `<code>{{${esc(k)}}}</code> → ${esc((vals.find(v => v[0] === map[k]) || [0, map[k]])[1])}`).join(', ')}</div>` : ''}`;
+    $('#gLoad', root).onclick = guard(async () => { $('#gLoad', root).disabled = true; $('#gLoad', root).textContent = 'Loading…'; look = await api('GET', '/api/admin/ghl/lookup'); draw(); });
+    $('#gPipe', root).onchange = () => { s.ghl_stage_id = ''; draw(); };
+    root.querySelectorAll('[data-map]').forEach(el => { el.onchange = () => { map[el.dataset.map] = el.value; }; });
+  };
+  draw();
+  if (s.ghl_token_set && s.ghl_location_id) api('GET', '/api/admin/ghl/lookup').then(r => { look = r; draw(); }).catch(() => {});
+  return () => ({
+    ghl_pipeline_id: $('#gPipe', root).value, ghl_stage_id: $('#gStage', root).value, ghl_owner_id: $('#gOwner', root).value,
+    ghl_dealer_owners: Object.fromEntries([...root.querySelectorAll('[data-downer]')].filter(e => e.value).map(e => [e.dataset.downer, e.value])),
+    ghl_opp_name: $('#gName', root).value.trim(), ghl_close_days: $('#gDays', root).value === '' ? '' : Number($('#gDays', root).value), ghl_probability: $('#gProb', root).value === '' ? '' : Number($('#gProb', root).value),
+    ghl_custom_fields: Object.fromEntries(Object.entries(map).filter(([, v]) => v)), ghl_pdf_field: '',
+  });
+}
 async function integrations(tab = 'ghl') {
   const tabs = [['ghl', 'GoHighLevel'], ['webhooks', 'Webhooks'], ['api', 'API keys'], ['embed', 'Embed / links'], ['log', 'Delivery log']];
   $('#main').innerHTML = head('Integrations & API', 'Send quotes to GoHighLevel, Zapier, Make, n8n or any software with webhooks and a REST API.', `<a class="btn ghost" href="/docs" target="_blank">API docs ↗</a>`) +
@@ -859,10 +905,14 @@ async function integrations(tab = 'ghl') {
     settings = await api('GET', '/api/admin/settings');
     body.innerHTML = `<div class="card card-pad"><div class="callout" style="margin-bottom:16px">Use <b>either</b> option (or both). Option A pushes contacts &amp; opportunities directly. Option B triggers a GHL workflow where you can map fields, send texts/emails, assign users, etc.</div>
       <form class="form" id="gf">${GHL_FIELDS.map(f => field(f, settings[f.key])).join('')}</form>
+      <div id="gMap" style="margin-top:22px"></div>
+      <form class="form" id="gf2" style="margin-top:18px">${GHL_HOOK_FIELDS.map(f => field(f, settings[f.key])).join('')}</form>
       <div class="row" style="margin-top:18px"><button class="btn primary" id="gsave">Save</button><button class="btn ghost" id="gtest">Send latest quote to GHL now</button></div></div>`;
     wireInputs(body);
-    $('#gsave').onclick = guard(async () => { await api('PUT', '/api/admin/settings', readFields($('#gf'), GHL_FIELDS)); toast('GoHighLevel settings saved'); settings = await api('GET', '/api/admin/settings'); });
-    $('#gtest').onclick = guard(async () => { await api('PUT', '/api/admin/settings', readFields($('#gf'), GHL_FIELDS)); const r = await api('POST', '/api/admin/ghl/test'); toast('Sent! Contact ' + r.contactId); });
+    const mapVals = ghlMapUI(body, settings);
+    const collect = () => ({ ...readFields($('#gf'), GHL_FIELDS), ...readFields($('#gf2'), GHL_HOOK_FIELDS), ...mapVals() });
+    $('#gsave').onclick = guard(async () => { await api('PUT', '/api/admin/settings', collect()); toast('GoHighLevel settings saved'); settings = await api('GET', '/api/admin/settings'); });
+    $('#gtest').onclick = guard(async () => { await api('PUT', '/api/admin/settings', collect()); const r = await api('POST', '/api/admin/ghl/test'); toast('Sent! Contact ' + r.contactId); });
   }
 
   if (tab === 'webhooks') {
