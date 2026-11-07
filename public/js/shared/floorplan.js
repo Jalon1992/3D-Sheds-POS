@@ -101,7 +101,8 @@ export function floorPlanSVG(catalog, config, meta = {}) {
     }
     if (o.placement === 'wall_interior' || o.placement === 'floor') {
       const p = wallPoint(it.wall, it.offset, size);
-      const w = iw(o, it) * S, d = Math.max(0.3, o.depth || 1) * S;
+      // full-length built-ins (e.g. 12' shelves on a 12' wall) are drawn fitted between the walls
+      const w = (String(o.length_choices || '').trim() ? Math.min(iw(o, it), wallLength(it.wall, size) - 0.68) : iw(o, it)) * S, d = Math.max(0.3, o.depth || 1) * S;
       const ang = Math.atan2(p.nz, p.nx) * 180 / Math.PI - 90;
       const cx = X(p.x) - p.nx * T, cz = Z(p.z) - p.nz * T;
       out.push(`<g transform="translate(${cx} ${cz}) rotate(${ang})">`);

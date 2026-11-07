@@ -114,7 +114,7 @@ export function seed() {
   // Carriage-house doors (built-in models: body takes the door color, window grids take the trim color)
   opt('carriage72', { name: '72" Carriage House Double Doors', category: 'doors', kind: 'door_carriage_double', placement: 'opening', swap_group: 'door', width: 6, height: 71.5 / 12, price: 895, sort: 7, description: 'Double doors with 5-lite transom windows, raised panels and black strap hinges.' });
   opt('carriage36', { name: '36" Carriage House Door', category: 'doors', kind: 'door_carriage_right', placement: 'opening', swap_group: 'door', width: 3, height: 71.5 / 12, price: 450, sort: 8, description: 'Matches one side of the 72" Carriage House Double Doors: 5-lite window, raised panels, black hinges. Hinged on the right.' });
-  opt('shelf2', { name: 'Double Shelves (20" deep)', description: 'Two shelf levels, 20" deep. Pick the length that fits your wall.', category: 'interior', kind: 'shelf_double', placement: 'wall_interior', width: 6, height: 2.5, depth: 20 / 12, elevation: 2.5, price: 24, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10, 12', sort: 3 });
+  opt('shelf2', { name: 'Double Shelves (20" deep)', description: 'Built-in double shelves: 2x4 frame with front legs, OSB tops, 20" deep. Lower shelf about 15" off the floor, top at 36". Pick the length, then drag it along the wall.', category: 'interior', kind: 'shelf_double', placement: 'wall_interior', width: 6, height: 3, depth: 20 / 12, elevation: 0, price: 24, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10, 12', sort: 3 });
   // A window with separate top & bottom grids (single-hung look)
   opt('win23sh', { name: "2' x 3' Window (top & bottom grids)", category: 'windows', kind: 'window', placement: 'opening', swap_group: 'window', gable_mode: '', width: 2, height: 3, elevation: 3.5, grid_top: '2x2', grid_bottom: '2x2', price: 175, sort: 5 });
   // What comes in the Electrical Package, and where each part goes (wall + feet from the wall centre, seen from outside)
@@ -155,7 +155,7 @@ export function seed() {
     standard_options: [{ option_id: O.roll8, wall: 'front', offset: 0 }, { option_id: O.door36, wall: 'right', offset: 2 }, { option_id: O.win23, wall: 'left', offset: 0 }],
   }, [[10, 12], [10, 16], [12, 16], [12, 20], [12, 24], [14, 24]], 42, 2400);
 
-  setSettings({ migr_catalog_v3: true });
+  setSettings({ migr_catalog_v3: true, migr_shelf_floor: true });
   console.log('  Seeded sample catalog (styles, sizes, colors, options).');
 }
 
@@ -166,9 +166,14 @@ export const NEW_OPTIONS = [
   { kind: 'door_panel', name: '36" Standard Door', description: 'Matches one side of the 6\' Double Doors. Hinged on the right.', category: 'doors', placement: 'opening', swap_group: 'door', width: 3, height: 6.33, price: 275, sort: 0 },
   { kind: 'door_carriage_double', name: '72" Carriage House Double Doors', description: 'Double doors with 5-lite transom windows, raised panels and black strap hinges.', category: 'doors', placement: 'opening', swap_group: 'door', width: 6, height: 71.5 / 12, price: 895, sort: 7 },
   { kind: 'door_carriage_right', name: '36" Carriage House Door', description: 'Matches one side of the 72" Carriage House Double Doors: 5-lite window, raised panels, black hinges. Hinged on the right.', category: 'doors', placement: 'opening', swap_group: 'door', width: 3, height: 71.5 / 12, price: 450, sort: 8 },
-  { kind: 'shelf_double', name: 'Double Shelves (20" deep)', description: 'Two shelf levels, 20" deep. Pick the length that fits your wall.', category: 'interior', placement: 'wall_interior', width: 6, height: 2.5, depth: 20 / 12, elevation: 2.5, price: 24, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10, 12', sort: 3 },
+  { kind: 'shelf_double', name: 'Double Shelves (20" deep)', description: 'Built-in double shelves: 2x4 frame with front legs, OSB tops, 20" deep. Lower shelf about 15" off the floor, top at 36". Pick the length, then drag it along the wall.', category: 'interior', placement: 'wall_interior', width: 6, height: 3, depth: 20 / 12, elevation: 0, price: 24, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10, 12', sort: 3 },
 ];
 export function upgradeCatalog() {
+  if (!getSettings().migr_shelf_floor) {
+    // double shelves became floor-standing (legs, top at 36") - move the stock option down to the floor
+    run(`UPDATE options SET elevation = 0, height = 3, description = 'Built-in double shelves: 2x4 frame with front legs, OSB tops, 20" deep. Lower shelf about 15" off the floor, top at 36". Pick the length, then drag it along the wall.' WHERE kind = 'shelf_double' AND elevation = 2.5 AND height = 2.5`);
+    setSettings({ migr_shelf_floor: true });
+  }
   if (getSettings().migr_catalog_v3) return;
   // stock doors -> new models (X-braced barn doors become the plain panel doors)
   run(`UPDATE options SET kind = 'door_panel_double' WHERE kind = 'door_double' AND name = '6'' Double Doors'`);

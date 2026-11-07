@@ -16,7 +16,7 @@ const JSONISH = { styles: ['standard_options', 'default_colors', 'roof_choices',
 
 // ---- storage -----------------------------------------------------------------
 let db = null;
-const CATALOG_VERSION = 3;
+const CATALOG_VERSION = 4;
 function load() {
   try { const raw = localStorage.getItem(KEY); if (raw) return upgrade(JSON.parse(raw)); } catch { /* storage unavailable */ }
   return fresh();
@@ -33,6 +33,8 @@ function upgrade(d) {
     for (const k of ['length_choices', 'price_unit', 'grid_top', 'grid_bottom', 'gable_mode']) if (cur[k] === undefined && so[k] !== undefined && cur.kind === so.kind) cur[k] = so[k];
   }
   for (const [k, v] of Object.entries(seed.settings)) if (d.settings[k] === undefined) d.settings[k] = structuredClone(v);
+  // v4: double shelves stand on the floor (top at 36")
+  for (const x of d.options) if (x.kind === 'shelf_double' && x.elevation === 2.5 && x.height === 2.5) { const so = seed.catalog.options.find(z => z.kind === 'shelf_double'); Object.assign(x, { elevation: so.elevation, height: so.height, description: so.description }); }
   d.catalogVersion = CATALOG_VERSION;
   db = d; save(); return d;
 }
