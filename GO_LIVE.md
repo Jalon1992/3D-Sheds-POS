@@ -61,8 +61,10 @@ Keep all the services in **your** Railway account, so you control updates, and b
 ## 6. Texts and email (so links and alerts really send)
 Go to **Settings → CRM & messaging**.
 - **Email:**
-  - Pick your provider (Gmail / Google Workspace, Microsoft 365, or other SMTP) and enter the login.
-  - Gmail and Microsoft need an *app password*; the help box explains how to get one.
+  - **On Railway Free/Hobby, use Resend, Postmark or SendGrid.** Railway blocks outgoing email-server (SMTP) connections on those plans, so Gmail, Microsoft 365 and other SMTP logins time out there. These three services send over normal web traffic instead.
+    - Resend is the simplest: sign up free, add your company domain under **Domains** (it can add the DNS records to Cloudflare for you), create an API key, and paste it in. Then set the **From email** to an address on that domain, such as sales@yourcompany.com.
+  - On a host that allows SMTP (Railway Pro, your own server), you can instead pick Gmail / Google Workspace, Microsoft 365 or another SMTP server and enter the login. Gmail and Microsoft need an *app password*; the help box explains how to get one.
+  - Click **Check connection**, then **Send a test**.
   - Click **Check connection**, then **Send a test**.
 - **Texts:** choose one.
   - **GoHighLevel:** if your GHL number already texts customers.

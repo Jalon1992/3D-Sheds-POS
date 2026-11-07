@@ -393,12 +393,27 @@ function showWall(wall) {
 // ---------------------------------------------------------------------------
 // Selected item card
 // ---------------------------------------------------------------------------
-function selectItem(uid) {
+// Selecting an item: a small toolbar next to it (move, edit, remove), so it never covers what you're moving.
+// "Edit" opens the full editor docked away from the item (side panel on tablets/computers, bottom sheet on phones)
+// and the 3D picture slides into the open space. Dragging shows neither.
+let editing = false, chipRaf = 0;
+const narrow = () => $('#viewport').clientWidth < 700;
+function selectItem(uid, opts = {}) {
+  const same = uid && uid === state.selected;
+  if (!uid) editing = false;
+  else if (opts.edit !== undefined) editing = !!opts.edit;
+  else if (!same) editing = false; // a new item starts with the small toolbar
   state.selected = uid; scene.select(uid);
-  const card = $('#itemcard');
+  const card = $('#itemcard'), chip = $('#itemchip');
   const it = uid && state.config.items.find(i => i.uid === uid);
-  document.body.classList.toggle('card-open', !!it);
-  if (!it) { card.hidden = true; return; }
+  if (!it || opts.dragging) {
+    card.hidden = true; chip.hidden = true; stopChip();
+    if (!it) { document.body.classList.remove('card-open'); dockCard(null); }
+    return;
+  }
+  if (!editing) { card.hidden = true; document.body.classList.remove('card-open'); dockCard(null); renderChip(it); return; }
+  chip.hidden = true; stopChip();
+  document.body.classList.add('card-open');
   const o = optById[it.option_id];
   const pk = pkgOf(it);
   const alts = pk ? [o] : state.catalog.options.filter(x => (listable(x) || x.id === o.id) && (o.swap_group ? x.swap_group === o.swap_group : (x.category === o.category && x.placement === o.placement)));
@@ -445,7 +460,74 @@ function selectItem(uid) {
     <div class="ic-foot">${pk ? '<span class="ic-meta">Drag it or use the arrows to move it</span>' : `<button class="link-danger" data-act="remove">Remove${removedCredit && showPrices() ? ` (${fmt(removedCredit)})` : ''}</button>`}
       <button class="btn primary sm" data-act="close">Done</button></div>`;
   card.hidden = false;
+  dockCard(it);
 }
+
+// ---- the small toolbar next to the selected item
+function renderChip(it) {
+  const chip = $('#itemchip'), o = optById[it.option_id], pk = pkgOf(it);
+  const movable = o.placement !== 'loft';
+  chip.innerHTML = `<span class="ch-name" title="${esc(o.name)}">${esc(o.name)}</span>
+    ${movable ? `<button data-move="-1" aria-label="Move left" title="Move left"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><button data-move="1" aria-label="Move right" title="Move right"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>` : ''}
+    <button class="ch-edit" data-act="edit">Edit</button>
+    ${pk ? '' : `<button class="ch-rm" data-act="remove" aria-label="Remove" title="Remove"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>`}
+    <button class="ch-x" data-act="close" aria-label="Deselect" title="Done">&times;</button>`;
+  chip.hidden = false;
+  startChip();
+}
+function placeChip() {
+  const chip = $('#itemchip'); if (chip.hidden || !state.selected) return;
+  const r = scene.screenRect(state.selected), vp = $('#viewport'), W = vp.clientWidth, H = vp.clientHeight;
+  const cw = chip.offsetWidth, ch = chip.offsetHeight, gap = 12, topMin = 60, botMax = H - 58;
+  if (!r) { chip.style.left = Math.max(8, (W - cw) / 2) + 'px'; chip.style.top = (botMax - ch) + 'px'; return; }
+  let top = r.top - ch - gap; // above the item…
+  if (top < topMin) top = r.bottom + gap; // …or below it…
+  let left = r.cx - cw / 2;
+  if (top + ch > botMax) { // …or beside it when it fills the height
+    top = Math.min(Math.max(topMin, r.cy - ch / 2), botMax - ch);
+    left = r.right + gap + cw < W - 8 ? r.right + gap : r.left - gap - cw;
+  }
+  chip.style.left = Math.round(Math.min(Math.max(8, left), W - cw - 8)) + 'px';
+  chip.style.top = Math.round(Math.min(Math.max(topMin, top), botMax - ch)) + 'px';
+}
+function startChip() { if (chipRaf) return; const tick = () => { placeChip(); chipRaf = requestAnimationFrame(tick); }; tick(); }
+function stopChip() { cancelAnimationFrame(chipRaf); chipRaf = 0; }
+$('#itemchip').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const uid = state.selected;
+  if (b.dataset.act === 'edit') selectItem(uid, { edit: true });
+  else if (b.dataset.act === 'close') selectItem(null);
+  else if (b.dataset.act === 'remove') removeItem(uid);
+  else if (b.dataset.move) moveItem(uid, Number(b.dataset.move));
+});
+
+// ---- full editor: dock it on the side away from the item (or as a bottom sheet on phones) and slide the 3D
+// picture into the space that's left, so the item being edited stays in view
+function dockCard(it) {
+  const card = $('#itemcard');
+  card.classList.remove('dock-left', 'dock-right', 'sheet');
+  if (!it || card.hidden) { scene.setInset(null); return; }
+  // Slide the 3D view (not the camera angle) so the item sits in the middle of the space the editor leaves open.
+  const shiftFor = (pos, free0, free1, min) => 2 * Math.max(min, pos - (free0 + free1) / 2);
+  scene.setInset(null);
+  const r = scene.screenRect(it.uid), vp = $('#viewport'), W = vp.clientWidth, H = vp.clientHeight;
+  if (narrow()) {
+    card.classList.add('sheet');
+    requestAnimationFrame(() => {
+      if (card.hidden) return scene.setInset(null);
+      const top = card.getBoundingClientRect().top - vp.getBoundingClientRect().top; // where the sheet starts
+      scene.setInset({ bottom: r ? shiftFor(r.cy, 56, top - 8, 0) : H - top });
+    });
+    return;
+  }
+  const side = r && r.cx < W / 2 ? 'right' : 'left';
+  card.classList.add('dock-' + side);
+  const cw = card.offsetWidth + 24;
+  if (!r) return scene.setInset({ [side]: cw });
+  scene.setInset(side === 'right' ? { right: shiftFor(r.cx, 0, W - cw, 0) } : { left: shiftFor(W - r.cx, 0, W - cw, 0) });
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.selected) selectItem(null); });
+window.addEventListener('resize', () => { if (editing && state.selected) dockCard(state.config.items.find(i => i.uid === state.selected)); });
 $('#itemcard').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   const uid = state.selected;
@@ -658,7 +740,7 @@ $('#panel').addEventListener('click', e => {
   else if (d.dec) {
     const list = state.config.items.filter(i => i.option_id === Number(d.dec) && !i.package_of);
     const nonStd = list.filter(i => !i.standard_of); removeItem((nonStd.at(-1) || list.at(-1)).uid);
-  } else if (d.sel) { selectItem(d.sel); const it = state.config.items.find(i => i.uid === d.sel); if (it && WALLS.includes(it.wall)) showWall(it.wall); }
+  } else if (d.sel) { selectItem(d.sel, { edit: true }); const it = state.config.items.find(i => i.uid === d.sel); if (it && WALLS.includes(it.wall)) showWall(it.wall); }
   else if (d.zipgo !== undefined) setLocation({ zip: ($('#zipIn')?.value || '').trim() });
   else if (d.dl === 'glb') downloadGLB();
   else if (d.dl === 'quotepdf') downloadQuotePDF(b);
@@ -851,7 +933,7 @@ async function boot() {
   if (st.phone) { $('#phone').textContent = st.phone; $('#phone').href = 'tel:' + st.phone.replace(/[^\d+]/g, ''); $('#phone').hidden = false; }
 
   scene = new ShedScene($('#viewport'), {
-    onSelect: uid => { selectItem(uid); $('#hint').classList.add('gone'); },
+    onSelect: (uid, o) => { selectItem(uid, o || {}); $('#hint').classList.add('gone'); },
     ...(new URLSearchParams(location.search).has('debug') ? {} : {}),
     onDrag: dragItem,
     onDragEnd: uid => { $('#viewport').classList.remove('dragging'); selectItem(uid); renderPanelIfOptions(); },

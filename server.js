@@ -481,7 +481,7 @@ admin.delete('/users/:id', (req, res) => {
   if (devopsRow(req.params.id) && !req.user.devops) return bad(res, 'Not found', 404);
   run('DELETE FROM users WHERE id = ?', Number(req.params.id)); res.sendStatus(204);
 });
-const SECRET_SETTINGS = ['ghl_token', 'twilio_token', 'smtp_pass'];
+const SECRET_SETTINGS = ['ghl_token', 'twilio_token', 'smtp_pass', 'email_api_key'];
 admin.get('/settings', (req, res) => {
   const s = getSettings(); delete s._session_secret;
   for (const k of SECRET_SETTINGS) { if (s[k]) s[k + '_set'] = true; s[k] = s[k] ? '••••••••' + String(s[k]).slice(-4) : ''; }
@@ -496,7 +496,7 @@ admin.put('/settings', wrap(async (req, res) => {
   for (const k of ['tax_rate', 'delivery_fee']) if (k in b) b[k] = Number(b[k]) || 0;
   for (const k of Object.keys(b)) if (k.startsWith('migr_')) delete b[k]; // one-time upgrade markers
   // pasted credentials often carry spaces; phone numbers get stored as +1XXXXXXXXXX
-  for (const k of ['twilio_sid', 'twilio_token', 'twilio_messaging_service_sid', 'smtp_host', 'smtp_user', 'email_from', 'email_reply_to', 'public_url']) if (typeof b[k] === 'string') b[k] = b[k].trim();
+  for (const k of ['twilio_sid', 'twilio_token', 'twilio_messaging_service_sid', 'smtp_host', 'smtp_user', 'email_api_key', 'email_from', 'email_reply_to', 'public_url']) if (typeof b[k] === 'string') b[k] = b[k].trim();
   if (typeof b.smtp_pass === 'string' && !/\S\s\S/.test(b.smtp_pass.trim())) b.smtp_pass = b.smtp_pass.trim();
   if (typeof b.smtp_pass === 'string' && /^([a-z]{4} ){3}[a-z]{4}$/.test(b.smtp_pass.trim())) b.smtp_pass = b.smtp_pass.replace(/ /g, ''); // Google app passwords are shown with spaces
   if (b.twilio_from) { const e = toE164(b.twilio_from); if (!e) return bad(res, 'The Twilio phone number looks wrong. Enter it like (615) 555-0123 or +16155550123.'); b.twilio_from = e; }

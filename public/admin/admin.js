@@ -455,7 +455,10 @@ function styleEditor(style) {
       <div class="muted" style="font-size:12px;margin-top:6px">Untick anything this style shouldn't offer — customers won't see it on this style. Standard options are always offered. While everything is ticked, options you add later are offered here automatically; once something is unticked, tick new options here to offer them.</div>`;
   };
 
-  const optSel = (v, i) => `<select data-std="${i}" data-k="option_id">${catalog.options.filter(o => o.placement !== 'none' || (Array.isArray(o.package_items) && o.package_items.length)).map(o => `<option value="${o.id}" ${o.id === v ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
+  // form fields hand back text: option ids and sizes are stored as numbers, or the row's dropdown can't find the
+  // chosen option and shows the first one in the list instead (what was saved was right; what was shown wasn't)
+  const stdVal = (k, el) => (k === 'gable' ? el.checked : k === 'option_id' ? Number(el.value) : ['offset', 'w', 'h'].includes(k) ? (el.value === '' ? undefined : Number(el.value)) : el.value);
+  const optSel = (v, i) => `<select data-std="${i}" data-k="option_id">${catalog.options.filter(o => o.placement !== 'none' || (Array.isArray(o.package_items) && o.package_items.length)).map(o => `<option value="${o.id}" ${o.id === Number(v) ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
   const colorSel = cat => `<label class="fld"><span>Default ${cat} color</span><select name="dc_${cat}"><option value="">First in list</option>${catalog.colors.filter(c => c.category === cat).map(c => `<option value="${c.id}" ${c.id === s.default_colors?.[cat] ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
   const isBarn = () => (document.querySelector('#sf [name=roof_type]')?.value || s.roof_type) === 'barn';
   const styleVal = k => document.querySelector(`#sf [name=${k}]`)?.value || s[k] || '';
@@ -526,7 +529,7 @@ function styleEditor(style) {
       root.addEventListener('input', e => {
         const d = e.target.dataset;
         if (d.sz !== undefined) { sizes[d.sz][d.k] = d.k === 'active' ? (e.target.checked ? 1 : 0) : e.target.value; later(); }
-        if (d.std !== undefined) { stds[d.std][d.k] = d.k === 'gable' ? e.target.checked : e.target.value; later(); }
+        if (d.std !== undefined) { stds[d.std][d.k] = stdVal(d.k, e.target); later(); }
         if (d.av !== undefined) {
           const ticked = $$('[data-av]', root).filter(x => x.checked && !x.disabled).map(x => Number(x.dataset.av));
           const free = catalog.options.filter(o => !stds.some(x => Number(x.option_id) === o.id)).map(o => o.id);
@@ -534,7 +537,7 @@ function styleEditor(style) {
           redrawAvail();
         }
       });
-      root.addEventListener('change', e => { const d = e.target.dataset; if (d.std !== undefined) { stds[d.std][d.k] = d.k === 'gable' ? e.target.checked : e.target.value; if (d.k === 'option_id') redrawStd(); else later(); } if (d.sz !== undefined && d.k === 'active') sizes[d.sz].active = e.target.checked ? 1 : 0; });
+      root.addEventListener('change', e => { const d = e.target.dataset; if (d.std !== undefined) { stds[d.std][d.k] = stdVal(d.k, e.target); if (d.k === 'option_id') redrawStd(); else later(); } if (d.sz !== undefined && d.k === 'active') sizes[d.sz].active = e.target.checked ? 1 : 0; });
       root.addEventListener('click', e => {
         const b = e.target.closest('button'); if (!b) return;
         if (b.id === 'addSize') { const l = sizes.at(-1) || { width: 8, depth: 8, price: 0 }; sizes.push({ width: l.width, depth: Number(l.depth) + 2, price: l.price, active: 1 }); redrawSizes(); }
