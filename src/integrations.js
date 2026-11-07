@@ -273,10 +273,24 @@ async function sendQuotePdfToGHL(q, bytes, contactId, oppId, baseUrl, withDrawin
   const key = String(s.ghl_pdf_field || '').trim().replace(/^\{\{\s*|\s*\}\}$/g, '').replace(/^(contact|opportunity)\./, '');
   if (key) {
     try {
-      if (oppId) await ghl('PUT', `/opportunities/${oppId}`, s.ghl_token, { customFields: [{ key, field_value: url }] });
-      else await ghl('PUT', `/contacts/${contactId}`, s.ghl_token, { customFields: [{ key, field_value: url }] });
+      const model = oppId ? 'opportunity' : 'contact', id = await ghlFieldId(s, model, key);
+      const cf = [{ ...(id ? { id } : {}), key, field_value: url }];
+      if (oppId) await ghl('PUT', `/opportunities/${oppId}`, s.ghl_token, { customFields: cf });
+      else await ghl('PUT', `/contacts/${contactId}`, s.ghl_token, { customFields: cf });
     } catch { /* logged by ghl(); the note already has the link */ }
   }
+}
+/** A custom field's id from its key (as GHL shows it: {{opportunity.quote_pdf}} or quote_pdf). Cached; null if it can't be looked up. */
+const fieldIds = new Map();
+async function ghlFieldId(s, model, key) {
+  const ck = `${s.ghl_location_id}|${model}|${key}`;
+  if (fieldIds.has(ck)) return fieldIds.get(ck);
+  try {
+    const r = await ghl('GET', `/locations/${encodeURIComponent(s.ghl_location_id)}/customFields?model=${model}`, s.ghl_token);
+    const f = (r?.customFields || []).find(x => [key, `${model}.${key}`].includes(String(x.fieldKey || '').replace(/^\{\{\s*|\s*\}\}$/g, '')));
+    if (f?.id) fieldIds.set(ck, f.id); // not found: look again next time (field or scope may be added later)
+    return f?.id || null;
+  } catch { return null; }
 }
 
 export function recentLog(limit = 100) {

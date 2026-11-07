@@ -52,6 +52,7 @@ const recv = http.createServer((req, res) => {
     if (req.url === '/opportunities/') return send(201, { opportunity: { id: 'ghlO1' } });
     if (/^\/contacts\/ghlC1\/notes$/.test(req.url)) return send(201, { note: { id: 'n1' } });
     if (req.url === '/medias/upload-file') return mediaDown ? send(403, { message: 'The token is not authorized for this scope.' }) : send(200, { fileId: 'f1', url: 'https://storage.example.com/media/' + hits.length + '.pdf' });
+    if (req.url === '/locations/LOC1/customFields?model=opportunity') return send(200, { customFields: [{ id: 'cfPDF', name: 'Quote PDF / 3D Builder', fieldKey: 'opportunity.quote_pdf__3d_builder', model: 'opportunity' }] });
     if (req.url === '/opportunities/ghlO1' && req.method === 'PUT') return send(200, { opportunity: { id: 'ghlO1' } });
     send(404, { e: 'unknown ' + req.url });
   });
@@ -444,7 +445,7 @@ test('GoHighLevel: inbound-webhook (flat fields) and the native API push (contac
 });
 
 test('GoHighLevel: the quote PDF with pricing goes to the contact and opportunity (drawings from the browser, pricing from the server)', async () => {
-  await setS({ ghl_enabled: true, ghl_token: 'good-token', ghl_location_id: 'LOC1', ghl_pipeline_id: 'P1', ghl_stage_id: 'S1', ghl_custom_fields: {}, ghl_pdf_field: 'quote_pdf', ghl_send_pdf: 1, public_url: '' });
+  await setS({ ghl_enabled: true, ghl_token: 'good-token', ghl_location_id: 'LOC1', ghl_pipeline_id: 'P1', ghl_stage_id: 'S1', ghl_custom_fields: {}, ghl_pdf_field: '{{opportunity.quote_pdf__3d_builder}}', ghl_send_pdf: 1, public_url: '' });
   const dwg = await PDFDocument.create(); dwg.addPage([792, 612]); dwg.addPage([792, 612]); const dwgBytes = Buffer.from(await dwg.save());
   const upload = (url, bytes, type = 'application/pdf') => { const fd = new FormData(); fd.append('drawings', new Blob([bytes], { type }), 'd.pdf'); return fetch(B + url, { method: 'POST', body: fd }); };
   hits.length = 0;
@@ -461,7 +462,7 @@ test('GoHighLevel: the quote PDF with pricing goes to the contact and opportunit
   const [note] = await waitHit(h => h.path === '/contacts/ghlC1/notes' && /Quote PDF/.test(h.json?.body));
   assert.match(note.json.body, new RegExp(`Quote PDF ${q.data.number} .*\\(pricing \\+ drawings\\)\\nhttps://storage\\.example\\.com/media/`));
   const [opp] = await waitHit(h => h.path === '/opportunities/ghlO1' && h.method === 'PUT');
-  assert.deepEqual(opp.json.customFields, [{ key: 'quote_pdf', field_value: note.json.body.split('\n')[1] }], 'link in the opportunity custom field');
+  assert.deepEqual(opp.json.customFields, [{ id: 'cfPDF', key: 'quote_pdf__3d_builder', field_value: note.json.body.split('\n')[1] }], 'link in the opportunity custom field');
   // staff can download the same PDF: pricing page + the 2 drawing pages
   for (let i = 0; i < 40 && !(await admin.get('/api/v1/quotes/' + q.data.id)).data.ghl_pdf_url; i++) await sleep(50);
   const dl = await fetch(B + `/api/v1/quotes/${q.data.id}/quote.pdf`, { headers: { cookie: admin.cookie } });
