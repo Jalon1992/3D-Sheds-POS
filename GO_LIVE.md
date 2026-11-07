@@ -83,7 +83,10 @@ Everyone can be logged in at the same time.
 
 ## 8. Optional integrations
 **Settings → Integrations & API:**
-- **GoHighLevel:** push every new quote to your GHL account as a contact, opportunity and note. It also sends the **quote PDF with pricing** (a pricing page plus the 3D view, floor plan and elevations), stored in GHL Media and linked on the contact and opportunity. Give the Private Integration token the `medias.write` scope; to show the link on the opportunity card, create a text custom field (for example `quote_pdf`) and enter its key under **Integrations → GoHighLevel**.
+- **GoHighLevel:** push every new quote to your GHL account as a contact, opportunity and note. It also sends the **quote PDF with pricing** (a pricing page plus the 3D view, floor plan and elevations), stored in GHL Media and linked on the contact and opportunity. Give the Private Integration token the `medias.write` scope.
+  - Also add `opportunities.readonly`, `users.readonly` and `locations/customFields.readonly`. With those, **Integrations → GoHighLevel** loads your pipelines, stages, users and custom fields as dropdowns.
+  - In those dropdowns, pick the pipeline, stage, owner (and an owner per dealer lot), forecast close date and probability, and the opportunity name pattern.
+  - Then choose which quote value fills each custom field, such as Quote PDF link, size, style, total or 3D link.
 - **Webhooks:** send quotes to Zapier, Make or your own systems.
 - **API keys:** let your website or other tools read and create quotes (docs at `/docs`).
 

@@ -11,7 +11,7 @@ import { APP_VERSION } from './src/version.js';
 import { backupNow, listBackups, startBackups, offsiteOn, offsite, NAME_RE } from './src/backup.js';
 import { seed } from './src/seed.js';
 import { requireAuth, requireSession, issueSession, clearSession, verifyPassword, hashPassword, createApiKey, readSession, readApiKey, ROLES, endSessions, sessionKeyReady } from './src/auth.js';
-import { emit, deliver, formatQuote, recentLog, pushToGHL, EVENTS, blockedTarget, checkOutboundUrl, expectQuotePdf, waitingForDrawings, drawingsArrived, quotePdfBytes, storedQuotePdf, resendQuotePdf } from './src/integrations.js';
+import { emit, deliver, formatQuote, recentLog, pushToGHL, EVENTS, blockedTarget, checkOutboundUrl, expectQuotePdf, waitingForDrawings, drawingsArrived, quotePdfBytes, storedQuotePdf, resendQuotePdf, ghlLookup, GHL_VALUES } from './src/integrations.js';
 import { checkDrawings } from './src/quote-pdf.js';
 import { openapi } from './src/openapi.js';
 import { priceConfig, sanitizeConfig, stripPrices, hideQuotePrices } from './public/js/shared/pricing.js';
@@ -536,6 +536,7 @@ admin.put('/settings', wrap(async (req, res) => {
   if (b.public_url) { b.public_url = String(b.public_url).replace(/\/+$/, ''); if (!/^https?:\/\/[^/\s]+$/.test(b.public_url)) return bad(res, 'Public URL should look like https://builder.yourcompany.com (no page path at the end).'); }
   setSettings(b); res.json({ ok: true });
 }));
+admin.get('/ghl/lookup', wrap(async (req, res) => res.json({ ...(await ghlLookup()), values: GHL_VALUES })));
 admin.post('/ghl/test', wrap(async (req, res) => {
   const q = get('SELECT * FROM quotes ORDER BY id DESC LIMIT 1');
   if (!q) return bad(res, 'Submit at least one quote first (use the configurator), then test.');

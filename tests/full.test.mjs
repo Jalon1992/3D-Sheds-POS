@@ -52,7 +52,9 @@ const recv = http.createServer((req, res) => {
     if (req.url === '/opportunities/') return send(201, { opportunity: { id: 'ghlO1' } });
     if (/^\/contacts\/ghlC1\/notes$/.test(req.url)) return send(201, { note: { id: 'n1' } });
     if (req.url === '/medias/upload-file') return mediaDown ? send(403, { message: 'The token is not authorized for this scope.' }) : send(200, { fileId: 'f1', url: 'https://storage.example.com/media/' + hits.length + '.pdf' });
-    if (req.url === '/locations/LOC1/customFields?model=opportunity') return send(200, { customFields: [{ id: 'cfPDF', name: 'Quote PDF / 3D Builder', fieldKey: 'opportunity.quote_pdf__3d_builder', model: 'opportunity' }] });
+    if (req.url === '/locations/LOC1/customFields?model=all') return send(200, { customFields: [{ id: 'cfPDF', name: 'Quote PDF / 3D Builder', fieldKey: '{{ opportunity.quote_pdf__3d_builder }}', model: 'opportunity', dataType: 'TEXT' }, { id: 'cfStyle', name: 'Shed style', fieldKey: 'opportunity.shed_style', model: 'opportunity', dataType: 'TEXT' }, { id: 'cfTot', name: 'Quote total', fieldKey: 'contact.quote_total', model: 'contact', dataType: 'MONETORY' }] });
+    if (req.url === '/opportunities/pipelines?locationId=LOC1') return send(200, { pipelines: [{ id: 'P1', name: 'Sales', stages: [{ id: 'S1', name: 'New lead' }, { id: 'S2', name: 'Quoted' }] }] });
+    if (req.url === '/users/?locationId=LOC1') return send(200, { users: [{ id: 'U1', name: 'Jalon', email: 'j@x.com' }, { id: 'U2', firstName: 'Lot', lastName: 'Rep', email: 'l@x.com' }] });
     if (req.url === '/opportunities/ghlO1' && req.method === 'PUT') return send(200, { opportunity: { id: 'ghlO1' } });
     send(404, { e: 'unknown ' + req.url });
   });
@@ -484,6 +486,38 @@ test('GoHighLevel: the quote PDF with pricing goes to the contact and opportunit
   assert.equal(q3.data.drawings_upload, undefined); await waitHit(h => h.path === '/opportunities/'); await sleep(400);
   assert.ok(!hits.some(h => h.path === '/medias/upload-file' || /notes$/.test(h.path)), 'no PDF and no note when both are switched off');
   await setS({ ghl_enabled: false, ghl_send_pdf: 1, ghl_add_note: 1, ghl_pdf_field: '', public_url: '' });
+});
+
+test('GoHighLevel: settings lists come from GHL; opportunity gets owner, forecast, name pattern and mapped custom fields', async () => {
+  await setS({ ghl_enabled: true, ghl_token: 'good-token', ghl_location_id: 'LOC1', ghl_pipeline_id: 'P1', ghl_stage_id: 'S2', ghl_send_pdf: 0, ghl_add_note: 0 });
+  const look = (await admin.get('/api/admin/ghl/lookup')).data;
+  assert.deepEqual(look.pipelines[0].stages.map(s => s.name), ['New lead', 'Quoted']);
+  assert.deepEqual(look.users.map(u => u.name), ['Jalon', 'Lot Rep']);
+  assert.deepEqual(look.fields.map(f => [f.model, f.key]), [['opportunity', 'opportunity.quote_pdf__3d_builder'], ['opportunity', 'opportunity.shed_style'], ['contact', 'contact.quote_total']]);
+  assert.ok(look.values.some(v => v[0] === 'links.quote_pdf'));
+  const dealer = (await admin.get('/api/admin/settings')).data.dealers?.[0];
+  await setS({ ghl_owner_id: 'U1', ghl_dealer_owners: dealer ? { [dealer.id]: 'U2' } : {}, ghl_close_days: 14, ghl_probability: 20, ghl_opp_name: '{shed.size} {shed.style} for {customer.full_name} ({number})',
+    ghl_custom_fields: { 'opportunity.shed_style': 'shed.style', '{{contact.quote_total}}': 'pricing.total', 'opportunity.not_in_ghl': 'shed.size' } });
+  hits.length = 0;
+  const q = await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Gus', last_name: 'Hill', email: 'gus@test.com' } });
+  const [opp] = await waitHit(h => h.path === '/opportunities/' && h.method === 'POST');
+  const o = opp.json;
+  assert.equal(o.pipelineStageId, 'S2'); assert.equal(o.assignedTo, 'U1'); assert.equal(o.forecastProbability, 20); assert.equal(o.status, 'open'); assert.equal(o.monetaryValue, q.data.pricing.total);
+  assert.equal(o.forecastExpectedCloseDate, new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10));
+  assert.equal(o.name, `${q.data.shed.size} ${q.data.shed.style} for Gus Hill (${q.data.number})`);
+  assert.deepEqual(o.customFields, [{ id: 'cfStyle', key: 'shed_style', field_value: q.data.shed.style }, { key: 'not_in_ghl', field_value: q.data.shed.size }]);
+  const up = hits.find(h => h.path === '/contacts/upsert').json;
+  assert.deepEqual(up.customFields, [{ id: 'cfTot', key: 'quote_total', field_value: q.data.pricing.total }]);
+  if (dealer) {
+    await setS({ pricing_mode: 'dealer' }); hits.length = 0;
+    await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id, dealer_id: dealer.id }, customer: { first_name: 'Lot', email: 'lot@test.com' } });
+    const [o2] = await waitHit(h => h.path === '/opportunities/' && h.method === 'POST'); assert.equal(o2.json.assignedTo, 'U2', 'dealer lot owner');
+    await setS({ pricing_mode: 'none' });
+  }
+  // the token can't read lists: each list says which scope is missing; quotes still go through
+  await setS({ ghl_token: 'bad-token' });
+  const bad = (await admin.get('/api/admin/ghl/lookup')).data; assert.match(bad.errors.pipelines + bad.errors.users + bad.errors.fields, /opportunities\.readonly.*users\.readonly.*customFields\.readonly/s);
+  await setS({ ghl_enabled: false, ghl_token: 'good-token', ghl_owner_id: '', ghl_dealer_owners: {}, ghl_close_days: '', ghl_probability: '', ghl_opp_name: '', ghl_custom_fields: {}, ghl_send_pdf: 1, ghl_add_note: 1 });
 });
 
 // =============================================================================
