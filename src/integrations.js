@@ -142,13 +142,8 @@ export async function pushToGHL(quoteRow, data) {
   const token = s.ghl_token, locationId = s.ghl_location_id;
   const tags = String(s.ghl_tags || 'shed-quote').split(',').map(t => t.trim()).filter(Boolean);
   if (data.dealer?.name) tags.push('dealer: ' + data.dealer.name);
-  const customFields = [];
-  if (s.ghl_custom_fields && typeof s.ghl_custom_fields === 'object') {
-    for (const [key, path] of Object.entries(s.ghl_custom_fields)) {
-      const v = pick(data, String(path));
-      if (v != null) customFields.push({ key, field_value: typeof v === 'object' ? JSON.stringify(v) : v });
-    }
-  }
+  const d = ghlValues(data), maps = fieldMaps(s);
+  const customFields = await ghlCustomFields(s, 'contact', maps.contact, d);
   const c = data.customer;
   const contact = await ghl('POST', '/contacts/upsert', token, {
     locationId, firstName: c.first_name, lastName: c.last_name, email: c.email, phone: c.phone,
@@ -159,10 +154,16 @@ export async function pushToGHL(quoteRow, data) {
   const contactId = contact?.contact?.id || contact?.id;
   let oppId = null;
   if (contactId && s.ghl_pipeline_id && s.ghl_stage_id) {
+    const owner = (data.dealer?.id && s.ghl_dealer_owners?.[data.dealer.id]) || s.ghl_owner_id || '';
+    const days = Number(s.ghl_close_days), prob = s.ghl_probability === '' || s.ghl_probability == null ? NaN : Number(s.ghl_probability);
+    const oppFields = await ghlCustomFields(s, 'opportunity', maps.opportunity, d);
     const opp = await ghl('POST', '/opportunities/', token, {
       locationId, pipelineId: s.ghl_pipeline_id, pipelineStageId: s.ghl_stage_id, contactId,
-      name: `${c.full_name || c.email} – ${data.shed.style} ${data.shed.size} (${data.number})`,
-      status: 'open', monetaryValue: data.pricing.total,
+      name: fillName(s.ghl_opp_name, d), status: 'open', monetaryValue: data.pricing.total,
+      ...(owner ? { assignedTo: owner } : {}),
+      ...(days > 0 ? { forecastExpectedCloseDate: new Date(Date.now() + days * 864e5).toISOString().slice(0, 10) } : {}),
+      ...(prob >= 0 && prob <= 100 ? { forecastProbability: prob } : {}),
+      ...(oppFields.length ? { customFields: oppFields } : {}),
     });
     oppId = opp?.opportunity?.id || opp?.id || null;
   }
@@ -270,13 +271,98 @@ async function sendQuotePdfToGHL(q, bytes, contactId, oppId, baseUrl, withDrawin
   run('UPDATE quotes SET ghl_pdf_url = ? WHERE id = ?', url, q.id);
   const t = Number(q.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   await ghl('POST', `/contacts/${contactId}/notes`, s.ghl_token, { body: `Quote PDF ${q.number} — $${t}${withDrawings === true ? ' (pricing + drawings)' : withDrawings === false ? ' (pricing)' : ''}\n${url}` });
-  const key = String(s.ghl_pdf_field || '').trim().replace(/^\{\{\s*|\s*\}\}$/g, '').replace(/^(contact|opportunity)\./, '');
-  if (key) {
-    try {
-      if (oppId) await ghl('PUT', `/opportunities/${oppId}`, s.ghl_token, { customFields: [{ key, field_value: url }] });
-      else await ghl('PUT', `/contacts/${contactId}`, s.ghl_token, { customFields: [{ key, field_value: url }] });
-    } catch { /* logged by ghl(); the note already has the link */ }
+  // fields mapped to "Quote PDF link", plus the older single "PDF link field" setting
+  const maps = fieldMaps(s), pdfOnly = o => Object.fromEntries(Object.entries(o).filter(([, p]) => p === 'links.quote_pdf'));
+  const opp = pdfOnly(maps.opportunity), con = pdfOnly(maps.contact);
+  const legacy = String(s.ghl_pdf_field || '').trim().replace(/^\{\{\s*|\s*\}\}$/g, '');
+  if (legacy) { const m = legacy.match(/^(contact|opportunity)\.(.+)$/), k = m ? m[2] : legacy; (m?.[1] === 'contact' || !oppId ? con : opp)[k] = 'links.quote_pdf'; }
+  const vals = { links: { quote_pdf: url } };
+  try {
+    if (oppId && Object.keys(opp).length) await ghl('PUT', `/opportunities/${oppId}`, s.ghl_token, { customFields: await ghlCustomFields(s, 'opportunity', opp, vals) });
+    if (Object.keys(con).length) await ghl('PUT', `/contacts/${contactId}`, s.ghl_token, { customFields: await ghlCustomFields(s, 'contact', con, vals) });
+  } catch { /* logged by ghl(); the note already has the link */ }
+}
+
+// ---- GHL field mapping ---------------------------------------------------------------------------------
+/** Quote values offered in the field mapping (value path → label). Extra derived values are added by ghlValues(). */
+export const GHL_VALUES = [
+  ['number', 'Quote number'], ['customer.full_name', 'Customer name'], ['customer.full_address', 'Customer address (one line)'], ['customer.notes', 'Customer notes'],
+  ['shed.style', 'Building style'], ['shed.size', 'Size'], ['shed.width_ft', 'Width (ft)'], ['shed.depth_ft', 'Length (ft)'], ['shed.sq_ft', 'Square feet'], ['shed.roofing', 'Roofing'],
+  ['colors_text', 'Colors (one line)'], ['options_text', 'Options (one line)'], ['summary', 'Summary (one line)'],
+  ['pricing.subtotal', 'Subtotal'], ['pricing.delivery', 'Delivery'], ['pricing.tax', 'Tax'], ['pricing.total', 'Total'], ['pricing.tier', 'Price tier'],
+  ['dealer.name', 'Dealer lot'], ['source', 'Lead source / page'], ['created_date', 'Quote date'],
+  ['links.view_3d', '3D design link'], ['links.floor_plan_svg', 'Floor plan link'], ['links.quote_pdf', 'Quote PDF link (with pricing)'],
+];
+export function ghlValues(data) {
+  const c = data.customer || {};
+  return { ...data,
+    customer: { ...c, full_address: [c.address, c.city, [c.state, c.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ') },
+    colors_text: Object.entries(data.shed?.colors || {}).map(([k, v]) => `${k}: ${v}`).join(', '),
+    options_text: (data.options || []).map(o => o.name + (o.wall ? ` (${o.wall})` : '')).join(', '),
+    created_date: String(data.created_at || new Date().toISOString()).slice(0, 10),
+  };
+}
+const unbrace = k => String(k || '').trim().replace(/^\{\{\s*|\s*\}\}$/g, '');
+/** Saved mapping { "{{opportunity.quote_pdf}}" | "contact.shed_style" | "shed_style": "shed.style" } → per object, bare keys. Bare = contact (older setting). */
+function fieldMaps(s) {
+  const out = { contact: {}, opportunity: {} };
+  for (const [k, path] of Object.entries(s.ghl_custom_fields && typeof s.ghl_custom_fields === 'object' ? s.ghl_custom_fields : {})) {
+    if (!path) continue;
+    const m = unbrace(k).match(/^(contact|opportunity)\.(.+)$/);
+    out[m ? m[1] : 'contact'][m ? m[2] : unbrace(k)] = String(path);
   }
+  return out;
+}
+async function ghlCustomFields(s, model, map, vals) {
+  const out = [];
+  for (const [key, path] of Object.entries(map)) {
+    if (path === 'links.quote_pdf' && !vals.links?.quote_pdf) continue; // sent once the PDF is ready
+    const v = pick(vals, path);
+    if (v == null || v === '') continue;
+    const id = await ghlFieldId(s, model, key);
+    out.push({ ...(id ? { id } : {}), key, field_value: typeof v === 'object' ? JSON.stringify(v) : v });
+  }
+  return out;
+}
+/** Opportunity name from a pattern like "{customer.full_name} – {shed.style} {shed.size} ({number})". */
+export function fillName(pattern, d) {
+  const p = String(pattern || '').trim() || '{customer.full_name} – {shed.style} {shed.size} ({number})';
+  const name = p.replace(/\{\{?\s*([\w.]+)\s*\}?\}/g, (_, k) => { const v = pick(d, k); return v == null ? '' : String(v); }).replace(/\s+/g, ' ').replace(/\(\s*\)/g, '').trim();
+  return name || d.customer?.email || d.number;
+}
+/** Pipelines, users and custom fields of the GHL sub-account, for the settings page. Each part reports its own error (e.g. a missing scope). */
+export async function ghlLookup(s = getSettings()) {
+  const loc = encodeURIComponent(s.ghl_location_id || ''), out = { pipelines: [], users: [], fields: [], errors: {} };
+  const tryGet = async (k, path, fn) => {
+    try {
+      const r = await fetch(GHL_BASE() + path, { headers: { Authorization: `Bearer ${s.ghl_token}`, Version: '2021-07-28', Accept: 'application/json' } });
+      const t = await r.text(); let j = {}; try { j = JSON.parse(t); } catch { /* */ }
+      if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? `the token needs the ${{ pipelines: 'opportunities.readonly', users: 'users.readonly', fields: 'locations/customFields.readonly' }[k]} scope` : `GHL said ${r.status}: ${String(j.message || t).slice(0, 160)}`);
+      out[k] = fn(j);
+    } catch (e) { out.errors[k] = e.message; }
+  };
+  if (!s.ghl_token || !s.ghl_location_id) { out.errors.all = 'Enter the token and Location ID, then Save.'; return out; }
+  await Promise.all([
+    tryGet('pipelines', `/opportunities/pipelines?locationId=${loc}`, j => (j.pipelines || []).map(p => ({ id: p.id, name: p.name, stages: (p.stages || []).map(st => ({ id: st.id, name: st.name })) }))),
+    tryGet('users', `/users/?locationId=${loc}`, j => (j.users || []).filter(u => !u.deleted).map(u => ({ id: u.id, name: u.name || [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email, email: u.email }))),
+    tryGet('fields', `/locations/${loc}/customFields?model=all`, j => (j.customFields || []).map(f => ({ id: f.id, name: f.name, key: unbrace(f.fieldKey), model: f.model || (String(f.fieldKey).includes('opportunity.') ? 'opportunity' : 'contact'), type: f.dataType }))),
+  ]);
+  if (out.fields.length) fieldScans.set(s.ghl_location_id, Date.now());
+  for (const f of out.fields) fieldIds.set(`${s.ghl_location_id}|${f.model}|${f.key.replace(/^(contact|opportunity)\./, '')}`, f.id);
+  return out;
+}
+/** A custom field's id from its key (as GHL shows it: {{opportunity.quote_pdf}} or quote_pdf). The location's fields are read at most every 5 minutes. */
+const fieldIds = new Map(), fieldScans = new Map();
+async function ghlFieldId(s, model, key) {
+  const ck = `${s.ghl_location_id}|${model}|${key}`;
+  if (fieldIds.has(ck)) return fieldIds.get(ck);
+  if (Date.now() - (fieldScans.get(s.ghl_location_id) || 0) < 300000) return null;
+  fieldScans.set(s.ghl_location_id, Date.now());
+  try {
+    const r = await ghl('GET', `/locations/${encodeURIComponent(s.ghl_location_id)}/customFields?model=all`, s.ghl_token);
+    for (const x of r?.customFields || []) { const fk = unbrace(x.fieldKey), m = x.model || (fk.startsWith('opportunity.') ? 'opportunity' : 'contact'); fieldIds.set(`${s.ghl_location_id}|${m}|${fk.replace(/^(contact|opportunity)\./, '')}`, x.id); }
+  } catch { /* no scope: the key alone is sent */ }
+  return fieldIds.get(ck) || null;
 }
 
 export function recentLog(limit = 100) {
