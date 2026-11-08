@@ -62,12 +62,17 @@ export function toE164(raw) {
 }
 export const prettyPhone = e => { const d = String(e || '').replace(/\D/g, ''); return d.length === 11 && d[0] === '1' ? `(${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}` : e; };
 
-/** {{contact.first_name}} style merge tags. Unknown tags become ''. */
+/** {{contact.first_name}} style merge tags. Unknown or empty tags become '', and the words that only made sense
+ * with them go too ("…or call {{company.phone}}." with no phone → "…."; "Hi {{first_name}}," → "Hi,"). */
 export function fill(tpl, ctx) {
+  const E = '\u0000';
   return String(tpl ?? '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
     const v = path.split('.').reduce((o, k) => (o == null ? o : o[k]), ctx);
-    return v == null ? '' : String(v);
-  });
+    return v == null || v === '' ? E : String(v);
+  })
+    .replace(/[ \t]+(?:or|and)[ \t]+(?:call|text|phone|email|reach)(?:[ \t]+(?:us|me))?(?:[ \t]+(?:at|on))?[ \t]*\u0000/gi, '')
+    .replace(/[ \t]+(?:call|text|phone|email|reach)(?:[ \t]+(?:us|me))?(?:[ \t]+(?:at|on))?[ \t]*\u0000(?=[ \t]*[.,!?;:)]|[ \t]*$)/gim, '')
+    .replace(/[ \t]*\u0000/g, '').replace(/\u0000/g, '');
 }
 
 export function smsReady(s = getSettings()) {

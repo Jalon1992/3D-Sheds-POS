@@ -92,7 +92,15 @@ class C { constructor() { this.cookie = ''; } async r(m, u, b, raw) { const f = 
     const page = await ctx.newPage(); const errs = [];
     page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|ERR_TUNNEL|fonts\.g/.test(m.text())) errs.push(m.text()); });
     page.on('dialog', d => d.dismiss());
-    await page.goto(B + '/admin/'); await page.fill('input[name=email]', login[role][0]); await page.fill('input[name=password]', login[role][1]); await page.click('button:has-text("Log in")'); await page.waitForSelector('#nav');
+    await page.goto(B + '/admin/'); await page.fill('input[name=email]', login[role][0]); await page.fill('input[name=password]', login[role][1]); await page.click('button:has-text("Log in")'); await page.waitForSelector('#nav', { state: 'attached' }); await page.waitForSelector('.side-brand');
+    if (vp === 'phone') { // phones: pages live behind the Menu button; it opens, lists this role's pages and closes when one is picked
+      ok(!(await page.isVisible('#nav')) && await page.isVisible('#menuBtn'), `${role}/phone: compact header with a Menu button`);
+      await page.click('#menuBtn'); await page.waitForTimeout(200);
+      const links = await page.$$eval('#nav a:not([hidden])', a => a.map(x => x.dataset.r));
+      ok(links.length > 0 && await page.isVisible('#nav a:not([hidden])'), `${role}/phone: menu lists ${links.join(', ')}`);
+      await page.click(`#nav a[data-r="${links.at(-1)}"]`); await page.waitForTimeout(500);
+      ok(!(await page.isVisible('#nav')) && (await page.evaluate(() => location.hash)).includes(links.at(-1)), `${role}/phone: picking a page opens it and closes the menu`);
+    }
     for (const r of routes) {
       await page.goto(B + '/admin/#/' + r); await page.waitForTimeout(r.startsWith('pos/templates/') || r.startsWith('pos/contracts/') ? 1800 : 700);
       const res = await page.evaluate(() => ({ xss: window.__xss || 0, over: document.documentElement.scrollWidth - window.innerWidth, err: document.querySelector('#main .card.err')?.textContent || '', title: document.querySelector('#main h1')?.textContent || '' }));
