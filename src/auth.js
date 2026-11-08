@@ -82,10 +82,12 @@ function readApiKey(req) {
  *  delivery (delivery schedule + drawings). Non-admin roles can be limited to one dealer lot.
  *  Fine-grained checks for the CRM / point of sale live in permissions.js. */
 export const ROLES = ['admin', 'sales', 'production', 'delivery'];
-const QUOTE_READ = /^\/quotes(\/\d+(\/floorplan\.svg)?)?$/;
+// Sales read quotes (list, detail, floor plan, the priced PDF). Production / delivery open one quote at a time for
+// its drawings and floor plan (order cards): no list, no priced PDF, and the server strips prices from what they get.
+const QUOTE_READ = /^\/quotes(\/\d+(\/floorplan\.svg|\/quote\.pdf)?)?$/, PLAN_READ = /^\/quotes\/\d+(\/floorplan\.svg)?$/;
 function roleAllows(user, method, path) {
   if (user.role === 'admin') return true;
-  if (method === 'GET' && QUOTE_READ.test(path)) return true;
+  if (method === 'GET' && (user.role === 'sales' ? QUOTE_READ : PLAN_READ).test(path)) return true;
   if (user.role === 'sales' && method === 'PATCH' && /^\/quotes\/\d+$/.test(path)) return true;
   return false;
 }

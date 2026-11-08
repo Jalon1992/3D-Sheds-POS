@@ -288,7 +288,13 @@ const ownQuote = (req, q) => !req.user?.dealer_id || String(q.dealer_id) === Str
 v1.get('/quotes/:id', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
   if (!q || !ownQuote(req, q)) return bad(res, 'Not found', 404);
-  res.json({ ...formatQuote(q, baseUrl(req)), internal_notes: q.internal_notes, ghl_status: q.ghl_status, pricing_lines: q.pricing.lines, contact_id: q.contact_id || null, ghl_pdf_url: q.ghl_pdf_url || null });
+  const out = { ...formatQuote(q, baseUrl(req)), internal_notes: q.internal_notes, ghl_status: q.ghl_status, pricing_lines: q.pricing.lines, contact_id: q.contact_id || null, ghl_pdf_url: q.ghl_pdf_url || null };
+  // production / delivery open a quote only to print its drawings: no prices
+  if (req.user && !['admin', 'sales'].includes(req.user.role)) {
+    out.pricing = null; out.pricing_lines = []; out.options = out.options.map(({ price, ...o }) => o); out.summary = out.summary.replace(/\s*\|\s*Total: \$[\d,.]+$/, '');
+    delete out.integrations; delete out.ghl_status; delete out.ghl_pdf_url;
+  }
+  res.json(out);
 });
 v1.patch('/quotes/:id', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
@@ -514,7 +520,8 @@ const SECRET_SETTINGS = ['ghl_token', 'twilio_token', 'smtp_pass', 'email_api_ke
 admin.get('/settings', (req, res) => {
   const s = getSettings(); delete s._session_secret;
   for (const k of SECRET_SETTINGS) { if (s[k]) s[k + '_set'] = true; s[k] = s[k] ? '••••••••' + String(s[k]).slice(-4) : ''; }
-  if (req.user.role !== 'admin') { for (const k of [...SECRET_SETTINGS, 'inbound_key', 'twilio_sid', 'smtp_user', 'smtp_host', 'ghl_location_id', 'ghl_inbound_webhook_url', 'ghl_custom_fields']) delete s[k]; }
+  // other roles read settings only to draw and price sheds: no integration setup (GHL, email, texts, webhooks, backups)
+  if (req.user.role !== 'admin') { for (const k of Object.keys(s)) if (SECRET_SETTINGS.includes(k) || /^(ghl_|smtp_|twilio_|email_api|webhook|inbound|backup|zapier|api_)/.test(k)) delete s[k]; }
   res.json(s);
 });
 admin.put('/settings', wrap(async (req, res) => {
