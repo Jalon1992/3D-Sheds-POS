@@ -155,7 +155,7 @@ const isAdmin = () => (me?.role || 'admin') === 'admin';
 const mods = () => me?.modules || ALL_ON;
 const modOn = id => id === 'configurator' || !!mods()[id];
 const canEditQuotes = () => ['admin', 'sales'].includes(me?.role || 'admin');
-const ROLE_PAGES = { sales: ['crm', 'conversations', 'pipeline', 'tasks', 'pos', 'templates', 'quotes', 'orders', 'account'], production: ['orders', 'quotes', 'account'], delivery: ['orders', 'account'] };
+const ROLE_PAGES = { sales: ['crm', 'conversations', 'pipeline', 'tasks', 'pos', 'templates', 'quotes', 'orders', 'account'], production: ['orders', 'account'], delivery: ['orders', 'account'] };
 const HOME = { admin: 'dashboard', sales: 'crm', production: 'orders', delivery: 'orders' };
 const homeFor = role => (role === 'admin' ? 'dashboard' : role === 'sales' ? (modOn('crm') ? 'crm' : modOn('pos') ? 'pos' : 'quotes') : modOn('orders') ? 'orders' : 'account');
 const allowed = name => (['modules', 'system'].includes(name) ? !!me?.can_manage_modules : (isAdmin() || (ROLE_PAGES[me.role] || []).includes(name)) && pageOn(name, mods()));
@@ -216,6 +216,13 @@ async function start() {
   if (!modOn('crm')) { const h = $$('#nav .nav-h').find(x => /CRM/.test(x.textContent)); if (h) h.textContent = 'Sales'; }
   $$('#nav .nav-h').forEach(h => { let n = h.nextElementSibling, any = false; while (n && !n.classList.contains('nav-h')) { if (n.tagName === 'A' && !n.hidden) any = true; n = n.nextElementSibling; } h.hidden = !any; });
   if (!isAdmin() || me.devops) $('#sideName').insertAdjacentHTML('afterend', `<span class="pill" style="margin-left:6px">${me.devops ? 'Developer' : ROLE_LABEL[me.role]}</span>`);
+  // phones & tablets: the menu opens over the page and closes when a page is picked or you tap outside it
+  const side = $('.side'), menuBtn = $('#menuBtn');
+  const setMenu = open => { side.classList.toggle('open', open); menuBtn.setAttribute('aria-expanded', String(open)); };
+  menuBtn.onclick = e => { e.stopPropagation(); setMenu(!side.classList.contains('open')); };
+  $('#nav').addEventListener('click', e => { if (e.target.closest('a')) setMenu(false); });
+  document.addEventListener('click', e => { if (side.classList.contains('open') && !side.contains(e.target)) setMenu(false); });
+  addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
   $('#bellBtn').onclick = e => { e.stopPropagation(); const open = $('#bellPanel').hidden; $('#bellPanel').hidden = !open; if (open) { refreshBell(); api('POST', '/api/crm/notifications/read').then(() => { $('#bellCount').hidden = true; }).catch(() => {}); } };
   document.addEventListener('click', e => { if (!e.target.closest('#bellPanel')) $('#bellPanel').hidden = true; });
   refreshBell(); connectLive();

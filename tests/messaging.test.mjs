@@ -224,6 +224,14 @@ test('Email over the web (Resend, Postmark, SendGrid): works where SMTP ports ar
   const tina = (await admin.req('GET', '/api/crm/contacts?q=Tina')).data.data[0];
   assert.equal((await admin.req('POST', `/api/crm/contacts/${tina.id}/messages`, { channel: 'email', subject: 'Hi {{contact.first_name}}', body: 'Hello' })).status, 200);
   const r = lastCall('/mail/emails').json; assert.equal(r.subject, 'Hi Tina'); assert.equal(r.reply_to, 'owner@test.com');
+  // an empty merge tag takes its words with it: no "or call ." when the company has no phone number
+  await put({ phone: '' });
+  await admin.req('POST', `/api/crm/contacts/${tina.id}/messages`, { channel: 'email', subject: 'x', body: 'Questions? Reply to this email or call {{company.phone}}.\nReply to this email or call {{company.phone}} with any questions.' });
+  assert.equal(lastCall('/mail/emails').json.text, 'Questions? Reply to this email.\nReply to this email with any questions.');
+  await put({ phone: '(615) 555-0100' });
+  await admin.req('POST', `/api/crm/contacts/${tina.id}/messages`, { channel: 'email', subject: 'x', body: 'Reply or call {{company.phone}}.' });
+  assert.equal(lastCall('/mail/emails').json.text, 'Reply or call (615) 555-0100.');
+  await put({ phone: '' });
   // a From is required for the web services (there's no login address to fall back on)
   await put({ email_from: '' });
   assert.equal((await admin.req('GET', '/api/admin/messaging/status')).data.email, false);

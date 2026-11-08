@@ -118,7 +118,7 @@ async function wizard(reviseId = null) {
       <div class="card card-pad" id="wMoney"></div>
       <div class="card card-pad" id="wCustom" hidden></div>
     </div>
-    <div class="card card-pad" style="position:sticky;top:12px"><h2>Summary</h2><div id="wSum" style="margin-top:8px"></div>
+    <div class="card card-pad wiz-sum"><h2>Summary</h2><div id="wSum" style="margin-top:8px"></div>
       ${old ? '<label class="fld" style="margin-top:12px"><span>What changed? (shown to the customer)</span><input id="wNote" maxlength="200" placeholder="e.g. Changed to 12x24, added a loft"></label>' : ''}
       <div class="err" id="wErr" hidden style="margin-top:10px"></div>
       <button class="btn primary block" id="wGo" style="margin-top:14px">${old ? 'Prepare revised contract' : 'Prepare contract'}</button>

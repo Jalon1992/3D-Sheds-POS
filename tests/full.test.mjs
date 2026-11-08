@@ -352,7 +352,10 @@ test('API: role limits on the Open API, OpenAPI document matches the real routes
   await admin.post('/api/admin/users', { email: 'prod2@test.com', name: 'Prod', password: 'password-123', role: 'production' });
   const prod = new Client(); await prod.login('prod2@test.com', 'password-123');
   const q = await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Role', email: 'role@test.com' } });
-  assert.equal((await prod.get('/api/v1/quotes/' + q.data.id)).status, 200, 'production can read quotes (drawings)');
+  const pq = await prod.get('/api/v1/quotes/' + q.data.id);
+  assert.equal(pq.status, 200, 'production can open a quote (drawings)');
+  assert.equal(pq.data.pricing, null); assert.deepEqual(pq.data.pricing_lines, []); assert.ok(pq.data.options.every(o => o.price === undefined)); assert.doesNotMatch(pq.data.summary, /Total/);
+  assert.ok(pq.data.config && pq.data.customer.full_name, 'but gets what the drawings need');
   assert.equal((await prod.patch('/api/v1/quotes/' + q.data.id, { status: 'won' })).status, 403);
   assert.equal((await prod.del('/api/v1/quotes/' + q.data.id)).status, 403);
   assert.equal((await prod.post('/api/v1/styles', { name: 'x' })).status, 403);
@@ -486,6 +489,39 @@ test('GoHighLevel: the quote PDF with pricing goes to the contact and opportunit
   assert.equal(q3.data.drawings_upload, undefined); await waitHit(h => h.path === '/opportunities/'); await sleep(400);
   assert.ok(!hits.some(h => h.path === '/medias/upload-file' || /notes$/.test(h.path)), 'no PDF and no note when both are switched off');
   await setS({ ghl_enabled: false, ghl_send_pdf: 1, ghl_add_note: 1, ghl_pdf_field: '', public_url: '' });
+});
+
+test('Quote PDF security: upload limits, page bombs, broken PDFs; who may read quotes and the priced PDF', async () => {
+  await setS({ ghl_enabled: true, ghl_token: 'good-token', ghl_location_id: 'LOC1', ghl_pipeline_id: '', ghl_send_pdf: 1, ghl_add_note: 0, ghl_custom_fields: {}, ghl_pdf_field: '' });
+  const mk = async () => (await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Sec', email: 'sec@test.com' }, with_drawings: true })).data;
+  const up = (url, bytes, name = 'drawings') => { const fd = new FormData(); fd.append(name, new Blob([bytes], { type: 'application/pdf' }), 'd.pdf'); return fetch(B + url, { method: 'POST', body: fd }); };
+  const q = await mk(); assert.ok(q.drawings_upload, 'customer upload offered');
+  assert.equal((await up(q.drawings_upload, Buffer.alloc(26 * 1024 * 1024, 32))).status, 413, 'over 25 MB refused');
+  const bomb = await PDFDocument.create(); for (let i = 0; i < 13; i++) bomb.addPage([10, 10]);
+  assert.equal((await up(q.drawings_upload, Buffer.from(await bomb.save()))).status, 400, 'more than 12 pages refused');
+  assert.equal((await up(q.drawings_upload, Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(4000, 65)]))).status, 400, 'broken PDF refused');
+  assert.equal((await up(q.drawings_upload, Buffer.from('%PDF-1.7'), 'other')).status, 400, 'unexpected form field refused');
+  const ok = await PDFDocument.create(); ok.addPage([792, 612]);
+  assert.equal((await up(q.drawings_upload, Buffer.from(await ok.save()))).status, 202, 'a good upload still works after the bad tries');
+  assert.equal((await up('/api/v1/quote-drawings/../../etc', Buffer.from('x'))).status, 404);
+  // who may read quotes: sales yes (incl. the priced PDF, own lot only); production only the floor plan
+  await admin.post('/api/admin/users', { email: 'prod3@test.com', name: 'P3', password: 'password-123', role: 'production' });
+  const prod = new Client(); await prod.login('prod3@test.com', 'password-123');
+  assert.equal((await prod.get('/api/v1/quotes')).status, 403, 'production cannot list quotes (prices, customers)');
+  assert.equal((await prod.get(`/api/v1/quotes/${q.id}/quote.pdf`)).status, 403);
+  assert.equal((await prod.get(`/api/v1/quotes/${q.id}/floorplan.svg`)).status, 200, 'floor plan for order cards');
+  const rep = new Client(); await rep.login('lotb@test.com', 'password-123');
+  assert.equal((await rep.get(`/api/v1/quotes/${q.id}/quote.pdf`)).status, 404, 'lot staff: not another lot\'s quote');
+  const repQ = (await rep.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Lot', email: 'lotq@test.com' } })).data;
+  const pdf = await rep.get(`/api/v1/quotes/${repQ.id}/quote.pdf`); assert.equal(pdf.status, 200, 'sales can download their own quote PDF');
+  // staff who aren't admins don't get integration setup (signing secret, GHL owners, email keys…)
+  await setS({ webhook_secret: 'whsec_test_123', ghl_owner_id: 'U9', ghl_opp_name: '{number}', email_api_key: 're_secret_999' });
+  const rs = (await rep.get('/api/admin/settings')).data;
+  assert.ok(rs.company_name !== undefined || rs.styles !== undefined || Object.keys(rs).length > 5, 'still gets drawing/pricing settings');
+  for (const k of Object.keys(rs)) assert.doesNotMatch(k, /^(ghl_|smtp_|twilio_|email_api|webhook|inbound|backup)/, 'sales sees ' + k);
+  assert.doesNotMatch(JSON.stringify(rs), /whsec_test_123|re_secret_999|U9/);
+  const as = (await admin.get('/api/admin/settings')).data; assert.equal(as.webhook_secret, 'whsec_test_123'); assert.match(as.email_api_key, /^•+_999$|^•+r_999$|•+999$/);
+  await setS({ ghl_enabled: false, ghl_add_note: 1, ghl_owner_id: '', ghl_opp_name: '', email_api_key: '' });
 });
 
 test('GoHighLevel: settings lists come from GHL; opportunity gets owner, forecast, name pattern and mapped custom fields', async () => {

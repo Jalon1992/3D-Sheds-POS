@@ -385,3 +385,9 @@ body.has-pos-bar .layout { height: calc(100vh - var(--top-h) - 48px); height: ca
 /* phones: a bottom sheet that takes at most about half the 3D view */
 .itemcard.sheet, body.card-open .itemcard.sheet { left: 8px; right: 8px; width: auto; bottom: 50px; top: auto; max-height: 52%; overflow-y: auto; overscroll-behavior: contain; padding: 12px; }
 @media (max-width: 520px) { .itemchip .ch-name { max-width: 96px; } .itemchip button { min-width: 38px; height: 38px; } }
+/* touch screens: fields at 16px so iPhones don't zoom the page on tap; bigger +/- buttons */
+@media (max-width: 900px), (pointer: coarse) {
+  input, select, textarea { font-size: 16px !important; }
+  .qty button { width: 40px; height: 40px; }
+}
+@media (pointer: coarse) { button.std { min-height: 38px; padding-top: 7px; padding-bottom: 7px; } }
