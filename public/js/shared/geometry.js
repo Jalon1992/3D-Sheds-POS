@@ -65,10 +65,12 @@ export function shedGeometry(style, size) {
   };
   const peak = Math.max(...profile.map(p => p[1]));
   const eaveOv = Number(style.overhang ?? 0.75) || 0;
+  // second eave (right wall; front when the ridge runs across): a deeper overhang, e.g. over a coop's windows
+  const eaveOv2 = style.overhang_right == null || style.overhang_right === '' ? eaveOv : Number(style.overhang_right) || 0;
   const gableOv = style.gable_overhang == null || style.gable_overhang === '' ? eaveOv : Number(style.gable_overhang) || 0;
   const inch = (v, d) => (v === null || v === undefined || v === '' ? d : Number(v)) / 12;
   const casing = inch(style.casing_trim, 4), corner = inch(style.corner_trim, 5);
-  return { W, D, H, S, L, s, k, ridgeAlongZ, profile, prof, isGable, topAt, profileUs, peak, eaveOv, gableOv, casing, corner, wallLen: w => wallLength(w, size) };
+  return { W, D, H, S, L, s, k, ridgeAlongZ, profile, prof, isGable, topAt, profileUs, peak, eaveOv, eaveOv2, gableOv, casing, corner, wallLen: w => wallLength(w, size) };
 }
 
 /** Each roof section: pitch (x/12), length along the slope and horizontal run, in ft (no overhang). */
@@ -91,7 +93,7 @@ export function roofArea(geo) {
     len += l;
     const ux = Math.max(Math.abs(du) / l, 0.3);
     if (i === 0) len += geo.eaveOv / ux;
-    if (i === pr.length - 2) len += geo.eaveOv / ux;
+    if (i === pr.length - 2) len += (geo.eaveOv2 ?? geo.eaveOv) / ux;
   }
   return len * (geo.L + 2 * geo.gableOv);
 }
@@ -113,6 +115,8 @@ export function inGable(geo, opt, item) {
 /** Trim around an opening (ft): side casing, head casing and (windows/vents) the flat bottom casing. */
 function trimPad(geo, opt) {
   if (opt.placement !== 'opening') return { side: 0, head: 0, sill: 0 };
+  // outside nest box: end boards beside it, the sloped lid + hinge board above, end boards running below
+  if (opt.kind === 'nest_box') return { side: 0.3, head: 0.45, sill: 0.3 };
   const win = String(opt.kind || '').startsWith('window'), cw = geo.casing ?? 0.33;
   let side = cw + (win ? 0.1 : 0.05);
   if (opt.kind === 'window_shutters') side = Math.max(side, cw + (Number(opt.width) || 2) * 0.55);

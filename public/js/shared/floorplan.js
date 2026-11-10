@@ -71,7 +71,18 @@ export function floorPlanSVG(catalog, config, meta = {}) {
       const cx = X(p.x) - p.nx * T / 2, cz = Z(p.z) - p.nz * T / 2;
       out.push(`<g transform="translate(${cx} ${cz}) rotate(${ang})">`);
       // local frame: x along wall, +y = outward
-      if (kind.startsWith('door')) {
+      if (kind === 'nest_box') {
+        // outside nest box: drawn outside the wall, with the nest compartments
+        const dd = Math.max(0.8, Number(o.depth) || 1.33) * S, nn = Math.max(1, Math.round(iw(o, it)));
+        out.push(`<line x1="${-w / 2}" y1="0" x2="${w / 2}" y2="0" stroke="#fff" stroke-width="${T - 2}"/>`);
+        out.push(`<rect x="${-w / 2}" y="${T / 2}" width="${w}" height="${dd}" fill="#f4efe4" stroke="#1d2624" stroke-width="1.5"/>`);
+        for (let k = 1; k < nn; k++) out.push(`<line x1="${-w / 2 + w * k / nn}" y1="${T / 2}" x2="${-w / 2 + w * k / nn}" y2="${T / 2 + dd}" stroke="#1d2624" stroke-opacity=".5"/>`);
+      } else if (kind === 'pop_door') {
+        const rd = Math.max(1.4, Number(o.depth) || 2.5) * S;
+        out.push(`<line x1="${-w / 2}" y1="0" x2="${w / 2}" y2="0" stroke="#fff" stroke-width="${T + 2}"/>`);
+        out.push(`<rect x="${-w / 2}" y="${T / 2}" width="${w}" height="${rd}" fill="#efe6d6" stroke="#1d2624" stroke-width="1"/>`);
+        for (let k = 1; k < 5; k++) out.push(`<line x1="${-w / 2}" y1="${T / 2 + rd * k / 5}" x2="${w / 2}" y2="${T / 2 + rd * k / 5}" stroke="#1d2624" stroke-opacity=".4"/>`);
+      } else if (kind.startsWith('door')) {
         if (kind === 'door_rollup') {
           out.push(`<line x1="${-w / 2}" y1="0" x2="${w / 2}" y2="0" stroke="#1d2624" stroke-width="2" stroke-dasharray="6 4"/>`);
           out.push(`<rect x="${-w / 2}" y="${-T / 2}" width="${w}" height="${T}" fill="none" stroke="#1d2624" stroke-width="1"/>`);
@@ -81,7 +92,7 @@ export function floorPlanSVG(catalog, config, meta = {}) {
           out.push(`<line x1="${-w / 2}" y1="0" x2="${w / 2}" y2="0" stroke="#fff" stroke-width="${T + 2}"/>`);
           for (let k = 0; k < leaves; k++) {
             // swing inward (local -y)
-            const hinge = leaves === 2 ? (k === 0 ? -w / 2 : w / 2) : (kind === 'door_panel' || kind === 'door_carriage_right' ? w / 2 : -w / 2);
+            const hinge = leaves === 2 ? (k === 0 ? -w / 2 : w / 2) : (kind === 'door_panel' || kind === 'door_carriage_right' || kind === 'door_coop' ? w / 2 : -w / 2);
             const dir = hinge < 0 ? 1 : -1;
             out.push(`<line x1="${hinge}" y1="${-T / 2}" x2="${hinge}" y2="${-T / 2 - lw}" stroke="#1d2624" stroke-width="3"/>`);
             out.push(`<path d="M ${hinge} ${-T / 2 - lw} A ${lw} ${lw} 0 0 ${dir > 0 ? 1 : 0} ${hinge + dir * lw} ${-T / 2}" fill="none" stroke="#1d2624" stroke-width="1.2" stroke-dasharray="4 3"/>`);
@@ -94,7 +105,11 @@ export function floorPlanSVG(catalog, config, meta = {}) {
       out.push(`</g>`);
       // label outside
       // label just outside the wall; side-wall labels are anchored away from the wall so they never overlap it
-      const lp = { x: X(p.x) + p.nx * 22, z: Z(p.z) + p.nz * 30 };
+      // a window above an outside nest box: its label goes past the box; the nest box is labelled inside its outline
+      if (kind === 'nest_box') { const dd = Math.max(0.8, Number(o.depth) || 1.33) * S; out.push(`<text x="${X(p.x) + p.nx * (T / 2 + dd / 2)}" y="${Z(p.z) + p.nz * (T / 2 + dd / 2) + 4}" font-size="11" text-anchor="middle" fill="#3b4744" transform="rotate(${p.nx ? -90 : 0} ${X(p.x) + p.nx * (T / 2 + dd / 2)} ${Z(p.z) + p.nz * (T / 2 + dd / 2)})">${esc(shortName(o))}</text>`); continue; }
+      const nest = items.find(r => r.o.kind === 'nest_box' && r.it.wall === it.wall && Math.abs((r.it.offset || 0) - (it.offset || 0)) < iw(r.o, r.it) / 2 + 0.2);
+      const push = nest ? Math.max(0.8, Number(nest.o.depth) || 1.33) * S : 0;
+      const lp = { x: X(p.x) + p.nx * (22 + push), z: Z(p.z) + p.nz * (30 + push) };
       const anchor = p.nx < 0 ? 'end' : p.nx > 0 ? 'start' : 'middle';
       out.push(`<text x="${lp.x}" y="${lp.z + 4}" font-size="12" text-anchor="${anchor}" fill="#3b4744">${esc(shortName(o) + (it.gable || o.gable_mode === 'only' ? ' (in gable)' : ''))}</text>`);
       continue;

@@ -155,8 +155,57 @@ export function seed() {
     standard_options: [{ option_id: O.roll8, wall: 'front', offset: 0 }, { option_id: O.door36, wall: 'right', offset: 2 }, { option_id: O.win23, wall: 'left', offset: 0 }],
   }, [[10, 12], [10, 16], [12, 16], [12, 20], [12, 24], [14, 24]], 42, 2400);
 
-  setSettings({ migr_catalog_v3: true, migr_shelf_floor: true });
+  addChickenCoop();
+  setSettings({ migr_catalog_v3: true, migr_shelf_floor: true, migr_coop: true });
   console.log('  Seeded sample catalog (styles, sizes, colors, options).');
+}
+
+// ---- Chicken coop: its own style plus coop-only parts (walk-in door, small windows, outside nest box,
+// chicken door with ramp, roost bars). Added to new installs and, once, to existing ones. Prices are starting
+// points to edit in the admin. The coop parts are offered only on coop styles (options.only_styles).
+export const COOP_OPTIONS = [
+  { key: 'door', name: '30" Coop Door', description: 'Walk-in coop door: siding-coloured boards with a trim-coloured frame and black hinges.', category: 'doors', kind: 'door_coop', placement: 'opening', swap_group: 'door', width: 2.5, height: 5.5, price: 225, sort: 20 },
+  { key: 'window', name: 'Coop Window (16" x 27")', description: 'Small single-hung window with 2x2 grids top and bottom.', category: 'windows', kind: 'window', placement: 'opening', swap_group: 'window', width: 16 / 12, height: 2.25, elevation: 3.25, grid_top: '2x2', grid_bottom: '2x2', price: 125, sort: 20 },
+  { key: 'nest', name: 'Outside Nest Box', description: 'Nest box on the outside wall with a hinged lid, so you can collect eggs without going in. About one nest per foot. Pick the length.', category: 'exterior', kind: 'nest_box', placement: 'opening', width: 5, height: 1, depth: 16 / 12, elevation: 1.4, price: 55, price_unit: 'per_ft_item', length_choices: '3, 4, 5, 6, 8', max_qty: 2, sort: 20 },
+  { key: 'pop', name: 'Chicken Door with Ramp', description: 'Small chicken door near the floor with a cleated ramp down to the ground.', category: 'exterior', kind: 'pop_door', placement: 'opening', width: 13 / 12, height: 1.5, depth: 2.5, elevation: 0.08, price: 95, max_qty: 2, sort: 21 },
+  { key: 'roost', name: 'Roost Bars', description: 'Two 2x4 roost bars at different heights on braced arms along an inside wall. Pick the length.', category: 'interior', kind: 'roost', placement: 'wall_interior', width: 6, height: 4, depth: 2, elevation: 0, price: 14, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10', max_qty: 2, sort: 20 },
+];
+export function addChickenCoop() {
+  const ins = (table, obj) => {
+    const keys = Object.keys(obj);
+    return Number(run(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, ...keys.map(k => (obj[k] !== null && typeof obj[k] === 'object' ? JSON.stringify(obj[k]) : obj[k]))).lastInsertRowid);
+  };
+  const O = {};
+  for (const { key, ...o } of COOP_OPTIONS) O[key] = get('SELECT id FROM options WHERE name = ?', o.name)?.id || ins('options', o);
+  let styleId = get("SELECT id FROM styles WHERE name = 'Chicken Coop'")?.id;
+  if (!styleId) {
+    const color = (cat, ...names) => { for (const n of names) { const r = get('SELECT id FROM colors WHERE category = ? AND name = ?', cat, n); if (r) return r.id; } return get('SELECT id FROM colors WHERE category = ? ORDER BY sort, id LIMIT 1', cat)?.id; };
+    const opt = (where, ...p) => get(`SELECT id FROM options WHERE ${where} ORDER BY sort, id LIMIT 1`, ...p)?.id;
+    // what else a coop can have: other doors/windows that fit, a gable vent, a cupola, shelves and the usual upgrades
+    const extras = [opt("kind = 'door_panel'"), opt("kind = 'window' AND width <= 2.1 AND COALESCE(gable_mode, '') <> 'only'"), opt("kind = 'window' AND gable_mode = 'only'"), opt("kind = 'vent'"),
+      opt("kind = 'cupola'"), opt("kind = 'shelf'"), opt("kind = 'flowerbox'"), opt("name = 'Anchor Kit'"), opt("name = '3/4\" Floor Upgrade'")].filter(Boolean);
+    styleId = ins('styles', {
+      name: 'Chicken Coop', description: 'Walk-in coop with an outside nest box, chicken door and ramp, and roost bars. Deep roof overhang over the windows.',
+      roof_type: 'gable', ridge_axis: 'depth', wall_height: 6, roof_pitch: 6, overhang: 0.5, overhang_right: 1.5, gable_overhang: 0.33,
+      siding_type: 'lp_smartside', roof_material: 'metal', corner_trim: 5.5, sort: 10,
+      default_colors: { siding: color('siding', 'Pewter', 'Charcoal'), trim: color('trim', 'White'), roof: color('roof', 'Galvalume'), door: color('door', 'Match Trim') },
+      standard_options: [
+        { option_id: O.door, wall: 'front', offset: -0.6 },
+        { option_id: O.window, wall: 'right', offset: -2.3 }, { option_id: O.window, wall: 'right', offset: 0 }, { option_id: O.window, wall: 'right', offset: 2.3 },
+        { option_id: O.nest, wall: 'right', offset: 0 },
+        { option_id: O.pop, wall: 'back', offset: 1.2 },
+        { option_id: O.roost, wall: 'left', offset: 0 },
+      ],
+      available_options: [...Object.values(O), ...extras],
+    });
+    [[6, 8], [6, 10], [8, 8], [8, 10], [8, 12], [10, 12]].forEach(([w, d], i) => ins('sizes', { style_id: styleId, width: w, depth: d, price: Math.round((w * d * 40 + 1000) / 5) * 5, sort: i }));
+  }
+  // coop parts show up only on coop styles
+  for (const id of Object.values(O)) {
+    const cur = get('SELECT only_styles FROM options WHERE id = ?', id)?.only_styles;
+    if (!cur) run('UPDATE options SET only_styles = ? WHERE id = ?', JSON.stringify([styleId]), id);
+  }
+  return { styleId, options: O };
 }
 
 // Door / shelf models added after the first release. A database made by an older version only gets its
@@ -169,6 +218,7 @@ export const NEW_OPTIONS = [
   { kind: 'shelf_double', name: 'Double Shelves (20" deep)', description: 'Built-in double shelves: 2x4 frame with front legs, OSB tops, 20" deep. Lower shelf about 15" off the floor, top at 36". Pick the length, then drag it along the wall.', category: 'interior', placement: 'wall_interior', width: 6, height: 3, depth: 20 / 12, elevation: 0, price: 24, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10, 12', sort: 3 },
 ];
 export function upgradeCatalog() {
+  if (!getSettings().migr_coop) { addChickenCoop(); setSettings({ migr_coop: true }); console.log('  Catalog updated: added the Chicken Coop style and coop parts.'); }
   if (!getSettings().migr_shelf_floor) {
     // double shelves became floor-standing (legs, top at 36") - move the stock option down to the floor
     run(`UPDATE options SET elevation = 0, height = 3, description = 'Built-in double shelves: 2x4 frame with front legs, OSB tops, 20" deep. Lower shelf about 15" off the floor, top at 36". Pick the length, then drag it along the wall.' WHERE kind = 'shelf_double' AND elevation = 2.5 AND height = 2.5`);

@@ -330,19 +330,20 @@ v1.post('/quotes/:id/resend', (req, res) => {
 
 // ---- Generic CRUD for catalog + webhooks
 const TABLES = {
-  styles: ['name', 'description', 'image_url', 'roof_type', 'ridge_axis', 'wall_height', 'roof_pitch', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'rake_tail', 'overhang', 'gable_overhang', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'roof_edge', 'rake_cap_size', 'drip_edge_size', 'drip_edge_color', 'corner_trim', 'casing_trim', 'siding_type', 'trim_type', 'roof_material', 'roof_choices', 'available_options', 'standard_options', 'default_colors', 'active', 'sort'],
+  styles: ['name', 'description', 'image_url', 'roof_type', 'ridge_axis', 'wall_height', 'roof_pitch', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'rake_tail', 'overhang', 'gable_overhang', 'overhang_right', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'roof_edge', 'rake_cap_size', 'drip_edge_size', 'drip_edge_color', 'corner_trim', 'casing_trim', 'siding_type', 'trim_type', 'roof_material', 'roof_choices', 'available_options', 'standard_options', 'default_colors', 'active', 'sort'],
   sizes: ['style_id', 'width', 'depth', 'price', 'hip_len', 'upper_len', 'active', 'sort'],
   colors: ['name', 'hex', 'category', 'material', 'price', 'active', 'sort'],
-  options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
+  options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'only_styles', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
   webhooks: ['name', 'url', 'events', 'secret', 'headers', 'active'],
 };
 function clean(table, body) {
   const out = {};
   for (const k of TABLES[table]) if (body && k in body) {
     let v = body[k];
-    if (k === 'available_options' && !Array.isArray(v)) v = null;
+    if ((k === 'available_options' || k === 'only_styles') && !Array.isArray(v)) v = null;
+    else if (k === 'only_styles') v = v.length ? JSON.stringify([...new Set(v.map(Number).filter(n => n > 0))]) : null;
     else if (JSON_COLS.has(k) && typeof v !== 'string') v = JSON.stringify(v ?? (k === 'headers' || k === 'default_colors' ? {} : []));
-    if (['gable_overhang', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'hip_len', 'upper_len', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'rake_cap_size', 'drip_edge_size', 'corner_trim', 'casing_trim'].includes(k) && (v === '' || v === undefined)) v = null;
+    if (['overhang_right', 'gable_overhang', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'hip_len', 'upper_len', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'rake_cap_size', 'drip_edge_size', 'corner_trim', 'casing_trim'].includes(k) && (v === '' || v === undefined)) v = null;
     if (typeof v === 'boolean') v = v ? 1 : 0;
     if (v === '') v = null;
     out[k] = v;
@@ -616,6 +617,11 @@ admin.post('/duplicate/:table/:id', (req, res) => {
   const id = Number(run(`INSERT INTO ${t} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, ...keys.map(k => row[k])).lastInsertRowid);
   if (t === 'styles') for (const z of db.prepare('SELECT * FROM sizes WHERE style_id = ?').all(Number(req.params.id)))
     run('INSERT INTO sizes (style_id, width, depth, price, active, sort) VALUES (?,?,?,?,?,?)', id, z.width, z.depth, z.price, z.active, z.sort);
+  // options limited to the original style (e.g. coop parts) are offered on the copy too
+  if (t === 'styles') for (const o of db.prepare('SELECT id, only_styles FROM options WHERE only_styles IS NOT NULL').all()) {
+    let list; try { list = JSON.parse(o.only_styles); } catch { continue; }
+    if (Array.isArray(list) && list.map(Number).includes(Number(req.params.id))) run('UPDATE options SET only_styles = ? WHERE id = ?', JSON.stringify([...list, id]), o.id);
+  }
   res.json({ id });
 });
 admin.put('/styles/:id/sizes', (req, res) => {

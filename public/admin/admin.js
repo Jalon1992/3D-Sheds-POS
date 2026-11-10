@@ -390,6 +390,7 @@ const STYLE_FIELDS = () => [
   { key: 'trim_type', label: 'Wood trim', type: 'select', options: [['lp', 'LP SmartSide trim (cedar texture)'], ['smooth', 'Smooth trim']], help: 'Corner boards, fascia, door & window trim. Metal trim is always smooth.' },
   { key: 'overhang', label: 'Eave overhang (ft)', type: 'number', step: '0.05', help: 'Along the low sides of the roof (where water runs off).' },
   { key: 'gable_overhang', label: 'Gable overhang (ft)', type: 'number', step: '0.05', help: 'At the gable/rake ends. Blank = same as eave.' },
+  { key: 'overhang_right', label: 'Deeper eave on one side (ft)', type: 'number', step: '0.05', help: 'Optional. A longer overhang on the right-hand eave (seen from the front), e.g. over a chicken coop\'s windows. On a style whose ridge runs across, it\'s the front eave. Blank = same as the eave overhang.' },
   { type: 'section', label: 'Trim sizes (inches)' },
   { key: 'fascia_size', label: 'Fascia height (in)', type: 'number', step: '0.25', ph: '5.5', help: 'Board along the eaves. Trim color.' },
   { type: 'section', label: 'Roof edges (rake & drip edge)' },
@@ -450,6 +451,9 @@ function styleEditor(style) {
   let stds = (s.standard_options || []).filter(x => catalog.options.some(o => o.id === Number(x.option_id))).map(x => ({ ...x }));
   let previewIdx = Math.min(sizes.length - 1, 1);
   let avail = Array.isArray(s.available_options) ? s.available_options.map(Number) : null; // null = all options
+  // options limited to other styles (e.g. coop parts): off here unless ticked, which adds this style to the option
+  const limited = o => Array.isArray(o.only_styles) && o.only_styles.length > 0 && !o.only_styles.map(Number).includes(Number(s.id));
+  const unlock = new Set();
   const availHTML = () => {
     const stdIds = new Set(stds.map(x => Number(x.option_id)));
     const cats = CATEGORIES.filter(([k]) => catalog.options.some(o => o.category === k));
@@ -457,7 +461,7 @@ function styleEditor(style) {
     return `<div class="row" style="gap:14px;margin-bottom:8px"><span class="muted" style="font-size:13px">${off ? `<b>${off}</b> option${off > 1 ? 's' : ''} hidden on this style` : 'Every option is offered on this style'}</span>
         <button type="button" class="btn link sm" id="avAll">Tick all</button><button type="button" class="btn link sm" id="avNone">Untick all</button></div>
       <div class="avgrid">${cats.map(([k, l]) => `<div><b>${esc(l)}</b>${catalog.options.filter(o => o.category === k).map(o => {
-        const std = stdIds.has(o.id), on = !avail || std || avail.includes(o.id);
+        const std = stdIds.has(o.id), on = std || (limited(o) ? unlock.has(o.id) : !avail || avail.includes(o.id));
         return `<label class="chk"><input type="checkbox" data-av="${o.id}" ${on ? 'checked' : ''} ${std ? 'disabled title="Standard on this style — always offered"' : ''}>${esc(o.name)}${std ? ' <span class="muted">(standard)</span>' : ''}${o.active ? '' : ' <span class="muted">(hidden everywhere)</span>'}</label>`;
       }).join('')}</div>`).join('')}</div>
       <div class="muted" style="font-size:12px;margin-top:6px">Untick anything this style shouldn't offer — customers won't see it on this style. Standard options are always offered. While everything is ticked, options you add later are offered here automatically; once something is unticked, tick new options here to offer them.</div>`;
@@ -540,7 +544,8 @@ function styleEditor(style) {
         if (d.std !== undefined) { stds[d.std][d.k] = stdVal(d.k, e.target); later(); }
         if (d.av !== undefined) {
           const ticked = $$('[data-av]', root).filter(x => x.checked && !x.disabled).map(x => Number(x.dataset.av));
-          const free = catalog.options.filter(o => !stds.some(x => Number(x.option_id) === o.id)).map(o => o.id);
+          for (const o of catalog.options.filter(limited)) ticked.includes(o.id) ? unlock.add(o.id) : unlock.delete(o.id);
+          const free = catalog.options.filter(o => !stds.some(x => Number(x.option_id) === o.id) && !limited(o)).map(o => o.id);
           avail = free.every(id => ticked.includes(id)) ? null : ticked;
           redrawAvail();
         }
@@ -562,6 +567,7 @@ function styleEditor(style) {
         const d = collect();
         if (!d.name) throw new Error('Name is required');
         const saved = isNew ? await api('POST', '/api/v1/styles', d) : await api('PATCH', `/api/v1/styles/${s.id}`, d);
+        for (const id of unlock) { const o = catalog.options.find(x => x.id === id); if (o) await api('PATCH', `/api/v1/options/${id}`, { only_styles: [...new Set([...o.only_styles.map(Number), Number(saved.id)])] }); }
         await api('PUT', `/api/admin/styles/${saved.id}/sizes`, sizes.map(z => ({ ...z, width: Number(z.width), depth: Number(z.depth), price: Number(z.price), hip_len: Number(z.hip_len) || null, upper_len: Number(z.upper_len) || null })));
         closeModal(); toast('Style saved'); styles();
       });
@@ -746,10 +752,11 @@ function optionEditor(row) {
         <div class="section-t">Offered on these styles</div>
         <div class="full row" style="gap:6px 16px" id="optStyles">${catalog.styles.map(st => {
           const std = row && (st.standard_options || []).some(x => Number(x.option_id) === row.id);
-          const on = !row ? !Array.isArray(st.available_options) : (std || !Array.isArray(st.available_options) || st.available_options.map(Number).includes(row.id));
+          const only = Array.isArray(o.only_styles) && o.only_styles.length ? o.only_styles.map(Number) : null;
+          const on = !row ? !Array.isArray(st.available_options) : (std || ((!only || only.includes(st.id)) && (!Array.isArray(st.available_options) || st.available_options.map(Number).includes(row.id))));
           return `<label class="chk"><input type="checkbox" data-ost="${st.id}" ${on ? 'checked' : ''} ${std ? 'disabled title="Standard on this style"' : ''}>${esc(st.name)}${std ? ' <span class="muted">(standard)</span>' : ''}</label>`;
         }).join('')}</div>
-        <div class="full muted" style="font-size:12px">Untick a style to hide this option there. Same setting as “Options offered on this style” in the style editor.</div>
+        <div class="full muted" style="font-size:12px">Untick a style to hide this option there (e.g. nest boxes only on chicken coops).</div>
         <div class="section-t">What's in this package <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">(optional — e.g. an electrical package)</span></div>
         <div class="full" id="pkgBox"></div></form>
       <div><div class="preview3d" id="pv"><div class="pv-note">3D preview</div></div>
@@ -808,21 +815,15 @@ function optionEditor(row) {
         const d = readFields($('#of', root), fields);
         if (!d.name) throw new Error('Name is required');
         d.package_items = pkOut();
+        // per-style availability: the ticked styles are stored on the option ("only on these styles"; all ticked =
+        // every style, including styles added later). A style that lists its options one by one gets this one added.
+        const ticked = $$('[data-ost]', root).filter(el => el.checked).map(el => Number(el.dataset.ost));
+        d.only_styles = ticked.length === catalog.styles.length ? null : ticked;
         const saved = row ? await api('PATCH', `/api/v1/options/${row.id}`, d) : await api('POST', '/api/v1/options', d);
         const id = Number(saved?.id ?? row?.id);
-        // per-style availability
-        for (const el of $$('[data-ost]', root)) {
-          if (el.disabled) continue;
-          const st = catalog.styles.find(x => x.id === Number(el.dataset.ost)); if (!st) continue;
-          const list = Array.isArray(st.available_options) ? st.available_options.map(Number) : null;
-          const has = !list || list.includes(id);
-          if (el.checked === has) continue;
-          let next;
-          if (el.checked) next = [...list, id];
-          else next = (list || catalog.options.map(o => o.id).concat(row ? [] : [id])).filter(x => x !== id);
-          const allIds = catalog.options.map(o => o.id).concat(row ? [] : [id]);
-          if (allIds.every(x => next.includes(x))) next = null; // everything offered again
-          await api('PATCH', `/api/v1/styles/${st.id}`, { available_options: next });
+        for (const stId of ticked) {
+          const st = catalog.styles.find(x => x.id === stId);
+          if (st && Array.isArray(st.available_options) && !st.available_options.map(Number).includes(id)) await api('PATCH', `/api/v1/styles/${st.id}`, { available_options: [...st.available_options.map(Number), id] });
         }
         closeModal(); toast('Option saved'); options();
       });
