@@ -159,6 +159,9 @@ test('catalog upgrade: an existing install gets the Chicken Coop style and parts
     assert.equal(coop.standard_options.length, 7); assert.equal(coop.sizes.length, 6);
     assert.match(firstLog, /added the Chicken Coop/, 'added on the first start after the update');
     assert.doesNotMatch(s.log(), /added the Chicken Coop/, 'not again on the next start');
+  } finally { await s.stop(); }
+});
+
 test('restore: move a company to a new install from a full backup (data, files, logins); bad files refused; developer only', async () => {
   // the old install: a company with its own name, a quote and an uploaded model
   const a = newDir(); mkdirSync(join(a, 'uploads'), { recursive: true }); writeFileSync(join(a, 'uploads', 'coop.glb'), 'glTF-pretend');
