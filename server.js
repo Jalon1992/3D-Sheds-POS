@@ -2,11 +2,12 @@
 import express from 'express';
 import multer from 'multer';
 import crypto from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync, readFileSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, readFileSync, rmSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { db, all, get, run, getSettings, setSettings, getCatalog, JSON_COLS, SCHEMA_VERSION, DB_SCHEMA, BACKUP_DIR, PRE_UPDATE } from './src/db.js';
+import { db, all, get, run, getSettings, setSettings, getCatalog, JSON_COLS, SCHEMA_VERSION, DB_SCHEMA, BACKUP_DIR, PRE_UPDATE, RESTORED } from './src/db.js';
+import { stageRestore, cancelRestore } from './src/restore.js';
 import { APP_VERSION } from './src/version.js';
 import { backupNow, listBackups, startBackups, offsiteOn, offsite, NAME_RE } from './src/backup.js';
 import { seed } from './src/seed.js';
@@ -40,6 +41,9 @@ await seedContracts();
 if (getSettings().modules === undefined) setSettings({ modules: normalizeModules(process.env.MODULES || 'all') });
 let MODS = normalizeModules(getSettings().modules);
 setModuleSource(() => MODS);
+// Just restored a backup: everyone signs in again (the backup's own sign-in key is replaced, so logins made on the
+// install the backup came from don't work here), and the System page says what was restored.
+if (RESTORED) { run("DELETE FROM settings WHERE key = '_session_secret'"); setSettings({ _restored: RESTORED }); }
 // The developer login (DEVOPS_EMAIL + DEVOPS_PASSWORD) is the only one that can switch modules once it exists.
 // Re-applied on every start, so the password in the hosting settings always works (also a lock-out fix).
 (function ensureDevops() {
@@ -462,7 +466,7 @@ admin.get('/system', (req, res) => {
   if (!canManageModules(req.user)) return bad(res, 'Only the developer login can see this.', 403);
   const o = offsite();
   res.json({ version: APP_VERSION, schema: DB_SCHEMA, schema_code: SCHEMA_VERSION, node: process.version, uptime_s: Math.round(process.uptime()),
-    backups: listBackups(), last: getSettings()._backup_last || null, pre_update: PRE_UPDATE.file ? { name: PRE_UPDATE.file.split(/[\\/]/).pop(), from: PRE_UPDATE.from } : null,
+    backups: listBackups(), last: getSettings()._backup_last || null, restored: getSettings()._restored || null, pre_update: PRE_UPDATE.file ? { name: PRE_UPDATE.file.split(/[\\/]/).pop(), from: PRE_UPDATE.from } : null,
     offsite: offsiteOn() ? { on: true, endpoint: o.endpoint.replace(/^https?:\/\//, ''), bucket: o.bucket, prefix: o.prefix || null } : { on: false },
     schedule: process.env.BACKUP_DISABLED === '1' ? 'off' : `daily at ${process.env.BACKUP_HOUR || 3}:00 (${getSettings().timezone || 'America/Chicago'}) and before every update`, dir: BACKUP_DIR });
 });
@@ -470,6 +474,28 @@ admin.post('/system/backup', wrap(async (req, res) => {
   if (!canManageModules(req.user)) return bad(res, 'Only the developer login can do this.', 403);
   const r = await backupNow('manual');
   r.error && !r.size ? bad(res, 'Backup failed: ' + r.error, 500) : res.json(r);
+}));
+// Restore: upload a backup (full .tar.gz or database .db), it's checked, a safety backup of what's here now is made,
+// then the app restarts and swaps the backup in before the database opens. Moves a company to a new install.
+const restoreUpload = multer({ storage: multer.diskStorage({ destination: (req, f, cb) => { try { mkdirSync(BACKUP_DIR, { recursive: true }); cb(null, BACKUP_DIR); } catch (e) { cb(e); } }, filename: (req, f, cb) => cb(null, `.incoming-${crypto.randomBytes(8).toString('hex')}`) }),
+  limits: { fileSize: (Number(process.env.RESTORE_MAX_MB) || 2048) * 1024 * 1024, files: 1, fields: 2 } });
+admin.post('/system/restore', (req, res, next) => (canManageModules(req.user) ? next() : bad(res, 'Only the developer login can restore backups.', 403)), restoreUpload.single('backup'), wrap(async (req, res) => {
+  const tmp = req.file?.path;
+  try {
+    if (!tmp) return bad(res, 'Choose a backup file.');
+    if (String(req.body?.confirm || '').trim().toUpperCase() !== 'RESTORE') return bad(res, 'Type RESTORE to confirm.');
+    let info;
+    try { info = await stageRestore(tmp, req.file.originalname, req.user.email); } catch (e) { return bad(res, e.message); }
+    const safety = await backupNow('before restore');
+    if (safety.error && !safety.size) { cancelRestore(); return bad(res, 'Could not back up this install first, so nothing was restored: ' + safety.error, 500); }
+    res.json({ ok: true, restarting: true, restored: info, safety_backup: safety.name });
+    console.log(`  Restoring ${req.file.originalname} (from ${info.company || 'unknown company'}): restarting to swap it in.`);
+    // restart: the hosting platform starts the app again (Railway's restart policy restarts on a non-zero exit)
+    setTimeout(() => {
+      const stop = () => { try { db.close(); } catch { /* */ } process.exit(3); };
+      server.close(stop); setTimeout(stop, 3000); // open live-update streams never close on their own
+    }, 300);
+  } finally { if (tmp) rmSync(tmp, { force: true }); }
 }));
 admin.get('/system/backups/:name', (req, res) => {
   if (!canManageModules(req.user)) return bad(res, 'Only the developer login can download backups.', 403);

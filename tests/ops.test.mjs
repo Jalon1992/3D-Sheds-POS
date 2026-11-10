@@ -161,3 +161,58 @@ test('catalog upgrade: an existing install gets the Chicken Coop style and parts
     assert.doesNotMatch(s.log(), /added the Chicken Coop/, 'not again on the next start');
   } finally { await s.stop(); }
 });
+
+test('restore: move a company to a new install from a full backup (data, files, logins); bad files refused; developer only', async () => {
+  // the old install: a company with its own name, a quote and an uploaded model
+  const a = newDir(); mkdirSync(join(a, 'uploads'), { recursive: true }); writeFileSync(join(a, 'uploads', 'coop.glb'), 'glTF-pretend');
+  let s = boot(a, { BACKUP_DISABLED: '1' }); await s.ready();
+  let backupFile;
+  try {
+    const dev = await login(s.B, 'dev@builder.test', 'dev-secret-123'), owner = await login(s.B, 'owner@test.com', 'owner-pass-1');
+    assert.equal((await fetch(s.B + '/api/admin/settings', { method: 'PUT', headers: { cookie: owner, 'Content-Type': 'application/json' }, body: JSON.stringify({ company_name: 'Sunflower Sheds' }) })).status, 200);
+    const cat = await (await fetch(s.B + '/api/v1/catalog')).json(), st = cat.styles[0];
+    assert.equal((await fetch(s.B + '/api/v1/quotes', { method: 'POST', headers: { cookie: owner, 'Content-Type': 'application/json' }, body: JSON.stringify({ config: { style_id: st.id, size_id: st.sizes[0].id }, customer: { first_name: 'Real', email: 'real@customer.test' } }) })).status, 201);
+    const r = await (await fetch(s.B + '/api/admin/system/backup', { method: 'POST', headers: { cookie: dev } })).json();
+    backupFile = join(a, 'data', 'backups', r.name);
+  } finally { await s.stop(); }
+
+  // the new install (fresh, its own test data)
+  const b = newDir(); s = boot(b, { BACKUP_DISABLED: '1' }); await s.ready();
+  const send = async (cookie, bytes, name, confirm = 'RESTORE') => { const fd = new FormData(); fd.append('confirm', confirm); fd.append('backup', new Blob([bytes]), name); const r = await fetch(s.B + '/api/admin/system/restore', { method: 'POST', headers: { cookie }, body: fd }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+  const evilTar = async entries => { const d = join(b, 'evil-' + Math.random().toString(36).slice(2)); mkdirSync(d); writeFileSync(join(d, 'shedbuilder.db'), readFileSync(join(b, 'data', 'shedbuilder.db'))); for (const [n, fn] of entries) fn(d, n); const f = d + '.tar.gz'; await tar.c({ gzip: true, file: f, cwd: d, portable: true, preservePaths: true }, ['shedbuilder.db', ...entries.map(e => e[0])]); return readFileSync(f); };
+  let oldCookie;
+  try {
+    const dev = await login(s.B, 'dev@builder.test', 'dev-secret-123'), owner = await login(s.B, 'owner@test.com', 'owner-pass-1'); oldCookie = owner;
+    const good = readFileSync(backupFile);
+    assert.equal((await send(owner, good, 'b.tar.gz')).status, 403, 'customer admin can\'t restore');
+    assert.match((await send(dev, good, 'b.tar.gz', 'yes')).body.error, /Type RESTORE/);
+    assert.match((await send(dev, Buffer.from('hello, not a backup at all'), 'x.tar.gz')).body.error, /isn't a backup/);
+    const { symlinkSync } = await import('node:fs');
+    assert.match((await send(dev, await evilTar([['uploads', (d) => { mkdirSync(join(d, 'uploads')); symlinkSync('/etc/passwd', join(d, 'uploads', 'pw')); }]]), 'link.tar.gz')).body.error, /link or special file/);
+    const trav = await (async () => { const d = join(b, 'trav'); mkdirSync(join(d, 'x'), { recursive: true }); writeFileSync(join(d, 'shedbuilder.db'), readFileSync(join(b, 'data', 'shedbuilder.db'))); writeFileSync(join(b, 'escaped.txt'), 'x'); const f = join(b, 'trav.tar.gz');
+      await tar.c({ gzip: true, file: f, cwd: d, preservePaths: true }, ['shedbuilder.db', '../escaped.txt']); return readFileSync(f); })();
+    assert.match((await send(dev, trav, 'trav.tar.gz')).body.error, /outside the backup folders/);
+    const notOurs = new DatabaseSync(join(b, 'other.db')); notOurs.exec('CREATE TABLE t (x)'); notOurs.close();
+    assert.match((await send(dev, readFileSync(join(b, 'other.db')), 'other.db')).body.error, /isn't a backup of this app/);
+    assert.ok(!existsSync(join(b, 'data', '.restore-pending')), 'nothing left waiting after refused uploads');
+    // the real one: accepted, a safety backup of this install is made, the app restarts
+    const ok = await send(dev, good, 'backup.tar.gz');
+    assert.equal(ok.status, 200, JSON.stringify(ok.body)); assert.equal(ok.body.restarting, true);
+    assert.equal(ok.body.restored.company, 'Sunflower Sheds'); assert.equal(ok.body.restored.counts.quotes, 1);
+    assert.match(ok.body.safety_backup, /^backup-/); assert.ok(existsSync(join(b, 'data', 'backups', ok.body.safety_backup)));
+    const ex = await s.exited; assert.notEqual(ex.code, 0, 'exits so the host restarts it');
+  } finally { s.proc.kill(); }
+  s = boot(b, { BACKUP_DISABLED: '1' }); await s.ready();
+  try {
+    const set = await (await fetch(s.B + '/api/v1/catalog')).json();
+    assert.equal(set.settings.company_name, 'Sunflower Sheds', 'the old install\'s data is here');
+    assert.ok(existsSync(join(b, 'uploads', 'coop.glb')), 'uploaded models came across');
+    assert.equal((await fetch(s.B + '/api/v1/quotes', { headers: { cookie: oldCookie } })).status, 401, 'everyone signs in again');
+    const dev = await login(s.B, 'dev@builder.test', 'dev-secret-123'), owner = await login(s.B, 'owner@test.com', 'owner-pass-1');
+    const qs = await (await fetch(s.B + '/api/v1/quotes', { headers: { cookie: owner } })).json();
+    assert.ok((qs.data || qs).some(q => q.customer?.email === 'real@customer.test' || q.email === 'real@customer.test'), 'the real quote is here');
+    const sys = await (await fetch(s.B + '/api/admin/system', { headers: { cookie: dev } })).json();
+    assert.equal(sys.restored.from, 'backup.tar.gz'); assert.ok(!existsSync(join(b, 'data', '.restore-pending')));
+    assert.match(s.log(), /Restored the backup backup\.tar\.gz/);
+  } finally { await s.stop(); }
+});
