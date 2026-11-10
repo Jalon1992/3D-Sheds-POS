@@ -554,6 +554,171 @@
       "upper_len": null
      }
     ]
+   },
+   {
+    "id": 5,
+    "name": "Chicken Coop",
+    "description": "Walk-in coop with an outside nest box, chicken door and ramp, and roost bars. Deep roof overhang over the windows.",
+    "image_url": null,
+    "roof_type": "gable",
+    "ridge_axis": "depth",
+    "wall_height": 6,
+    "roof_pitch": 6,
+    "overhang": 0.5,
+    "siding_type": "lp_smartside",
+    "roof_material": "metal",
+    "roof_choices": [
+     "shingle",
+     "metal"
+    ],
+    "gable_overhang": 0.33,
+    "standard_options": [
+     {
+      "option_id": 34,
+      "wall": "front",
+      "offset": -0.6
+     },
+     {
+      "option_id": 38,
+      "wall": "right",
+      "offset": -2.3
+     },
+     {
+      "option_id": 38,
+      "wall": "right",
+      "offset": 0
+     },
+     {
+      "option_id": 38,
+      "wall": "right",
+      "offset": 2.3
+     },
+     {
+      "option_id": 35,
+      "wall": "right",
+      "offset": 0
+     },
+     {
+      "option_id": 36,
+      "wall": "back",
+      "offset": 1.2
+     },
+     {
+      "option_id": 37,
+      "wall": "left",
+      "offset": 0
+     }
+    ],
+    "default_colors": {
+     "siding": 7,
+     "trim": 9,
+     "roof": 18,
+     "door": 31
+    },
+    "active": 1,
+    "sort": 10,
+    "fascia_size": null,
+    "rake_size": null,
+    "corner_trim": 5.5,
+    "casing_trim": null,
+    "roof_pitch_lower": null,
+    "gambrel_break": null,
+    "metal_rake_size": null,
+    "metal_rake_leg": null,
+    "trim_type": "lp",
+    "gambrel_lower_len": null,
+    "roof_pitch_back": null,
+    "roof_edge": "metal_rake",
+    "rake_cap_size": null,
+    "drip_edge_size": null,
+    "drip_edge_color": "roof",
+    "available_options": [
+     34,
+     38,
+     35,
+     36,
+     37,
+     1,
+     8,
+     29,
+     12,
+     15,
+     17,
+     13,
+     26,
+     25
+    ],
+    "gambrel_upper_len": null,
+    "rake_tail": null,
+    "overhang_right": 1.5,
+    "sizes": [
+     {
+      "id": 28,
+      "style_id": 5,
+      "width": 6,
+      "depth": 8,
+      "price": 2920,
+      "active": 1,
+      "sort": 0,
+      "hip_len": null,
+      "upper_len": null
+     },
+     {
+      "id": 29,
+      "style_id": 5,
+      "width": 6,
+      "depth": 10,
+      "price": 3400,
+      "active": 1,
+      "sort": 1,
+      "hip_len": null,
+      "upper_len": null
+     },
+     {
+      "id": 30,
+      "style_id": 5,
+      "width": 8,
+      "depth": 8,
+      "price": 3560,
+      "active": 1,
+      "sort": 2,
+      "hip_len": null,
+      "upper_len": null
+     },
+     {
+      "id": 31,
+      "style_id": 5,
+      "width": 8,
+      "depth": 10,
+      "price": 4200,
+      "active": 1,
+      "sort": 3,
+      "hip_len": null,
+      "upper_len": null
+     },
+     {
+      "id": 32,
+      "style_id": 5,
+      "width": 8,
+      "depth": 12,
+      "price": 4840,
+      "active": 1,
+      "sort": 4,
+      "hip_len": null,
+      "upper_len": null
+     },
+     {
+      "id": 33,
+      "style_id": 5,
+      "width": 10,
+      "depth": 12,
+      "price": 5800,
+      "active": 1,
+      "sort": 5,
+      "hip_len": null,
+      "upper_len": null
+     }
+    ]
    }
   ],
   "colors": [
@@ -1814,6 +1979,156 @@
     "grid_top": null,
     "grid_bottom": null,
     "length_choices": null
+   },
+   {
+    "id": 34,
+    "name": "30\" Coop Door",
+    "description": "Walk-in coop door: siding-coloured boards with a trim-coloured frame and black hinges.",
+    "category": "doors",
+    "kind": "door_coop",
+    "placement": "opening",
+    "swap_group": "door",
+    "width": 2.5,
+    "height": 5.5,
+    "depth": 0.3,
+    "elevation": 0,
+    "price": 225,
+    "price_unit": "each",
+    "model_url": null,
+    "image_url": null,
+    "plan_label": null,
+    "max_qty": 10,
+    "active": 1,
+    "sort": 20,
+    "gable_mode": "",
+    "package_items": null,
+    "package_only": 0,
+    "grid_top": null,
+    "grid_bottom": null,
+    "length_choices": null,
+    "only_styles": [
+     5
+    ]
+   },
+   {
+    "id": 35,
+    "name": "Outside Nest Box",
+    "description": "Nest box on the outside wall with a hinged lid, so you can collect eggs without going in. About one nest per foot. Pick the length.",
+    "category": "exterior",
+    "kind": "nest_box",
+    "placement": "opening",
+    "swap_group": null,
+    "width": 5,
+    "height": 1,
+    "depth": 1.3333333333333333,
+    "elevation": 1.4,
+    "price": 55,
+    "price_unit": "per_ft_item",
+    "model_url": null,
+    "image_url": null,
+    "plan_label": null,
+    "max_qty": 2,
+    "active": 1,
+    "sort": 20,
+    "gable_mode": "",
+    "package_items": null,
+    "package_only": 0,
+    "grid_top": null,
+    "grid_bottom": null,
+    "length_choices": "3, 4, 5, 6, 8",
+    "only_styles": [
+     5
+    ]
+   },
+   {
+    "id": 36,
+    "name": "Chicken Door with Ramp",
+    "description": "Small chicken door near the floor with a cleated ramp down to the ground.",
+    "category": "exterior",
+    "kind": "pop_door",
+    "placement": "opening",
+    "swap_group": null,
+    "width": 1.0833333333333333,
+    "height": 1.5,
+    "depth": 2.5,
+    "elevation": 0.08,
+    "price": 95,
+    "price_unit": "each",
+    "model_url": null,
+    "image_url": null,
+    "plan_label": null,
+    "max_qty": 2,
+    "active": 1,
+    "sort": 21,
+    "gable_mode": "",
+    "package_items": null,
+    "package_only": 0,
+    "grid_top": null,
+    "grid_bottom": null,
+    "length_choices": null,
+    "only_styles": [
+     5
+    ]
+   },
+   {
+    "id": 37,
+    "name": "Roost Bars",
+    "description": "Two 2x4 roost bars at different heights on braced arms along an inside wall. Pick the length.",
+    "category": "interior",
+    "kind": "roost",
+    "placement": "wall_interior",
+    "swap_group": null,
+    "width": 6,
+    "height": 4,
+    "depth": 2,
+    "elevation": 0,
+    "price": 14,
+    "price_unit": "per_ft_item",
+    "model_url": null,
+    "image_url": null,
+    "plan_label": null,
+    "max_qty": 2,
+    "active": 1,
+    "sort": 20,
+    "gable_mode": "",
+    "package_items": null,
+    "package_only": 0,
+    "grid_top": null,
+    "grid_bottom": null,
+    "length_choices": "4, 6, 8, 10",
+    "only_styles": [
+     5
+    ]
+   },
+   {
+    "id": 38,
+    "name": "Coop Window (16\" x 27\")",
+    "description": "Small single-hung window with 2x2 grids top and bottom.",
+    "category": "windows",
+    "kind": "window",
+    "placement": "opening",
+    "swap_group": "window",
+    "width": 1.3333333333333333,
+    "height": 2.25,
+    "depth": 0.3,
+    "elevation": 3.25,
+    "price": 125,
+    "price_unit": "each",
+    "model_url": null,
+    "image_url": null,
+    "plan_label": null,
+    "max_qty": 10,
+    "active": 1,
+    "sort": 20,
+    "gable_mode": "",
+    "package_items": null,
+    "package_only": 0,
+    "grid_top": "2x2",
+    "grid_bottom": "2x2",
+    "length_choices": null,
+    "only_styles": [
+     5
+    ]
    }
   ],
   "settings": {
