@@ -3,9 +3,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { APP_VERSION } from './version.js';
+import { applyPendingRestore } from './restore-apply.js';
 
 const DB_PATH = process.env.DB_PATH || './data/shedbuilder.db';
 mkdirSync(dirname(DB_PATH), { recursive: true });
+// a backup uploaded on System & backups is swapped in here, before the database opens (then migrations bring it up to date)
+export const RESTORED = applyPendingRestore(DB_PATH);
 const existed = existsSync(DB_PATH);
 export const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');

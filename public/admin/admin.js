@@ -1108,7 +1108,37 @@ async function systemPage() {
     <div class="card"><table class="tbl"><tr><th>Backup</th><th>Kind</th><th>Size</th><th>Made</th><th></th></tr>
       ${s.backups.map(b => `<tr><td><code style="font-size:12px">${esc(b.name)}</code></td><td>${b.kind === 'full' ? 'Full' : 'Database, before an update'}</td><td>${bytes(b.size)}</td><td class="muted">${fmtDate(b.at)}</td>
         <td class="num"><a class="btn ghost sm" href="/api/admin/system/backups/${encodeURIComponent(b.name)}" download>Download</a></td></tr>`).join('') || '<tr><td colspan="5" class="empty">No backups yet.</td></tr>'}</table></div>
-    <p class="muted" style="font-size:13px;margin-top:12px">To restore: stop the service, replace <code>shedbuilder.db</code> (and the <code>uploads</code> / <code>files</code> folders from a full backup) on the volume, then start it again. GO_LIVE.md has the steps.</p>`;
+    ${s.restored ? `<div class="callout" style="margin-top:16px"><b>Restored ${fmtDate(s.restored.applied_at)}</b> from <code>${esc(s.restored.from || 'a backup')}</code>${s.restored.company ? ` (${esc(s.restored.company)})` : ''}. Check <b>Settings → Company → Public URL</b> and your integrations if this install has a new address.</div>` : ''}
+    <div class="card card-pad" style="margin-top:16px"><h2>Restore from a backup</h2>
+      <p class="muted" style="margin:4px 0 12px">Replaces <b>everything on this install</b> (catalog, prices, settings, logins, customers, quotes, contracts, uploaded files) with a backup. Use it to move a company to a new install: download a <b>full backup</b> on the old install, then upload it here. This install is backed up first, and you'll sign in again afterwards.</p>
+      <form class="form" id="rf"><label class="fld full"><span>Backup file (.tar.gz full backup, or a .db database backup)</span><input type="file" name="backup" accept=".gz,.tgz,.tar.gz,.db,application/gzip"></label>
+        <label class="fld"><span>Type RESTORE to confirm</span><input name="confirm" autocomplete="off" placeholder="RESTORE"></label></form>
+      <div class="row" style="margin-top:12px;gap:12px;align-items:center"><button class="btn danger" id="rgo" type="button">Restore this backup</button><span class="muted" id="rstat"></span></div>
+      <div id="rbar" hidden style="height:6px;background:var(--line);border-radius:4px;margin-top:10px;overflow:hidden"><div style="height:100%;width:0;background:var(--brand);transition:width .2s"></div></div></div>`;
+  $('#rgo').onclick = guard(async () => {
+    const f = $('#rf'), file = f.backup.files[0];
+    if (!file) throw new Error('Choose a backup file first.');
+    if (f.confirm.value.trim().toUpperCase() !== 'RESTORE') throw new Error('Type RESTORE to confirm.');
+    if (!confirmBox(`Replace everything on this install with ${file.name}? This install is backed up first.`)) return;
+    const stat = $('#rstat'), bar = $('#rbar'), fill = bar.firstElementChild; bar.hidden = false; $('#rgo').disabled = true;
+    const fd = new FormData(); fd.append('confirm', 'RESTORE'); fd.append('backup', file);
+    const started = Date.now();
+    const r = await new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest(); x.open('POST', '/api/admin/system/restore');
+      x.upload.onprogress = e => { if (e.lengthComputable) { fill.style.width = Math.round(e.loaded / e.total * 90) + '%'; stat.textContent = `Uploading… ${Math.round(e.loaded / e.total * 100)}%`; } };
+      x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch { /* */ } x.status < 300 ? resolve(j) : reject(new Error(j.error || `Restore failed (${x.status})`)); };
+      x.onerror = () => reject(new Error('Upload failed — check the connection and try again.'));
+      stat.textContent = 'Uploading…'; x.send(fd);
+    }).catch(e => { $('#rgo').disabled = false; bar.hidden = true; stat.textContent = ''; throw e; });
+    fill.style.width = '95%';
+    stat.textContent = `Checked ${r.restored?.company ? `“${r.restored.company}” — ` : ''}${r.restored?.counts?.quotes ?? 0} quotes, ${r.restored?.counts?.styles ?? 0} styles. Restarting to swap it in…`;
+    // wait for the restart: the health check answers again with a fresh uptime
+    for (let i = 0; i < 90; i++) {
+      await new Promise(res => setTimeout(res, 2000));
+      try { const h = await (await fetch('/healthz', { cache: 'no-store' })).json(); if (h.uptime_s * 1000 < Date.now() - started + 5000 && h.checks?.database) { fill.style.width = '100%'; stat.textContent = 'Restored. Sign in again…'; setTimeout(() => location.assign('/admin/'), 1500); return; } } catch { /* restarting */ }
+    }
+    stat.textContent = "The app hasn't come back yet. In your hosting dashboard (Railway), restart the service; the restore finishes when it starts.";
+  });
   $('#bnow').onclick = guard(async () => { $('#bnow').disabled = true; $('#bnow').textContent = 'Backing up…'; try { const r = await api('POST', '/api/admin/system/backup'); toast(`Backup made (${bytes(r.size)})${r.offsite?.ok ? ' and copied off the server' : ''}`); } finally { systemPage(); } });
 }
 
