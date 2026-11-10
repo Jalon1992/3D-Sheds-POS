@@ -258,9 +258,11 @@ export function priceConfig(catalog, config) {
  *  The style's own standard options are always available. */
 export function optionAvailable(style, opt) {
   if (!style || !opt) return false;
+  if ((style.standard_options || []).some(s => Number(s.option_id) === Number(opt.id))) return true;
+  // an option can be limited to certain styles (e.g. nest boxes only on chicken coops)
+  if (Array.isArray(opt.only_styles) && opt.only_styles.length && !opt.only_styles.map(Number).includes(Number(style.id))) return false;
   const list = style.available_options;
   if (!Array.isArray(list)) return true;
-  if ((style.standard_options || []).some(s => Number(s.option_id) === Number(opt.id))) return true;
   return list.map(Number).includes(Number(opt.id));
 }
 

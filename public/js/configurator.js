@@ -178,6 +178,8 @@ function preferredWall(o) {
 }
 function addOption(o) {
   const items = state.config.items;
+  // only what this style offers (the server drops anything else, so the price would disagree)
+  if (!optionAvailable(curStyle(), o)) throw new Error(`${o.name} isn't offered on the ${curStyle()?.name || 'selected'} style`);
   if (o.placement === 'none') {
     const have = items.find(i => i.option_id === o.id && !i.package_of);
     if (have) return removeItem(have.uid);
@@ -735,8 +737,7 @@ $('#panel').addEventListener('click', e => {
     const [k, id] = d.color.split(':'); state.config.colors[k] = Number(id); rebuild(); renderPanel();
   } else if (d.acc) {
     state.openCats.has(d.acc) ? state.openCats.delete(d.acc) : state.openCats.add(d.acc); b.parentElement.classList.toggle('open');
-  } else if (d.add) addOption(optById[d.add]);
-  else if (d.toggle) addOption(optById[d.toggle]);
+  } else if (d.add || d.toggle) { try { addOption(optById[d.add || d.toggle]); } catch (e) { toast(e.message); } }
   else if (d.dec) {
     const list = state.config.items.filter(i => i.option_id === Number(d.dec) && !i.package_of);
     const nonStd = list.filter(i => !i.standard_of); removeItem((nonStd.at(-1) || list.at(-1)).uid);

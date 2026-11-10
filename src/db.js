@@ -234,6 +234,8 @@ for (const sql of [
   'ALTER TABLE options ADD COLUMN grid_top TEXT',
   'ALTER TABLE options ADD COLUMN grid_bottom TEXT',
   'ALTER TABLE options ADD COLUMN length_choices TEXT',
+  'ALTER TABLE options ADD COLUMN only_styles TEXT',                 // JSON list of style ids; null = every style
+  'ALTER TABLE styles ADD COLUMN overhang_right REAL',               // deeper eave on the second (right) side; null = same as overhang
 ]) { try { db.exec(sql); } catch { /* column already exists */ } }
 
 // One-time data fixes for existing databases
@@ -268,7 +270,7 @@ export const DB_SCHEMA = dbVersion();
 if (DB_SCHEMA > SCHEMA_VERSION) console.warn(`  ⚠  This database (schema ${DB_SCHEMA}) is newer than this version of the app (schema ${SCHEMA_VERSION}). That's expected right after undoing an update.`);
 
 // ---- JSON column helpers -----------------------------------------------------
-export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
+export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'only_styles', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
   'tags', 'stages', 'pages', 'fields', 'data', 'values_json', 'roles', 'read_by', 'payload']);
 
 export function parseRow(row) {

@@ -491,6 +491,47 @@ test('GoHighLevel: the quote PDF with pricing goes to the contact and opportunit
   await setS({ ghl_enabled: false, ghl_send_pdf: 1, ghl_add_note: 1, ghl_pdf_field: '', public_url: '' });
 });
 
+test('Chicken coop: own style, coop-only parts, nest box and roosts priced by length, deeper eave, drawings', async () => {
+  const cat = (await anon.get('/api/v1/catalog')).data;
+  const coop = cat.styles.find(s => s.name === 'Chicken Coop'); assert.ok(coop, 'coop style seeded');
+  assert.deepEqual(coop.sizes.map(z => `${z.width}x${z.depth}`), ['6x8', '6x10', '8x8', '8x10', '8x12', '10x12']);
+  assert.equal(coop.overhang_right, 1.5, 'deeper eave over the windows');
+  const k = kind => cat.options.find(o => o.kind === kind);
+  const nest = k('nest_box'), pop = k('pop_door'), roost = k('roost'), door = k('door_coop'), win = cat.options.find(o => o.name.startsWith('Coop Window'));
+  for (const o of [nest, pop, roost, door, win]) assert.deepEqual(o?.only_styles, [coop.id], (o?.name || '?') + ' only on the coop');
+  // the coop with its standard parts: all fit, all included
+  const sz = coop.sizes.find(z => z.width === 6 && z.depth === 10);
+  const std = (coop.standard_options || []).map((x, i) => ({ uid: 's' + i, standard_of: x.option_id, ...x }));
+  const p0 = (await anon.post('/api/v1/price', { style_id: coop.id, size_id: sz.id, items: std })).data;
+  assert.equal(p0.subtotal, sz.price, 'standard coop parts are included in the size price');
+  // a second, 3' nest box on the back wall beside the chicken door: 3 × the per-foot price
+  const big = coop.sizes.find(z => z.width === 8 && z.depth === 12), stdB = std.map(x => ({ ...x }));
+  const pB = (await anon.post('/api/v1/price', { style_id: coop.id, size_id: big.id, items: stdB })).data;
+  const p1 = (await anon.post('/api/v1/price', { style_id: coop.id, size_id: big.id, items: [...stdB, { uid: 'n2', option_id: nest.id, wall: 'back', offset: -2, w: 3 }] })).data;
+  assert.equal(p1.subtotal - pB.subtotal, 3 * nest.price);
+  assert.ok(p1.lines.some(l => l.uid === 'n2' && /3'/.test(l.detail || '')), 'priced by its length');
+  // one that would overlap the roost bars inside the left wall isn't accepted there
+  const p2 = (await anon.post('/api/v1/price', { style_id: coop.id, size_id: big.id, items: [...stdB, { uid: 'n3', option_id: nest.id, wall: 'left', offset: 0, w: 3 }] })).data;
+  assert.ok(!p2.lines.some(l => l.uid === 'n3' && l.wall === 'left'), 'no nest box through the roost bars');
+  // coop parts are dropped from other styles (a hand-made config can't sneak a nest box onto a garage)
+  const g = (await anon.post('/api/v1/price', { style_id: gable.id, size_id: gable.sizes[0].id, items: [{ uid: 'x', option_id: nest.id, wall: 'right', offset: 0 }] })).data;
+  assert.ok(!g.lines.some(l => /Nest Box/.test(l.label)), 'nest box not on a garden shed');
+  // a coop quote: the floor plan shows the nest box, chicken door and roost bars
+  const q = (await admin.post('/api/v1/quotes', { config: { style_id: coop.id, size_id: sz.id, items: std }, customer: { first_name: 'Hen', email: 'hen@test.com' } })).data;
+  assert.equal(q.config.items.length, 7, 'door, 3 windows, nest box, chicken door, roost bars');
+  const plan = await fetch(B + `/api/v1/quotes/${q.id}/floorplan.svg`, { headers: { cookie: admin.cookie } });
+  const svg = await plan.text(); for (const t of ['Outside Nest Box', 'Chicken Door with Ramp', 'Roost Bars', '30&quot; Coop Door']) assert.ok(svg.includes(t) || svg.includes(t.replace('&quot;', '"')), 'floor plan shows ' + t);
+  // admin: deeper eave is a style setting; "only on these styles" is an option setting; a copied coop keeps its parts
+  assert.equal((await admin.patch(`/api/v1/styles/${coop.id}`, { overhang_right: 2 })).data.overhang_right, 2);
+  await admin.patch(`/api/v1/styles/${coop.id}`, { overhang_right: 1.5 });
+  const dup = (await admin.post(`/api/admin/duplicate/styles/${coop.id}`)).data;
+  const nest2 = (await admin.get(`/api/v1/options/${nest.id}`)).data;
+  assert.deepEqual(nest2.only_styles, [coop.id, dup.id], 'the copy gets the coop parts too');
+  assert.equal((await admin.patch(`/api/v1/options/${roost.id}`, { only_styles: [] })).data.only_styles, null, 'empty list = every style');
+  await admin.patch(`/api/v1/options/${roost.id}`, { only_styles: [coop.id] });
+  await admin.del(`/api/v1/styles/${dup.id}`);
+});
+
 test('Quote PDF security: upload limits, page bombs, broken PDFs; who may read quotes and the priced PDF', async () => {
   await setS({ ghl_enabled: true, ghl_token: 'good-token', ghl_location_id: 'LOC1', ghl_pipeline_id: '', ghl_send_pdf: 1, ghl_add_note: 0, ghl_custom_fields: {}, ghl_pdf_field: '' });
   const mk = async () => (await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Sec', email: 'sec@test.com' }, with_drawings: true })).data;

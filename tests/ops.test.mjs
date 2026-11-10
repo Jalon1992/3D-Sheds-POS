@@ -139,3 +139,25 @@ test('redeploys: SIGTERM closes cleanly (exit 0) and the database is intact afte
   void es;
   const db = new DatabaseSync(join(dir, 'data', 'shedbuilder.db')); assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok'); db.close();
 });
+
+test('catalog upgrade: an existing install gets the Chicken Coop style and parts once (not on every restart, not twice)', async () => {
+  const dir = newDir(); let s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready(); await s.stop();
+  // make it look like a database from before the coop existed
+  const file = join(dir, 'data', 'shedbuilder.db'), db = new DatabaseSync(file);
+  db.exec("DELETE FROM sizes WHERE style_id IN (SELECT id FROM styles WHERE name = 'Chicken Coop'); DELETE FROM styles WHERE name = 'Chicken Coop'");
+  db.exec("DELETE FROM options WHERE kind IN ('nest_box', 'pop_door', 'roost', 'door_coop') OR name LIKE 'Coop Window%'; DELETE FROM settings WHERE key = 'migr_coop'");
+  const before = db.prepare('SELECT COUNT(*) AS n FROM styles').get().n; db.close();
+  s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready(); await s.stop();
+  const firstLog = s.log();
+  s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready();
+  try {
+    const cat = await (await fetch(s.B + '/api/v1/catalog')).json();
+    assert.equal(cat.styles.filter(x => x.name === 'Chicken Coop').length, 1);
+    assert.equal(cat.styles.length, before + 1);
+    assert.equal(cat.options.filter(o => o.kind === 'nest_box').length, 1);
+    const coop = cat.styles.find(x => x.name === 'Chicken Coop');
+    assert.equal(coop.standard_options.length, 7); assert.equal(coop.sizes.length, 6);
+    assert.match(firstLog, /added the Chicken Coop/, 'added on the first start after the update');
+    assert.doesNotMatch(s.log(), /added the Chicken Coop/, 'not again on the next start');
+  } finally { await s.stop(); }
+});
