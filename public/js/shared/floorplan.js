@@ -91,7 +91,7 @@ export function floorPlanSVG(catalog, config, meta = {}) {
         out.push(`<rect x="${-w / 2}" y="${T / 2}" width="${w}" height="${rd}" fill="#efe6d6" stroke="#1d2624" stroke-width="1"/>`);
         for (let k = 1; k < 5; k++) out.push(`<line x1="${-w / 2}" y1="${T / 2 + rd * k / 5}" x2="${w / 2}" y2="${T / 2 + rd * k / 5}" stroke="#1d2624" stroke-opacity=".4"/>`);
       } else if (kind.startsWith('door')) {
-        if (kind === 'door_rollup') {
+        if (kind === 'door_rollup' || kind === 'door_garage') {
           out.push(`<line x1="${-w / 2}" y1="0" x2="${w / 2}" y2="0" stroke="#1d2624" stroke-width="2" stroke-dasharray="6 4"/>`);
           out.push(`<rect x="${-w / 2}" y="${-T / 2}" width="${w}" height="${T}" fill="none" stroke="#1d2624" stroke-width="1"/>`);
         } else {

@@ -236,3 +236,22 @@ test('catalog upgrade: an install with the first coop gets 14" x 21" windows and
     assert.match(s.log(), /coop windows 14/);
   } finally { await s.stop(); }
 });
+
+test('catalog upgrade: an older install gets the four garage doors once, and keeps a door the shop renamed', async () => {
+  const dir = newDir(); let s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready(); await s.stop();
+  const db = new DatabaseSync(join(dir, 'data', 'shedbuilder.db'));
+  db.exec("DELETE FROM options WHERE kind = 'door_garage'; DELETE FROM settings WHERE key = 'migr_garage'");
+  db.close();
+  for (let round = 0; round < 2; round++) {
+    s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready();
+    try {
+      const cat = await (await fetch(s.B + '/api/v1/catalog')).json();
+      const g = cat.options.filter(o => o.kind === 'door_garage');
+      assert.equal(g.length, 4, 'four garage doors, added once');
+      assert.deepEqual(g.map(o => o.garage_panel + (o.insulated ? '+ins' : '')).sort(), ['carriage', 'carriage+ins', 'standard', 'standard+ins']);
+      assert.ok(g.filter(o => o.garage_panel === 'carriage').every(o => o.slanted_corners && o.garage_windows));
+      assert.ok(g.every(o => o.width === 9 && o.height === 7 && o.swap_group === 'door' && o.placement === 'opening'));
+      if (!round) assert.match(s.log(), /added garage doors/); else assert.doesNotMatch(s.log(), /added garage doors/);
+    } finally { await s.stop(); }
+  }
+});

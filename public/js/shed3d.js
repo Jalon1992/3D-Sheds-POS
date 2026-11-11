@@ -339,6 +339,12 @@ function tHinges(g, M, ex, hz, dir, strapLen, rows) {
     for (const dy of [-ph * 0.33, ph * 0.33]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * plateW / 2, y + dy, hz + 0.026); g.add(b); }
   }
 }
+/** Trim with slanted (45°) top corners, as on many garage and carriage doors: a trim-coloured triangle in each top corner. */
+function slantCorners(g, w, h, M) {
+  const c = Math.min(0.85, Math.max(0.4, w * 0.09)), zOut = WALL_T / 2;
+  const tri = new THREE.ExtrudeGeometry(new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(c, 0), new THREE.Vector2(0, -c)]), { depth: 0.06, bevelEnabled: false });
+  for (const sx of [-1, 1]) { const m = new THREE.Mesh(tri, M.trim); m.position.set(sx * w / 2, h, zOut); m.scale.x = -sx; m.castShadow = true; g.add(m); }
+}
 /** Painted siding colour without the board texture (small parts: coop door body, nest box floor, ramp). */
 const sidingPlain = M => M.sidingPlain || (M.sidingPlain = new THREE.MeshStandardMaterial({ color: M.siding.color.clone(), roughness: 0.85 }));
 /** The siding material (grooved LP panel) scaled to a w x h ft face of a box, so the grooves match the walls. */
@@ -404,7 +410,7 @@ function windowUnit(g, w, h, M, opts = {}) {
 
 export const BUILTIN_KINDS = {
   breaker: 'Breaker box (sub-panel)', switch: 'Light switch', door_single: 'Single door', door_carriage: 'Carriage-house door (single, hinged left)', door_carriage_right: 'Carriage-house door (single, right half of the 72", hinged right)', door_panel: 'Standard door (single, right half of the 6\' double, hinged right)', door_panel_double: 'Panel double doors (no windows)', door_carriage_double: 'Carriage-house double doors', door_glass: 'Glass/lite door', door_double: 'Double barn doors', door_french: 'French doors',
-  door_rollup: 'Roll-up door', window: 'Window', window_shutters: 'Window with shutters', window_transom: 'Transom window',
+  door_rollup: 'Roll-up door', door_garage: 'Garage door (overhead, standard or carriage house)', window: 'Window', window_shutters: 'Window with shutters', window_transom: 'Transom window',
   vent: 'Gable vent', flowerbox: 'Flower box', ext_light: 'Exterior light', shelf: 'Shelf', shelf_double: 'Double shelves (two levels)', workbench: 'Workbench',
   loft: 'Loft', light: 'Ceiling light', outlet: 'Outlet', ramp: 'Ramp', cupola: 'Cupola',
   door_coop: 'Coop door (siding-colour body, trim frame, black hinges)', nest_box: 'Chicken nest box (outside, hinged lid)', pop_door: 'Chicken door with ramp', roost: 'Chicken roost bars',
@@ -503,6 +509,61 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       for (const sx of [-1, 1]) for (const y of [h * 0.2, h * 0.8]) box(0.5, 0.08, 0.03, M.metal, sx * (w / 2 - 0.3), y, zOut + 0.04, g);
       box(0.06, 0.7, 0.05, M.metal, -0.12, h / 2, zOut + 0.06, g); box(0.06, 0.7, 0.05, M.metal, 0.12, h / 2, zOut + 0.06, g);
       casing(g, w, h, M, zOut);
+      break;
+    }
+    case 'door_garage': {
+      // Overhead sectional garage door. Standard: raised short panels (4 per section on a 9' door). Carriage house:
+      // grooved panels, black strap hinges and centre handles. Optional row of windows across the top section.
+      const o = ctx.opt || {}, carriage = o.garage_panel === 'carriage', wins = !!Number(o.garage_windows);
+      casing(g, w, h, M, zOut);
+      const zf = zOut - 0.09, fz = zf + 0.061;
+      const shade = M.garageShade || (M.garageShade = new THREE.MeshStandardMaterial({ color: M.door.color.clone().multiplyScalar(0.8), roughness: 0.6 }));
+      const n = Math.max(3, Math.round(h / (carriage ? 2.25 : 1.75))), sh = h / n;
+      const ins = !!Number(o.insulated);
+      box(w - 0.02, h - 0.02, 0.12, M.door, 0, h / 2, zf, g);
+      if (ins) box(w - 0.02, h - 0.02, 0.1, M.door, 0, h / 2, zf - 0.1, g);                           // foam-core back
+      for (let i = 1; i < n; i++) box(w - 0.02, 0.022, 0.01, shade, 0, i * sh, fz, g);               // section joints
+      const cols = Math.max(2, Math.round(w / 2.25)), mx = 0.3, gap = 0.24;
+      const pw = (w - 2 * mx - (cols - 1) * gap) / cols, ph = sh - (carriage ? 0.42 : 0.5);
+      const px = c => -w / 2 + mx + pw / 2 + c * (pw + gap);
+      for (let i = 0; i < n; i++) {
+        const yc = (i + 0.5) * sh;
+        if (wins && i === n - 1) {
+          // windows: one across each pair of panels, framed, with a 6 x 2 grid
+          for (let c = 0; c + 1 < cols; c += 2) {
+            const xc = (px(c) + px(c + 1)) / 2, ww = pw * 2 + gap, wh = ph * 0.92;
+            box(ww, wh, 0.02, M.glass, xc, yc, fz + 0.005, g);
+            for (const sy of [-1, 1]) box(ww + 0.08, 0.06, 0.03, M.door, xc, yc + sy * (wh / 2 + 0.02), fz + 0.02, g);
+            for (const sx of [-1, 1]) box(0.06, wh + 0.1, 0.03, M.door, xc + sx * (ww / 2 + 0.02), yc, fz + 0.02, g);
+            for (let k = 1; k < 6; k++) box(0.025, wh, 0.02, M.door, xc - ww / 2 + ww * k / 6, yc, fz + 0.02, g);
+            box(ww, 0.025, 0.02, M.door, xc, yc, fz + 0.02, g);
+          }
+          continue;
+        }
+        for (let c = 0; c < cols; c++) {
+          const xc = px(c);
+          if (carriage) {
+            // recessed outline with vertical grooves
+            for (const sy of [-1, 1]) box(pw, 0.025, 0.008, shade, xc, yc + sy * ph / 2, fz + 0.004, g);
+            for (const sx of [-1, 1]) box(0.025, ph, 0.008, shade, xc + sx * pw / 2, yc, fz + 0.004, g);
+            for (let k = 1; k < 5; k++) box(0.02, ph - 0.12, 0.006, shade, xc - pw / 2 + pw * k / 5, yc, fz + 0.004, g);
+          } else {
+            // raised panel: the face sits proud, with a shadowed bevel along the bottom and right
+            box(pw, ph, 0.03, M.door, xc, yc, fz + 0.015, g);
+            box(pw, 0.035, 0.032, shade, xc, yc - ph / 2 + 0.0175, fz + 0.016, g);
+            box(0.035, ph, 0.032, shade, xc + pw / 2 - 0.0175, yc, fz + 0.016, g);
+          }
+        }
+      }
+      if (carriage) {
+        const len = Math.min(1.25, w * 0.14), rows = [[sh * 0.5, 0.3], [sh * (n - (wins ? 1.5 : 0.5)), 0.3]];
+        tHinges(g, M, -w / 2 + 0.02, fz + 0.02, 1, len, rows);
+        tHinges(g, M, w / 2 - 0.02, fz + 0.02, -1, len, rows);
+        const hy = sh * Math.floor(n / 2) + sh * 0.5 * (n % 2 ? 1 : 0.15);
+        for (const sx of [-1, 1]) { box(0.05, 0.62, 0.04, M.metal, sx * 0.16, hy, fz + 0.05, g); for (const ey of [-0.33, 0.33]) box(0.11, 0.07, 0.03, M.metal, sx * 0.16, hy + ey, fz + 0.035, g); }
+      }
+      box(w - 0.02, 0.045, 0.14, M.dark, 0, 0.022, zf, g);                                            // bottom seal
+      box(w + 0.3, 0.025, 0.45, M.steel, 0, 0.0125, zOut + 0.2, g);                                    // aluminium diamond-plate threshold
       break;
     }
     case 'door_rollup': {
@@ -1352,6 +1413,7 @@ export class ShedScene {
       }
       const opening = o.placement === 'opening';
       const model = buildKind(o.kind || 'box', kindW, kindH, kindD, M, { floorY: y0, opt: o, elev: p.elev, item: it });
+      if (Number(o.slanted_corners) && o.placement === 'opening') slantCorners(model, kindW, kindH, M);
       holder.add(model);
       if (o.model_url) {
         loadGLB(o.model_url).then(src => {

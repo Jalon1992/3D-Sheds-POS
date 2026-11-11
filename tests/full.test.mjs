@@ -786,3 +786,33 @@ test('new 3D parts: carriage + panel doors, double shelves in chosen lengths, wi
   }
   assert.ok(elevationSVG(pub, saved.config, 'front').svg.length > elevationSVG(pub, { ...saved.config, items: [] }, 'front').svg.length + 500, 'carriage doors drawn on the front');
 });
+
+test('garage doors: four stock doors, admin fields saved and checked, priced, drawn on the plan and elevations', async () => {
+  const cat = (await admin.get('/api/v1/catalog')).data;
+  const g = cat.options.filter(o => o.kind === 'door_garage');
+  assert.equal(g.length, 4);
+  const car = g.find(o => o.garage_panel === 'carriage' && !o.insulated), std = g.find(o => o.garage_panel === 'standard' && o.insulated);
+  // admin: style, windows, insulated and slanted corners save; size is adjustable; a bad style is dropped
+  const made = (await admin.post('/api/v1/options', { name: "16' x 7' Garage Door", category: 'doors', kind: 'door_garage', placement: 'opening', swap_group: 'door', width: 16, height: 7, price: 2400, garage_panel: 'carriage', garage_windows: 1, insulated: 1, slanted_corners: 1 })).data;
+  let row = (await admin.get('/api/v1/options/' + made.id)).data;
+  assert.equal(row.garage_panel, 'carriage'); assert.equal(row.garage_windows, 1); assert.equal(row.insulated, 1); assert.equal(row.slanted_corners, 1); assert.equal(row.width, 16);
+  await admin.patch('/api/v1/options/' + made.id, { garage_panel: '<script>', slanted_corners: 0, width: 10, height: 8 });
+  row = (await admin.get('/api/v1/options/' + made.id)).data;
+  assert.equal(row.garage_panel, null, 'unknown style dropped'); assert.equal(row.slanted_corners, 0); assert.equal(row.width, 10); assert.equal(row.height, 8);
+  await admin.del('/api/v1/options/' + made.id);
+  // on a building: priced, plan + elevations draw without errors, slanted corners and sections show up
+  const st = cat.styles.find(s => s.name === 'Garage') || cat.styles[0], size = st.sizes.find(z => z.width >= 12) || st.sizes.at(-1);
+  for (const door of [car, std]) {
+    const cfg = { style_id: st.id, size_id: size.id, items: [{ option_id: door.id, wall: 'front', offset: 0 }] };
+    const q = await admin.post('/api/v1/quotes', { config: cfg, customer: { first_name: 'Gar', email: 'gar@test.com' } });
+    assert.equal(q.status, 201, JSON.stringify(q.data));
+    const pr = (await admin.post('/api/v1/price', cfg)).data; assert.ok(pr.lines.some(l => l.label === door.name && l.amount === door.price), door.name + ' priced: ' + JSON.stringify(pr.lines.map(l => [l.label, l.amount]))); assert.equal(q.data.pricing.total, pr.total);
+    const plan = await (await fetch(B + `/api/v1/quotes/${q.data.id}/floorplan.svg`, { headers: { cookie: admin.cookie } })).text();
+    assert.match(plan, /^<svg/); assert.doesNotMatch(plan, /NaN|undefined/); assert.match(plan, /stroke-dasharray="6 4"/, 'overhead door: no swing, dashed line');
+    const { elevationSVG } = await import('../public/js/shared/elevations.js');
+    const saved = (await admin.get('/api/v1/quotes/' + q.data.id)).data, svg = elevationSVG(cat, saved.config, 'front').svg;
+    assert.doesNotMatch(svg, /NaN|undefined/);
+    if (door === car) { assert.match(svg, /fill="#3a4448"/, 'window row'); assert.match(svg, /h-?[\d.]+L[\d.]+ [\d.]+Z/, 'slanted corners'); }
+    else assert.ok(!/fill="#3a4448"/.test(svg), 'no windows on the standard door');
+  }
+});

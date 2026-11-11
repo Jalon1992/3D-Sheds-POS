@@ -156,7 +156,8 @@ export function seed() {
   }, [[10, 12], [10, 16], [12, 16], [12, 20], [12, 24], [14, 24]], 42, 2400);
 
   addChickenCoop();
-  setSettings({ migr_catalog_v3: true, migr_shelf_floor: true, migr_coop: true, migr_coop2: true });
+  addGarageDoors();
+  setSettings({ migr_catalog_v3: true, migr_shelf_floor: true, migr_coop: true, migr_coop2: true, migr_garage: true });
   console.log('  Seeded sample catalog (styles, sizes, colors, options).');
 }
 
@@ -170,6 +171,23 @@ export const COOP_OPTIONS = [
   { key: 'pop', name: 'Chicken Door with Ramp', description: 'Small chicken door near the floor with a cleated ramp down to the ground.', category: 'exterior', kind: 'pop_door', placement: 'opening', width: 13 / 12, height: 1.5, depth: 2.5, elevation: 0.08, price: 95, max_qty: 2, sort: 21 },
   { key: 'roost', name: 'Roost Bars', description: 'Two 2x4 roost bars at different heights on braced arms along an inside wall. Pick the length.', category: 'interior', kind: 'roost', placement: 'wall_interior', width: 6, height: 4, depth: 2, elevation: 0, price: 14, price_unit: 'per_ft_item', length_choices: '4, 6, 8, 10', max_qty: 2, sort: 20 },
 ];
+// Overhead sectional garage doors: standard (raised short panels) and carriage house, insulated or not.
+// Size comes from width/height - edit them in the admin, or duplicate an option for other sizes.
+export const GARAGE_DOORS = [
+  { name: "9' x 7' Garage Door", description: 'Steel sectional overhead door with raised short panels and an aluminium threshold. Uninsulated.', garage_panel: 'standard', garage_windows: 0, insulated: 0, slanted_corners: 0, price: 1150 },
+  { name: "9' x 7' Insulated Garage Door", description: 'Steel sectional overhead door with raised short panels and a foam-insulated core.', garage_panel: 'standard', garage_windows: 0, insulated: 1, slanted_corners: 0, price: 1450 },
+  { name: "9' x 7' Carriage House Garage Door", description: 'Overhead door styled like carriage doors: grooved panels, a row of windows across the top, black strap hinges and handles. Uninsulated.', garage_panel: 'carriage', garage_windows: 1, insulated: 0, slanted_corners: 1, price: 1495 },
+  { name: "9' x 7' Insulated Carriage House Garage Door", description: 'Carriage house overhead door with a foam-insulated core, windows across the top, black strap hinges and handles.', garage_panel: 'carriage', garage_windows: 1, insulated: 1, slanted_corners: 1, price: 1795 },
+];
+export function addGarageDoors() {
+  const base = Number(get("SELECT MAX(sort) AS m FROM options WHERE category = 'doors'")?.m) || 0;
+  GARAGE_DOORS.forEach((o, i) => {
+    if (get('SELECT id FROM options WHERE name = ?', o.name)) return;
+    const row = { ...o, category: 'doors', kind: 'door_garage', placement: 'opening', swap_group: 'door', width: 9, height: 7, elevation: 0, sort: base + 1 + i, active: 1 };
+    const keys = Object.keys(row);
+    run(`INSERT INTO options (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, ...keys.map(k => row[k]));
+  });
+}
 export function addChickenCoop() {
   const ins = (table, obj) => {
     const keys = Object.keys(obj);
@@ -219,6 +237,7 @@ export const NEW_OPTIONS = [
 ];
 export function upgradeCatalog() {
   if (!getSettings().migr_coop) { addChickenCoop(); setSettings({ migr_coop: true, migr_coop2: true }); console.log('  Catalog updated: added the Chicken Coop style and coop parts.'); }
+  if (!getSettings().migr_garage) { addGarageDoors(); setSettings({ migr_garage: true }); console.log('  Catalog updated: added garage doors (standard and carriage house, insulated and uninsulated).'); }
   if (!getSettings().migr_coop2) {
     // coop windows are 14" x 21" and the nest box is 6' long, as built; only where the first version is still unchanged
     run(`UPDATE options SET name = 'Coop Window (14" x 21")', width = ?, height = ?, elevation = 3.6 WHERE name = 'Coop Window (16" x 27")' AND ABS(width - ?) < 0.001 AND ABS(height - 2.25) < 0.001`, 14 / 12, 21 / 12, 16 / 12);

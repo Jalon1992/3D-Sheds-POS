@@ -141,6 +141,20 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
       if (kind.startsWith('door')) {
         o.push(`<rect x="${x0}" y="${y0}" width="${wpx}" height="${hpx}" fill="${kind === 'door_coop' ? sidingHex : '#f4f3ef'}" fill-opacity="${kind === 'door_coop' ? 0.45 : 1}" stroke="#1d2624" stroke-width="1.6"/>`);
         if (kind === 'door_coop') { const b = 0.3 * S, mid = y1 - hpx * 0.47; o.push(`<path d="M${x0 + b} ${y0 + b}H${x1 - b}V${mid - b / 2}H${x0 + b}Z M${x0 + b} ${mid + b / 2}H${x1 - b}V${y1 - b}H${x0 + b}Z" fill="#ffffff" fill-opacity=".001" stroke="#1d2624" stroke-opacity=".7"/>`); }
+        else if (kind === 'door_garage') {
+          const car = o2.garage_panel === 'carriage', n = Math.max(3, Math.round(p.h / (car ? 2.25 : 1.75))), sh = hpx / n;
+          const cols = Math.max(2, Math.round(p.w / 2.25)), mx = 0.3 * S, gp = 0.24 * S, pw = (wpx - 2 * mx - (cols - 1) * gp) / cols, ph = sh - (car ? 0.42 : 0.5) * S;
+          for (let i = 0; i < n; i++) {
+            const yt = y1 - (i + 1) * sh, yc = yt + sh / 2;
+            if (i) o.push(`<line x1="${x0}" y1="${yt + sh}" x2="${x1}" y2="${yt + sh}" stroke="#1d2624" stroke-opacity=".6"/>`);
+            if (Number(o2.garage_windows) && i === n - 1) {
+              for (let c = 0; c + 1 < cols; c += 2) { const a = x0 + mx + c * (pw + gp), ww = 2 * pw + gp; o.push(`<rect x="${a}" y="${yc - ph * 0.46}" width="${ww}" height="${ph * 0.92}" fill="#3a4448" stroke="#1d2624"/>`); for (let k = 1; k < 6; k++) o.push(`<line x1="${a + ww * k / 6}" y1="${yc - ph * 0.46}" x2="${a + ww * k / 6}" y2="${yc + ph * 0.46}" stroke="#fff" stroke-width="1.3"/>`); o.push(`<line x1="${a}" y1="${yc}" x2="${a + ww}" y2="${yc}" stroke="#fff" stroke-width="1.3"/>`); }
+              continue;
+            }
+            for (let c = 0; c < cols; c++) { const a = x0 + mx + c * (pw + gp); o.push(`<rect x="${a}" y="${yc - ph / 2}" width="${pw}" height="${ph}" fill="none" stroke="#1d2624" stroke-opacity=".55"/>`); if (car) for (let k = 1; k < 5; k++) o.push(`<line x1="${a + pw * k / 5}" y1="${yc - ph / 2 + 3}" x2="${a + pw * k / 5}" y2="${yc + ph / 2 - 3}" stroke="#1d2624" stroke-opacity=".35"/>`); }
+          }
+          if (car) { const hl = Math.min(1.25, p.w * 0.14) * S; for (const yy of [y1 - sh / 2, y1 - sh * (n - (Number(o2.garage_windows) ? 1.5 : 0.5))]) { o.push(`<path d="M${x0 + 2} ${yy}h${hl}M${x1 - 2} ${yy}h${-hl}" stroke="#1d2624" stroke-width="3"/>`); } const hy = y1 - sh * (Math.floor(n / 2) + 0.5 * (n % 2 ? 1 : 0.15)); for (const sx of [-1, 1]) o.push(`<line x1="${(x0 + x1) / 2 + sx * 0.16 * S}" y1="${hy - 0.31 * S}" x2="${(x0 + x1) / 2 + sx * 0.16 * S}" y2="${hy + 0.31 * S}" stroke="#1d2624" stroke-width="2.5"/>`); }
+        }
         else if (kind === 'door_rollup') for (let k = 1; k < 12; k++) o.push(`<line x1="${x0}" y1="${y0 + hpx * k / 12}" x2="${x1}" y2="${y0 + hpx * k / 12}" stroke="#1d2624" stroke-opacity=".45"/>`);
         else if (kind === 'door_double' || kind === 'door_french') {
           o.push(`<line x1="${(x0 + x1) / 2}" y1="${y0}" x2="${(x0 + x1) / 2}" y2="${y1}" stroke="#1d2624" stroke-width="1.4"/>`);
@@ -159,7 +173,8 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
           }
         } else if (kind === 'door_glass') o.push(`<rect x="${x0 + wpx * 0.18}" y="${y0 + hpx * 0.08}" width="${wpx * 0.64}" height="${hpx * 0.4}" fill="#dfe8ee" stroke="#1d2624" stroke-opacity=".6"/>`);
         else { o.push(`<rect x="${x0 + wpx * 0.15}" y="${y0 + hpx * 0.08}" width="${wpx * 0.7}" height="${hpx * 0.36}" fill="none" stroke="#1d2624" stroke-opacity=".5"/><rect x="${x0 + wpx * 0.15}" y="${y0 + hpx * 0.54}" width="${wpx * 0.7}" height="${hpx * 0.36}" fill="none" stroke="#1d2624" stroke-opacity=".5"/>`); }
-        if (kind !== 'door_rollup') o.push(`<circle cx="${kind === 'door_carriage_double' || kind === 'door_panel_double' ? (x0 + x1) / 2 + 9 : kind === 'door_double' || kind === 'door_french' ? (x0 + x1) / 2 + 7 : kind === 'door_panel' || kind === 'door_carriage_right' || kind === 'door_coop' ? x0 + 9 : x1 - 9}" cy="${y0 + hpx * 0.53}" r="3" fill="#1d2624"/>`);
+        if (Number(o2.slanted_corners)) { const c = Math.min(0.85, Math.max(0.4, p.w * 0.09)) * S; o.push(`<path d="M${x0} ${y0}h${c}L${x0} ${y0 + c}ZM${x1} ${y0}h${-c}L${x1} ${y0 + c}Z" fill="#ffffff" stroke="#1d2624" stroke-width="1.2"/>`); }
+        if (kind !== 'door_rollup' && kind !== 'door_garage') o.push(`<circle cx="${kind === 'door_carriage_double' || kind === 'door_panel_double' ? (x0 + x1) / 2 + 9 : kind === 'door_double' || kind === 'door_french' ? (x0 + x1) / 2 + 7 : kind === 'door_panel' || kind === 'door_carriage_right' || kind === 'door_coop' ? x0 + 9 : x1 - 9}" cy="${y0 + hpx * 0.53}" r="3" fill="#1d2624"/>`);
       } else if (kind === 'pop_door') {
         o.push(`<rect x="${x0}" y="${y0}" width="${wpx}" height="${hpx}" fill="#3a4448" stroke="#1d2624" stroke-width="1.4"/>`);
         o.push(`<rect x="${x0 + 2}" y="${y1}" width="${wpx - 4}" height="${(F + p.elev) * S}" fill="${sidingHex}" fill-opacity="0.45" stroke="#1d2624" stroke-width="1"/>`);

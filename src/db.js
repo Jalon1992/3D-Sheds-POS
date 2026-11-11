@@ -221,6 +221,10 @@ for (const sql of [
   'ALTER TABLE sizes ADD COLUMN skid_spacing REAL',
   'ALTER TABLE styles ADD COLUMN skid_size TEXT',                    // '4x4' | '4x6' | '6x6'; null = 4x4
   'ALTER TABLE sizes ADD COLUMN skid_size TEXT',                     // per-size override
+  'ALTER TABLE options ADD COLUMN garage_panel TEXT',                // garage doors: 'standard' (raised panels) | 'carriage' (carriage house)
+  'ALTER TABLE options ADD COLUMN garage_windows INTEGER',           // garage doors: windows across the top section
+  'ALTER TABLE options ADD COLUMN insulated INTEGER',                // garage doors: insulated (shown to customers, priced on the option)
+  'ALTER TABLE options ADD COLUMN slanted_corners INTEGER',          // doors: trim with slanted (45°) top corners
   'ALTER TABLE options ADD COLUMN package_items TEXT',
   'ALTER TABLE options ADD COLUMN package_only INTEGER DEFAULT 0',
   'ALTER TABLE quotes ADD COLUMN contact_id INTEGER',
