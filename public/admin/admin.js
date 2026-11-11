@@ -1294,7 +1294,7 @@ async function pricingPage() {
 
     <div class="card" style="margin-bottom:16px"><div class="card-pad row" style="justify-content:space-between;padding-bottom:6px"><div><h2>Dealer lots</h2><p class="muted" style="margin:0">Used when pricing is by dealer lot. Each lot also gets its own builder link that locks in its pricing.</p></div><button class="btn ghost sm" id="addDealer">+ Add dealer lot</button></div>
       <div class="tbl-wrap"><table class="tbl"><tr><th>Lot name</th><th>Address</th><th>City</th><th>State</th><th>ZIP</th><th>Phone</th><th>Email</th><th>Tier</th><th></th></tr>
-      ${dealers.map((d, i) => `<tr>${['name', 'address', 'city', 'state', 'zip', 'phone', 'email'].map(k => `<td><input class="in" data-d="${i}" data-k="${k}" value="${esc(d[k] || '')}" style="min-width:${k === 'name' ? 190 : k === 'state' ? 54 : k === 'zip' ? 72 : 110}px"></td>`).join('')}
+      ${dealers.map((d, i) => `<tr>${['name', 'address', 'city', 'state', 'zip', 'phone', 'email'].map(k => `<td><input class="in" data-d="${i}" data-k="${k}" value="${esc(d[k] || '')}" style="min-width:${k === 'name' ? 190 : k === 'state' ? 68 : k === 'zip' ? 72 : 110}px"></td>`).join('')}
         <td><select class="in" data-d="${i}" data-k="tier" style="min-width:130px">${tierOpts(d.tier)}</select></td>
         <td style="white-space:nowrap"><button class="icon-btn" title="Copy this lot's builder link" data-link="${i}">${COPY}</button> <button class="icon-btn" data-deld="${i}">${TRASH}</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">No dealer lots yet.</td></tr>'}</table></div></div>
 

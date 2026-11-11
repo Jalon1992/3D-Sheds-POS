@@ -65,7 +65,8 @@ code { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
 .card h2 { font-size: 16px; margin: 0 0 4px; }
 .card .muted, .muted { color: var(--ink-3); }
 .grid { display: grid; gap: 16px; }
-.g4 { grid-template-columns: repeat(4, 1fr); } .g3 { grid-template-columns: repeat(3, 1fr); } .g2 { grid-template-columns: repeat(2, 1fr); }
+.g4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); } .g3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); } .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid > * { min-width: 0; }
 .stat .lbl { color: var(--ink-3); font-weight: 600; font-size: 12.5px; }
 .stat .val { font-size: 28px; font-weight: 800; letter-spacing: -.02em; margin-top: 4px; }
 table.tbl { width: 100%; border-collapse: collapse; }
@@ -92,7 +93,8 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .scard .foot { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
 
 /* forms */
-.form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+/* two columns, dropping to one when the form is too narrow for two usable boxes (e.g. a side card on a tablet) */
+.form { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(190px, calc(50% - 16px)), 1fr)); gap: 14px 16px; }
 .form .full { grid-column: 1 / -1; }
 .fld { display: grid; gap: 5px; align-content: start; }
 .fld > span { font-size: 12.5px; font-weight: 700; color: var(--ink-2); }
@@ -112,6 +114,29 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .mini th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); text-align: left; padding: 4px 6px; font-weight: 700; }
 .mini td { padding: 4px 6px; }
 .mini input, .mini select { width: 100%; border: 1px solid #d6dcda; border-radius: 7px; padding: 6px 8px; background: #fff; }
+/* boxes in tables never squeeze below a usable size: the table scrolls sideways instead (with an edge shadow
+   showing there's more), and number boxes drop the spinner arrows so the digits get the room */
+.mini td { padding: 4px 4px; } .mini th { padding: 4px 4px; white-space: normal; }
+.mini input, .mini select { padding: 6px 7px; }
+.mini input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+.mini input[type=number]::-webkit-inner-spin-button, .mini input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+:is(.mini, .tbl) input:not([type=checkbox]):not([type=radio]) { min-width: 60px; }
+:is(.mini, .tbl) select { min-width: 76px; }
+.tbl td input:not([type=checkbox]):not([type=radio]):not([type=number]) { min-width: 120px; }
+:is(.mini, .tbl) input[type=checkbox], :is(.mini, .tbl) input[type=radio] { width: auto; min-width: 0; }
+:is(.mini, .tbl) input[data-k=price], .mini input[name*=price] { min-width: 80px; }
+.mini input[data-k=skid_count] { min-width: 52px; }
+.tbl select[data-k=price_unit] { min-width: 140px; }
+.mini select[data-k=option_id] { min-width: 180px; }
+#sizesBox, #stdBox, .tscroll, .full:has(> table.mini), .card:has(> table.mini), .card:has(> table.tbl) { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+:is(#sizesBox, #stdBox, .tscroll, .full:has(> table.mini)) {
+  background: linear-gradient(to right, #fff 30%, rgba(255,255,255,0)) left / 28px 100% no-repeat local,
+              linear-gradient(to left, #fff 30%, rgba(255,255,255,0)) right / 28px 100% no-repeat local,
+              radial-gradient(farthest-side at 0 50%, rgba(29,38,36,.18), transparent) left / 12px 100% no-repeat scroll,
+              radial-gradient(farthest-side at 100% 50%, rgba(29,38,36,.18), transparent) right / 12px 100% no-repeat scroll;
+}
+:is(#sizesBox, #stdBox, .tscroll, .full:has(> table.mini))::-webkit-scrollbar { height: 10px; }
+:is(#sizesBox, #stdBox, .tscroll, .full:has(> table.mini))::-webkit-scrollbar-thumb { background: #c9d2cf; border-radius: 6px; }
 .upl { display: flex; gap: 8px; align-items: center; }
 .upl .fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 13px; border: 1px dashed #cdd5d2; border-radius: 8px; padding: 8px 10px; }
 
@@ -157,6 +182,7 @@ pre.snip { background: #0f1715; color: #d3eadf; padding: 14px; border-radius: 10
 .toast.bad { background: var(--danger); }
 
 @media (max-width: 960px) {
+  .grid[style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; } /* side-by-side panels stack */
   .app { flex-direction: column; }
   .side { width: 100%; height: auto; position: sticky; top: 0; z-index: 40; border-right: 0; border-bottom: 1px solid var(--line); }
   .main { padding: 18px 14px 50px; }
@@ -221,8 +247,6 @@ pre.snip { background: #0f1715; color: #d3eadf; padding: 14px; border-radius: 10
 @media (max-width: 960px) {
   .form, .split, .g2 { grid-template-columns: minmax(0, 1fr); }
   .form > *, .split > * { min-width: 0; }
-  #sizesBox, #stdBox, .full:has(> table.mini) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  table.mini { min-width: 100%; }
 }
 @media (max-width: 600px) {
   .g4, .g3 { grid-template-columns: minmax(0, 1fr); }
