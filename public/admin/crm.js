@@ -81,7 +81,7 @@ async function addLeadModal(prefill = {}) {
       <label class="fld"><span>Email</span><input name="email" type="email"></label>
       <label class="fld full"><span>Address</span><input name="address"></label>
       <label class="fld"><span>City</span><input name="city"></label>
-      <label class="fld"><span>State / ZIP</span><div class="row" style="flex-wrap:nowrap"><input name="state" style="width:40%" class="in"><input name="zip" style="width:60%" class="in"></div></label>
+      <label class="fld"><span>State / ZIP</span><div class="row" style="flex-wrap:nowrap"><input name="state" style="width:40%;min-width:64px" class="in"><input name="zip" style="width:60%;min-width:80px" class="in"></div></label>
       <label class="fld"><span>Source</span><select name="source">${SOURCES.map(s => `<option>${s}</option>`).join('')}</select></label>
       <label class="fld"><span>Tags</span><input name="tags" placeholder="e.g. 12x24, financing"></label>
       <div class="section-t">Opportunity</div>
@@ -210,7 +210,7 @@ async function contactRecord(id) {
       <div class="row" style="flex-wrap:nowrap"><label style="flex:1">First<input name="first_name" value="${esc(c.first_name || '')}"></label><label style="flex:1">Last<input name="last_name" value="${esc(c.last_name || '')}"></label></div>
       <label>Mobile<input name="phone" type="tel" value="${esc(c.phone || '')}"></label><label>Email<input name="email" type="email" value="${esc(c.email || '')}"></label>
       <label>Address<input name="address" value="${esc(c.address || '')}"></label>
-      <div class="row" style="flex-wrap:nowrap"><label style="flex:2">City<input name="city" value="${esc(c.city || '')}"></label><label style="flex:1">State<input name="state" value="${esc(c.state || '')}"></label><label style="flex:1.3">ZIP<input name="zip" value="${esc(c.zip || '')}"></label></div>
+      <div class="row" style="flex-wrap:wrap"><label style="flex:2 1 140px">City<input name="city" value="${esc(c.city || '')}"></label><label style="flex:1 0 72px">State<input name="state" value="${esc(c.state || '')}"></label><label style="flex:1.3 0 96px">ZIP<input name="zip" value="${esc(c.zip || '')}"></label></div>
       <label>Tags<input name="tags" value="${esc((c.tags || []).join(', '))}" placeholder="comma separated"></label>
       <label>Source<input name="source" value="${esc(c.source || '')}" list="srcList"></label><datalist id="srcList">${SOURCES.map(s => `<option>${s}</option>`).join('')}</datalist>
       <label>Assigned to<select name="assigned_to"><option value="">Nobody</option>${staff.map(u => `<option value="${u.id}" ${u.id === c.assigned_to ? 'selected' : ''}>${esc(u.name || u.email)}</option>`).join('')}</select></label>

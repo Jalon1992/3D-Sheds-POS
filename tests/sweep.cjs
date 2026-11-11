@@ -116,6 +116,45 @@ class C { constructor() { this.cookie = ''; } async r(m, u, b, raw) { const f = 
     ok(!errs.length, `${role}/${vp}: no JavaScript errors${errs.length ? ' — ' + [...new Set(errs)].slice(0, 3).join(' | ') : ''}`);
     await ctx.close();
   }
+  // ---- entry boxes: on every admin page and editor, at desktop, laptop, tablet (both ways) and phone sizes, no box is
+  // squeezed too small to type in, cut off by its container, or pushed off the screen with no way to scroll to it
+  const cramped = () => {
+    const bad = [], vis = el => { const r = el.getBoundingClientRect(), cs = getComputedStyle(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; };
+    for (const el of document.querySelectorAll('input, select, textarea')) {
+      if (['checkbox', 'radio', 'hidden', 'file', 'range', 'color'].includes(el.type) || !vis(el)) continue;
+      const r = el.getBoundingClientRect(), name = (el.name || el.dataset.k || el.id || el.placeholder || el.type) + (el.closest('table') ? ' (table)' : '');
+      const min = el.tagName === 'SELECT' ? 56 : el.type === 'number' ? 52 : 60;
+      if (r.width < min) bad.push(`${name} only ${Math.round(r.width)}px wide`);
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const cs = getComputedStyle(p); if (/(auto|scroll)/.test(cs.overflowX)) break; if (!/(hidden|clip)/.test(cs.overflowX)) continue;
+        const pr = p.getBoundingClientRect(); if (r.right > pr.right + 2 || r.left < pr.left - 2) { bad.push(`${name} cut off`); break; }
+      }
+      if (r.right > innerWidth + 2) { let sc = false; for (let p = el.parentElement; p; p = p.parentElement) { const cs = getComputedStyle(p); if (/(auto|scroll)/.test(cs.overflowX) && p.scrollWidth > p.clientWidth) { sc = true; break; } } if (!sc) bad.push(`${name} off the screen`); }
+    }
+    return [...new Set(bad)];
+  };
+  const SIZES = { desktop: { viewport: { width: 1366, height: 900 } }, laptop: { viewport: { width: 1180, height: 820 } }, tablet: { viewport: { width: 1024, height: 768 }, hasTouch: true }, 'tablet portrait': { viewport: { width: 768, height: 1024 }, hasTouch: true }, phone: { ...devices['iPhone 13'] } };
+  const BOX_ROUTES = [...ROUTES.admin, 'pos/new'];
+  for (const [vp, opts] of Object.entries(SIZES)) {
+    const c2 = await browser.newContext(opts), pg = await c2.newPage(); pg.on('dialog', d => d.dismiss());
+    await pg.goto(B + '/admin/'); await pg.fill('input[name=email]', 'owner@test.com'); await pg.fill('input[name=password]', 'owner-pass-1'); await pg.click('button:has-text("Log in")'); await pg.waitForSelector('.side-brand');
+    const found = [];
+    for (const r of BOX_ROUTES) {
+      await pg.goto(B + '/admin/#/' + r); await pg.waitForTimeout(r.startsWith('pos/') || r.startsWith('templates/') ? 1500 : 600);
+      for (const b of await pg.evaluate(cramped)) found.push(`#/${r}: ${b}`);
+      const n = Math.min((await pg.$$('[data-edit]')).length, r === 'styles' ? 5 : 2);
+      for (let i = 0; i < n; i++) { // the editors on this page
+        await pg.goto(B + '/admin/#/' + r); await pg.waitForTimeout(500);
+        const e = (await pg.$$('[data-edit]'))[i]; if (!e) break;
+        await e.click({ force: true }).catch(() => {}); await pg.waitForTimeout(900);
+        const t = await pg.evaluate(() => document.querySelector('#modal[open] h2')?.textContent?.trim() || 'editor');
+        for (const b of await pg.evaluate(cramped)) found.push(`#/${r} "${t}": ${b}`);
+        await pg.keyboard.press('Escape');
+      }
+    }
+    ok(!found.length, `${vp}: every entry box on every admin page and editor is usable${found.length ? ' — ' + [...new Set(found)].slice(0, 6).join(' | ') : ''}`);
+    await c2.close();
+  }
   // signing page with hostile data, on a phone
   const ctx = await browser.newContext({ ...devices['iPhone 13'] }); const sp = await ctx.newPage(); const serr = [];
   sp.on('pageerror', e => serr.push(e.message));
