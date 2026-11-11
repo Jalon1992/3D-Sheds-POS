@@ -538,6 +538,35 @@ test('Chicken coop: own style, coop-only parts, nest box and roosts priced by le
   await admin.del(`/api/v1/styles/${dup.id}`);
 });
 
+test('Skids: how many and how far apart, set on the style or per size; drawn in 3D, elevations, floor plan and drawings', async () => {
+  const { skidLayout } = await import('../public/js/shared/geometry.js');
+  const r = (st, w, z = {}) => { const k = skidLayout(st, { width: w, ...z }); return [k.count, k.spacingIn, k.xs.map(x => Math.round(x * 12))]; };
+  assert.deepEqual(r({}, 8), [3, 44.5, [-44, 0, 44]], 'automatic: about one per 4 ft, spread edge to edge (as before)');
+  assert.deepEqual(r({ skid_count: 4 }, 10), [4, 37.6, [-56, -19, 19, 56]].map((v, i) => (i === 1 ? 37.5 : v)), 'count only: spread edge to edge');
+  assert.deepEqual(r({ skid_spacing: 24 }, 8), [4, 24, [-36, -12, 12, 36]], 'spacing only: as many as fit, centred');
+  assert.deepEqual(r({ skid_count: 3, skid_spacing: 36 }, 10), [3, 36, [-36, 0, 36]], 'count and spacing: centred');
+  assert.deepEqual(r({ skid_count: 3 }, 12, { skid_count: 4, skid_spacing: 40 }), [4, 40, [-60, -20, 20, 60]], 'the size overrides the style');
+  assert.equal(r({ skid_count: 3, skid_spacing: 80 }, 8)[1], 44.5, 'a spacing wider than the building falls back to edge to edge');
+  // saved through the admin: style default + one size's override
+  const st = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === gable.id);
+  assert.equal((await admin.patch(`/api/v1/styles/${st.id}`, { skid_count: 3, skid_spacing: 42 })).data.skid_spacing, 42);
+  const sizes = st.sizes.map((z, i) => ({ ...z, ...(i === 0 ? { skid_count: 2, skid_spacing: 60 } : {}) }));
+  assert.equal((await admin.put(`/api/admin/styles/${st.id}/sizes`, sizes)).status, 200);
+  const st2 = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === gable.id);
+  assert.equal(st2.sizes[0].skid_count, 2); assert.equal(st2.sizes[0].skid_spacing, 60); assert.equal(st2.sizes[1].skid_count, null);
+  // the floor plan names them for the crew
+  const q = (await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: st2.sizes[1].id }, customer: { first_name: 'Skid', email: 'skid@test.com' } })).data;
+  const svg = await (await fetch(B + `/api/v1/quotes/${q.id}/floorplan.svg`, { headers: { cookie: admin.cookie } })).text();
+  assert.match(svg, /3 skids \(4x4\), 42&quot; on centre|3 skids \(4x4\), 42" on centre/);
+  // a copied style keeps the per-size skids
+  const dup = (await admin.post(`/api/admin/duplicate/styles/${st.id}`)).data;
+  const copy = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === dup.id);
+  assert.equal(copy.sizes[0].skid_count, 2); assert.equal(copy.skid_spacing, 42);
+  await admin.del(`/api/v1/styles/${dup.id}`);
+  await admin.patch(`/api/v1/styles/${st.id}`, { skid_count: null, skid_spacing: null });
+  await admin.put(`/api/admin/styles/${st.id}/sizes`, st.sizes);
+});
+
 test('Quote PDF security: upload limits, page bombs, broken PDFs; who may read quotes and the priced PDF', async () => {
   await setS({ ghl_enabled: true, ghl_token: 'good-token', ghl_location_id: 'LOC1', ghl_pipeline_id: '', ghl_send_pdf: 1, ghl_add_note: 0, ghl_custom_fields: {}, ghl_pdf_field: '' });
   const mk = async () => (await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Sec', email: 'sec@test.com' }, with_drawings: true })).data;

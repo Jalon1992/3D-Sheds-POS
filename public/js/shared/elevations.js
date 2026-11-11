@@ -44,6 +44,9 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
   // --- ground + skids/floor
   o.push(`<line x1="${X(-L / 2 - sideOv) - 30}" y1="${Y(0)}" x2="${X(L / 2 + sideOv) + 30}" y2="${Y(0)}" stroke="#1d2624" stroke-width="2"/>`);
   o.push(`<rect x="${X(-L / 2)}" y="${Y(F)}" width="${L * S}" height="${F * S}" fill="#e8e2d6" stroke="#1d2624" stroke-width="1"/>`);
+  // skid ends show on the front and back (they run front to back); from the sides you see the outer skid
+  if (wall === 'front' || wall === 'back') for (const x of geo.skids.xs) o.push(`<rect x="${X(x - 0.165)}" y="${Y(0.375)}" width="${0.33 * S}" height="${0.35 * S}" fill="#cbb994" stroke="#1d2624" stroke-width="1"/>`);
+  else o.push(`<line x1="${X(-L / 2)}" y1="${Y(0.375)}" x2="${X(L / 2)}" y2="${Y(0.375)}" stroke="#1d2624" stroke-opacity=".5"/>`);
 
   // --- wall outline (top follows the roof underside)
   const top = [];

@@ -215,6 +215,10 @@ for (const sql of [
   'ALTER TABLE styles ADD COLUMN rake_tail TEXT',
   'ALTER TABLE sizes ADD COLUMN hip_len REAL',
   'ALTER TABLE sizes ADD COLUMN upper_len REAL',
+  'ALTER TABLE styles ADD COLUMN skid_count INTEGER',                // skids under the floor; null = automatic (about one per 4 ft of width)
+  'ALTER TABLE styles ADD COLUMN skid_spacing REAL',                 // centre-to-centre, inches; null = spread edge to edge
+  'ALTER TABLE sizes ADD COLUMN skid_count INTEGER',                 // per-size overrides of the two above
+  'ALTER TABLE sizes ADD COLUMN skid_spacing REAL',
   'ALTER TABLE options ADD COLUMN package_items TEXT',
   'ALTER TABLE options ADD COLUMN package_only INTEGER DEFAULT 0',
   'ALTER TABLE quotes ADD COLUMN contact_id INTEGER',

@@ -1031,8 +1031,7 @@ export class ShedScene {
       const pad = new THREE.Mesh(new THREE.PlaneGeometry(W + 4, D + 4), new THREE.MeshStandardMaterial({ map: tiled(gravelTex(), W + 4, D + 4), roughness: 1 }));
       pad.rotation.x = -Math.PI / 2; pad.position.y = 0.02; pad.receiveShadow = true; pad.userData.solid = true; shed.add(pad);
     }
-    const skids = Math.max(2, Math.round(W / 4) + 1);
-    for (let i = 0; i < skids; i++) box(0.33, 0.35, D, M.wood, -W / 2 + 0.3 + (W - 0.6) * i / (skids - 1), 0.2, 0, shed).userData.solid = true;
+    for (const x of geo.skids.xs) box(0.33, 0.35, D, M.wood, x, 0.2, 0, shed).userData.solid = true;   // skids (count / spacing from the style or size)
     box(W, 0.4, D, M.trim, 0, y0 - 0.2, 0, shed).userData.solid = true;
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(W - 2 * T, D - 2 * T), new THREE.MeshStandardMaterial({ map: tiled(plyTex(), W, D), roughness: 0.85 }));
     fl.rotation.x = -Math.PI / 2; fl.position.y = y0 + 0.005; fl.receiveShadow = true; fl.userData.solid = true; shed.add(fl);
