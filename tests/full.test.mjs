@@ -547,23 +547,33 @@ test('Skids: how many and how far apart, set on the style or per size; drawn in 
   assert.deepEqual(r({ skid_count: 3, skid_spacing: 36 }, 10), [3, 36, [-36, 0, 36]], 'count and spacing: centred');
   assert.deepEqual(r({ skid_count: 3 }, 12, { skid_count: 4, skid_spacing: 40 }), [4, 40, [-60, -20, 20, 60]], 'the size overrides the style');
   assert.equal(r({ skid_count: 3, skid_spacing: 80 }, 8)[1], 44.5, 'a spacing wider than the building falls back to edge to edge');
+  // lumber: 4x4 standard; 4x6 / 6x6 from the style or the size; taller skids lift the floor
+  const { shedGeometry } = await import('../public/js/shared/geometry.js');
+  assert.equal(skidLayout({}, { width: 8 }).lumber, '4x4');
+  assert.equal(skidLayout({ skid_size: '6x6' }, { width: 8 }).lumber, '6x6');
+  assert.equal(skidLayout({ skid_size: '6x6' }, { width: 8, skid_size: '4x6' }).lumber, '4x6', 'size overrides style');
+  assert.equal(skidLayout({ skid_size: '8x8' }, { width: 8 }).lumber, '4x4', 'unknown sizes ignored');
+  const g4 = shedGeometry({ wall_height: 7 }, { width: 8, depth: 10 }), g6 = shedGeometry({ wall_height: 7, skid_size: '6x6' }, { width: 8, depth: 10 });
+  assert.ok(Math.abs(g6.floorY - g4.floorY - (g6.skids.h - g4.skids.h)) < 1e-9 && g6.floorY > g4.floorY, 'floor sits on top of the taller skids');
   // saved through the admin: style default + one size's override
   const st = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === gable.id);
-  assert.equal((await admin.patch(`/api/v1/styles/${st.id}`, { skid_count: 3, skid_spacing: 42 })).data.skid_spacing, 42);
-  const sizes = st.sizes.map((z, i) => ({ ...z, ...(i === 0 ? { skid_count: 2, skid_spacing: 60 } : {}) }));
+  assert.equal((await admin.patch(`/api/v1/styles/${st.id}`, { skid_count: 3, skid_spacing: 42, skid_size: '4x6' })).data.skid_size, '4x6');
+  assert.equal((await admin.patch(`/api/v1/styles/${st.id}`, { skid_size: 'huge' })).data.skid_size, null, 'only 4x4 / 4x6 / 6x6');
+  await admin.patch(`/api/v1/styles/${st.id}`, { skid_size: '4x6' });
+  const sizes = st.sizes.map((z, i) => ({ ...z, ...(i === 0 ? { skid_count: 2, skid_spacing: 60, skid_size: '6x6' } : {}) }));
   assert.equal((await admin.put(`/api/admin/styles/${st.id}/sizes`, sizes)).status, 200);
   const st2 = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === gable.id);
-  assert.equal(st2.sizes[0].skid_count, 2); assert.equal(st2.sizes[0].skid_spacing, 60); assert.equal(st2.sizes[1].skid_count, null);
+  assert.equal(st2.sizes[0].skid_count, 2); assert.equal(st2.sizes[0].skid_spacing, 60); assert.equal(st2.sizes[0].skid_size, '6x6'); assert.equal(st2.sizes[1].skid_count, null);
   // the floor plan names them for the crew
   const q = (await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: st2.sizes[1].id }, customer: { first_name: 'Skid', email: 'skid@test.com' } })).data;
   const svg = await (await fetch(B + `/api/v1/quotes/${q.id}/floorplan.svg`, { headers: { cookie: admin.cookie } })).text();
-  assert.match(svg, /3 skids \(4x4\), 42&quot; on centre|3 skids \(4x4\), 42" on centre/);
+  assert.match(svg, /3 skids \(4x6\), 42&quot; on centre|3 skids \(4x6\), 42" on centre/);
   // a copied style keeps the per-size skids
   const dup = (await admin.post(`/api/admin/duplicate/styles/${st.id}`)).data;
   const copy = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === dup.id);
-  assert.equal(copy.sizes[0].skid_count, 2); assert.equal(copy.skid_spacing, 42);
+  assert.equal(copy.sizes[0].skid_count, 2); assert.equal(copy.sizes[0].skid_size, '6x6'); assert.equal(copy.skid_spacing, 42);
   await admin.del(`/api/v1/styles/${dup.id}`);
-  await admin.patch(`/api/v1/styles/${st.id}`, { skid_count: null, skid_spacing: null });
+  await admin.patch(`/api/v1/styles/${st.id}`, { skid_count: null, skid_spacing: null, skid_size: null });
   await admin.put(`/api/admin/styles/${st.id}/sizes`, st.sizes);
 });
 

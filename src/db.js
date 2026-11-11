@@ -219,6 +219,8 @@ for (const sql of [
   'ALTER TABLE styles ADD COLUMN skid_spacing REAL',                 // centre-to-centre, inches; null = spread edge to edge
   'ALTER TABLE sizes ADD COLUMN skid_count INTEGER',                 // per-size overrides of the two above
   'ALTER TABLE sizes ADD COLUMN skid_spacing REAL',
+  'ALTER TABLE styles ADD COLUMN skid_size TEXT',                    // '4x4' | '4x6' | '6x6'; null = 4x4
+  'ALTER TABLE sizes ADD COLUMN skid_size TEXT',                     // per-size override
   'ALTER TABLE options ADD COLUMN package_items TEXT',
   'ALTER TABLE options ADD COLUMN package_only INTEGER DEFAULT 0',
   'ALTER TABLE quotes ADD COLUMN contact_id INTEGER',

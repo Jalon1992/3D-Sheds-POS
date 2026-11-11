@@ -6,7 +6,7 @@ import { itemSize, skidLayout } from './geometry.js';
 /** "3 skids (4x4), 45\" on centre" for drawings and production notes */
 export function skidNote(style, size) {
   const k = skidLayout(style, size);
-  return `${k.count} skid${k.count === 1 ? '' : 's'} (4x4)${k.count > 1 ? `, ${k.spacingIn}" on centre` : ''}`;
+  return `${k.count} skid${k.count === 1 ? '' : 's'} (${k.lumber})${k.count > 1 ? `, ${k.spacingIn}" on centre` : ''}`;
 }
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -44,7 +44,7 @@ export function floorPlanSVG(catalog, config, meta = {}) {
   // floor grid
   out.push(`<rect x="${X(-W / 2)}" y="${Z(-D / 2)}" width="${W * S}" height="${D * S}" fill="url(#grid)"/>`);
   // skids under the floor (dashed: hidden below), running front to back
-  for (const x of skidLayout(style, size).xs) out.push(`<rect x="${X(x - 0.165)}" y="${Z(-D / 2)}" width="${0.33 * S}" height="${D * S}" fill="none" stroke="#8a7a5c" stroke-width="1" stroke-dasharray="6 4"/>`);
+  const skl = skidLayout(style, size); for (const x of skl.xs) out.push(`<rect x="${X(x - skl.w / 2)}" y="${Z(-D / 2)}" width="${skl.w * S}" height="${D * S}" fill="none" stroke="#8a7a5c" stroke-width="1" stroke-dasharray="6 4"/>`);
 
   // Openings by wall to cut gaps
   const items = (config.items || []).filter(it => optById[it.option_id]).map(it => { const o = optById[it.option_id]; const z = itemSize(o, it); return { it, o: { ...o, width: z.w, height: z.h } }; });

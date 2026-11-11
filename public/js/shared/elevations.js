@@ -27,7 +27,7 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
   const roofName = (roofingList(catalog).find(r => r.key === (config.roof_material || style.roof_material)) || {}).name || '';
 
   const S = opts.scale || 36;               // px per ft
-  const L = geo.wallLen(wall), F = FLOOR_Y, H = geo.H, th = 0.22;
+  const L = geo.wallLen(wall), F = geo.floorY ?? FLOOR_Y, H = geo.H, th = 0.22;
   const gable = geo.isGable(wall);
   // Horizontal extent including roof overhangs seen in this view
   const ov2 = geo.eaveOv2 ?? geo.eaveOv;
@@ -45,8 +45,9 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
   o.push(`<line x1="${X(-L / 2 - sideOv) - 30}" y1="${Y(0)}" x2="${X(L / 2 + sideOv) + 30}" y2="${Y(0)}" stroke="#1d2624" stroke-width="2"/>`);
   o.push(`<rect x="${X(-L / 2)}" y="${Y(F)}" width="${L * S}" height="${F * S}" fill="#e8e2d6" stroke="#1d2624" stroke-width="1"/>`);
   // skid ends show on the front and back (they run front to back); from the sides you see the outer skid
-  if (wall === 'front' || wall === 'back') for (const x of geo.skids.xs) o.push(`<rect x="${X(x - 0.165)}" y="${Y(0.375)}" width="${0.33 * S}" height="${0.35 * S}" fill="#cbb994" stroke="#1d2624" stroke-width="1"/>`);
-  else o.push(`<line x1="${X(-L / 2)}" y1="${Y(0.375)}" x2="${X(L / 2)}" y2="${Y(0.375)}" stroke="#1d2624" stroke-opacity=".5"/>`);
+  const sk = geo.skids, skTop = 0.025 + sk.h;
+  if (wall === 'front' || wall === 'back') for (const x of sk.xs) o.push(`<rect x="${X(x - sk.w / 2)}" y="${Y(skTop)}" width="${sk.w * S}" height="${sk.h * S}" fill="#cbb994" stroke="#1d2624" stroke-width="1"/>`);
+  else o.push(`<line x1="${X(-L / 2)}" y1="${Y(skTop)}" x2="${X(L / 2)}" y2="${Y(skTop)}" stroke="#1d2624" stroke-opacity=".5"/>`);
 
   // --- wall outline (top follows the roof underside)
   const top = [];

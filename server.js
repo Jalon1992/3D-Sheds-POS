@@ -334,8 +334,8 @@ v1.post('/quotes/:id/resend', (req, res) => {
 
 // ---- Generic CRUD for catalog + webhooks
 const TABLES = {
-  styles: ['skid_count', 'skid_spacing', 'name', 'description', 'image_url', 'roof_type', 'ridge_axis', 'wall_height', 'roof_pitch', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'rake_tail', 'overhang', 'gable_overhang', 'overhang_right', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'roof_edge', 'rake_cap_size', 'drip_edge_size', 'drip_edge_color', 'corner_trim', 'casing_trim', 'siding_type', 'trim_type', 'roof_material', 'roof_choices', 'available_options', 'standard_options', 'default_colors', 'active', 'sort'],
-  sizes: ['style_id', 'width', 'depth', 'price', 'hip_len', 'upper_len', 'skid_count', 'skid_spacing', 'active', 'sort'],
+  styles: ['skid_size', 'skid_count', 'skid_spacing', 'name', 'description', 'image_url', 'roof_type', 'ridge_axis', 'wall_height', 'roof_pitch', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'rake_tail', 'overhang', 'gable_overhang', 'overhang_right', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'roof_edge', 'rake_cap_size', 'drip_edge_size', 'drip_edge_color', 'corner_trim', 'casing_trim', 'siding_type', 'trim_type', 'roof_material', 'roof_choices', 'available_options', 'standard_options', 'default_colors', 'active', 'sort'],
+  sizes: ['style_id', 'width', 'depth', 'price', 'hip_len', 'upper_len', 'skid_size', 'skid_count', 'skid_spacing', 'active', 'sort'],
   colors: ['name', 'hex', 'category', 'material', 'price', 'active', 'sort'],
   options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'only_styles', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
   webhooks: ['name', 'url', 'events', 'secret', 'headers', 'active'],
@@ -347,6 +347,7 @@ function clean(table, body) {
     if ((k === 'available_options' || k === 'only_styles') && !Array.isArray(v)) v = null;
     else if (k === 'only_styles') v = v.length ? JSON.stringify([...new Set(v.map(Number).filter(n => n > 0))]) : null;
     else if (JSON_COLS.has(k) && typeof v !== 'string') v = JSON.stringify(v ?? (k === 'headers' || k === 'default_colors' ? {} : []));
+    if ((k === 'skid_size') && !['4x4', '4x6', '6x6'].includes(v)) v = null;
     if (['skid_count', 'skid_spacing', 'overhang_right', 'gable_overhang', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'hip_len', 'upper_len', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'rake_cap_size', 'drip_edge_size', 'corner_trim', 'casing_trim'].includes(k) && (v === '' || v === undefined)) v = null;
     if (typeof v === 'boolean') v = v ? 1 : 0;
     if (v === '') v = null;
@@ -642,7 +643,7 @@ admin.post('/duplicate/:table/:id', (req, res) => {
   const keys = Object.keys(row);
   const id = Number(run(`INSERT INTO ${t} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, ...keys.map(k => row[k])).lastInsertRowid);
   if (t === 'styles') for (const z of db.prepare('SELECT * FROM sizes WHERE style_id = ?').all(Number(req.params.id)))
-    run('INSERT INTO sizes (style_id, width, depth, price, active, sort, hip_len, upper_len, skid_count, skid_spacing) VALUES (?,?,?,?,?,?,?,?,?,?)', id, z.width, z.depth, z.price, z.active, z.sort, z.hip_len ?? null, z.upper_len ?? null, z.skid_count ?? null, z.skid_spacing ?? null);
+    run('INSERT INTO sizes (style_id, width, depth, price, active, sort, hip_len, upper_len, skid_count, skid_spacing, skid_size) VALUES (?,?,?,?,?,?,?,?,?,?,?)', id, z.width, z.depth, z.price, z.active, z.sort, z.hip_len ?? null, z.upper_len ?? null, z.skid_count ?? null, z.skid_spacing ?? null, z.skid_size ?? null);
   // options limited to the original style (e.g. coop parts) are offered on the copy too
   if (t === 'styles') for (const o of db.prepare('SELECT id, only_styles FROM options WHERE only_styles IS NOT NULL').all()) {
     let list; try { list = JSON.parse(o.only_styles); } catch { continue; }
@@ -659,9 +660,10 @@ admin.put('/styles/:id/sizes', (req, res) => {
     if (!w || !d) continue;
     const on = !(z.active === false || z.active === 0 || z.active === '0');
     const len = v => (Number(v) > 0 ? Number(v) : null);
+    const lum = ['4x4', '4x6', '6x6'].includes(z.skid_size) ? z.skid_size : null;
     const cnt = Number(z.skid_count) >= 1 ? Math.min(12, Math.round(Number(z.skid_count))) : null, sp = Number(z.skid_spacing) > 0 ? Math.min(240, Number(z.skid_spacing)) : null;
-    if (z.id && get('SELECT id FROM sizes WHERE id=? AND style_id=?', Number(z.id), sid)) { run('UPDATE sizes SET width=?, depth=?, price=?, active=?, sort=?, hip_len=?, upper_len=?, skid_count=?, skid_spacing=? WHERE id=? AND style_id=?', w, d, Number(z.price) || 0, on ? 1 : 0, i, len(z.hip_len), len(z.upper_len), cnt, sp, Number(z.id), sid); keep.push(Number(z.id)); }
-    else keep.push(Number(run('INSERT INTO sizes (style_id, width, depth, price, active, sort, hip_len, upper_len, skid_count, skid_spacing) VALUES (?,?,?,?,?,?,?,?,?,?)', sid, w, d, Number(z.price) || 0, on ? 1 : 0, i, len(z.hip_len), len(z.upper_len), cnt, sp).lastInsertRowid));
+    if (z.id && get('SELECT id FROM sizes WHERE id=? AND style_id=?', Number(z.id), sid)) { run('UPDATE sizes SET width=?, depth=?, price=?, active=?, sort=?, hip_len=?, upper_len=?, skid_count=?, skid_spacing=?, skid_size=? WHERE id=? AND style_id=?', w, d, Number(z.price) || 0, on ? 1 : 0, i, len(z.hip_len), len(z.upper_len), cnt, sp, lum, Number(z.id), sid); keep.push(Number(z.id)); }
+    else keep.push(Number(run('INSERT INTO sizes (style_id, width, depth, price, active, sort, hip_len, upper_len, skid_count, skid_spacing, skid_size) VALUES (?,?,?,?,?,?,?,?,?,?,?)', sid, w, d, Number(z.price) || 0, on ? 1 : 0, i, len(z.hip_len), len(z.upper_len), cnt, sp, lum).lastInsertRowid));
   }
   run(`DELETE FROM sizes WHERE style_id = ? ${keep.length ? `AND id NOT IN (${keep.join(',')})` : ''}`, sid);
   res.json(all('SELECT * FROM sizes WHERE style_id = ? ORDER BY sort', sid));

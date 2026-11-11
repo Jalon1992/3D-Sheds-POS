@@ -921,7 +921,7 @@ export class ShedScene {
     this.pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.camera.updateMatrixWorld(); this.root.updateMatrixWorld(true);
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const g = this.geo, y0 = FLOOR_Y;
+    const g = this.geo, y0 = g.floorY ?? FLOOR_Y;
     const planeHit = y => { const p = new THREE.Vector3(); return this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), p) ? p : null; };
     if (kind === 'ceiling' || kind === 'roof') {
       const p = planeHit(kind === 'ceiling' ? y0 + g.H - 0.45 : y0 + g.H + g.peak); if (!p) return null;
@@ -966,8 +966,8 @@ export class ShedScene {
 
   frame(view = 'front34', animate = true) {
     const g = this.geo; if (!g) return;
-    const top = FLOOR_Y + g.H + g.peak;
-    const target = new THREE.Vector3(0, this.interior ? FLOOR_Y + 1.5 : top * 0.45, 0);
+    const fy = g.floorY ?? FLOOR_Y, top = fy + g.H + g.peak;
+    const target = new THREE.Vector3(0, this.interior ? fy + 1.5 : top * 0.45, 0);
     const R = Math.max(g.W, g.D, top) * 1.8 + 11;
     const dirs = {
       front34: [0.75, 0.45, 1], front: [0, 0.3, 1], back: [0, 0.3, -1], left: [-1, 0.3, 0], right: [1, 0.3, 0],
@@ -1023,7 +1023,7 @@ export class ShedScene {
     if (M.steel) M.steel.envMap = this.envTex;
     M.cw = (style.casing_trim === null || style.casing_trim === undefined || style.casing_trim === '' ? 4 : Number(style.casing_trim)) / 12;
     const { W, D, H } = geo;
-    const y0 = FLOOR_Y;
+    const y0 = geo.floorY ?? FLOOR_Y;
     const shed = new THREE.Group(); this.root.add(shed);
 
     // --- Gravel pad, skids, floor
@@ -1031,7 +1031,7 @@ export class ShedScene {
       const pad = new THREE.Mesh(new THREE.PlaneGeometry(W + 4, D + 4), new THREE.MeshStandardMaterial({ map: tiled(gravelTex(), W + 4, D + 4), roughness: 1 }));
       pad.rotation.x = -Math.PI / 2; pad.position.y = 0.02; pad.receiveShadow = true; pad.userData.solid = true; shed.add(pad);
     }
-    for (const x of geo.skids.xs) box(0.33, 0.35, D, M.wood, x, 0.2, 0, shed).userData.solid = true;   // skids (count / spacing from the style or size)
+    const sk = geo.skids; for (const x of sk.xs) box(sk.w, sk.h, D, M.wood, x, 0.025 + sk.h / 2, 0, shed).userData.solid = true;   // skids (count / spacing / lumber from the style or size)
     box(W, 0.4, D, M.trim, 0, y0 - 0.2, 0, shed).userData.solid = true;
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(W - 2 * T, D - 2 * T), new THREE.MeshStandardMaterial({ map: tiled(plyTex(), W, D), roughness: 0.85 }));
     fl.rotation.x = -Math.PI / 2; fl.position.y = y0 + 0.005; fl.receiveShadow = true; fl.userData.solid = true; shed.add(fl);
