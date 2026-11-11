@@ -491,6 +491,92 @@ test('GoHighLevel: the quote PDF with pricing goes to the contact and opportunit
   await setS({ ghl_enabled: false, ghl_send_pdf: 1, ghl_add_note: 1, ghl_pdf_field: '', public_url: '' });
 });
 
+test('Chicken coop: own style, coop-only parts, nest box and roosts priced by length, deeper eave, drawings', async () => {
+  const cat = (await anon.get('/api/v1/catalog')).data;
+  const coop = cat.styles.find(s => s.name === 'Chicken Coop'); assert.ok(coop, 'coop style seeded');
+  assert.deepEqual(coop.sizes.map(z => `${z.width}x${z.depth}`), ['6x8', '6x10', '8x8', '8x10', '8x12', '10x12']);
+  assert.equal(coop.overhang_right, 1.5, 'deeper eave over the windows');
+  const k = kind => cat.options.find(o => o.kind === kind);
+  const nest = k('nest_box'), pop = k('pop_door'), roost = k('roost'), door = k('door_coop'), win = cat.options.find(o => o.name.startsWith('Coop Window'));
+  for (const o of [nest, pop, roost, door, win]) assert.deepEqual(o?.only_styles, [coop.id], (o?.name || '?') + ' only on the coop');
+  assert.equal(win.name, 'Coop Window (14" x 21")'); assert.equal(Math.round(win.width * 12), 14); assert.equal(Math.round(win.height * 12), 21);
+  assert.equal(nest.width, 6, "nest box is 6' as built");
+  // the white corner boards on a nest box can be left off; that choice is kept on the quote (and only on nest boxes)
+  const pc = (await admin.post('/api/v1/quotes', { config: { style_id: coop.id, size_id: coop.sizes[0].id, items: [{ uid: 'nb', option_id: nest.id, wall: 'right', offset: 0, corner_trim: false }, { uid: 'rb', option_id: roost.id, wall: 'left', offset: 0, corner_trim: false }] }, customer: { first_name: 'Trim', email: 'trim@test.com' } })).data;
+  assert.equal(pc.config.items.find(i => i.uid === 'nb').corner_trim, false);
+  assert.equal(pc.config.items.find(i => i.uid === 'rb').corner_trim, undefined);
+  // the coop with its standard parts: all fit, all included
+  const sz = coop.sizes.find(z => z.width === 6 && z.depth === 10);
+  const std = (coop.standard_options || []).map((x, i) => ({ uid: 's' + i, standard_of: x.option_id, ...x }));
+  const p0 = (await anon.post('/api/v1/price', { style_id: coop.id, size_id: sz.id, items: std })).data;
+  assert.equal(p0.subtotal, sz.price, 'standard coop parts are included in the size price');
+  // a second, 3' nest box on the back wall beside the chicken door: 3 × the per-foot price
+  const big = coop.sizes.find(z => z.width === 8 && z.depth === 12), stdB = std.map(x => ({ ...x }));
+  const pB = (await anon.post('/api/v1/price', { style_id: coop.id, size_id: big.id, items: stdB })).data;
+  const p1 = (await anon.post('/api/v1/price', { style_id: coop.id, size_id: big.id, items: [...stdB, { uid: 'n2', option_id: nest.id, wall: 'back', offset: -2, w: 3 }] })).data;
+  assert.equal(p1.subtotal - pB.subtotal, 3 * nest.price);
+  assert.ok(p1.lines.some(l => l.uid === 'n2' && /3'/.test(l.detail || '')), 'priced by its length');
+  // one that would overlap the roost bars inside the left wall isn't accepted there
+  const p2 = (await anon.post('/api/v1/price', { style_id: coop.id, size_id: big.id, items: [...stdB, { uid: 'n3', option_id: nest.id, wall: 'left', offset: 0, w: 3 }] })).data;
+  assert.ok(!p2.lines.some(l => l.uid === 'n3' && l.wall === 'left'), 'no nest box through the roost bars');
+  // coop parts are dropped from other styles (a hand-made config can't sneak a nest box onto a garage)
+  const g = (await anon.post('/api/v1/price', { style_id: gable.id, size_id: gable.sizes[0].id, items: [{ uid: 'x', option_id: nest.id, wall: 'right', offset: 0 }] })).data;
+  assert.ok(!g.lines.some(l => /Nest Box/.test(l.label)), 'nest box not on a garden shed');
+  // a coop quote: the floor plan shows the nest box, chicken door and roost bars
+  const q = (await admin.post('/api/v1/quotes', { config: { style_id: coop.id, size_id: sz.id, items: std }, customer: { first_name: 'Hen', email: 'hen@test.com' } })).data;
+  assert.equal(q.config.items.length, 7, 'door, 3 windows, nest box, chicken door, roost bars');
+  const plan = await fetch(B + `/api/v1/quotes/${q.id}/floorplan.svg`, { headers: { cookie: admin.cookie } });
+  const svg = await plan.text(); for (const t of ['Outside Nest Box', 'Chicken Door with Ramp', 'Roost Bars', '30&quot; Coop Door']) assert.ok(svg.includes(t) || svg.includes(t.replace('&quot;', '"')), 'floor plan shows ' + t);
+  // admin: deeper eave is a style setting; "only on these styles" is an option setting; a copied coop keeps its parts
+  assert.equal((await admin.patch(`/api/v1/styles/${coop.id}`, { overhang_right: 2 })).data.overhang_right, 2);
+  await admin.patch(`/api/v1/styles/${coop.id}`, { overhang_right: 1.5 });
+  const dup = (await admin.post(`/api/admin/duplicate/styles/${coop.id}`)).data;
+  const nest2 = (await admin.get(`/api/v1/options/${nest.id}`)).data;
+  assert.deepEqual(nest2.only_styles, [coop.id, dup.id], 'the copy gets the coop parts too');
+  assert.equal((await admin.patch(`/api/v1/options/${roost.id}`, { only_styles: [] })).data.only_styles, null, 'empty list = every style');
+  await admin.patch(`/api/v1/options/${roost.id}`, { only_styles: [coop.id] });
+  await admin.del(`/api/v1/styles/${dup.id}`);
+});
+
+test('Skids: how many and how far apart, set on the style or per size; drawn in 3D, elevations, floor plan and drawings', async () => {
+  const { skidLayout } = await import('../public/js/shared/geometry.js');
+  const r = (st, w, z = {}) => { const k = skidLayout(st, { width: w, ...z }); return [k.count, k.spacingIn, k.xs.map(x => Math.round(x * 12))]; };
+  assert.deepEqual(r({}, 8), [3, 44.5, [-44, 0, 44]], 'automatic: about one per 4 ft, spread edge to edge (as before)');
+  assert.deepEqual(r({ skid_count: 4 }, 10), [4, 37.6, [-56, -19, 19, 56]].map((v, i) => (i === 1 ? 37.5 : v)), 'count only: spread edge to edge');
+  assert.deepEqual(r({ skid_spacing: 24 }, 8), [4, 24, [-36, -12, 12, 36]], 'spacing only: as many as fit, centred');
+  assert.deepEqual(r({ skid_count: 3, skid_spacing: 36 }, 10), [3, 36, [-36, 0, 36]], 'count and spacing: centred');
+  assert.deepEqual(r({ skid_count: 3 }, 12, { skid_count: 4, skid_spacing: 40 }), [4, 40, [-60, -20, 20, 60]], 'the size overrides the style');
+  assert.equal(r({ skid_count: 3, skid_spacing: 80 }, 8)[1], 44.5, 'a spacing wider than the building falls back to edge to edge');
+  // lumber: 4x4 standard; 4x6 / 6x6 from the style or the size; taller skids lift the floor
+  const { shedGeometry } = await import('../public/js/shared/geometry.js');
+  assert.equal(skidLayout({}, { width: 8 }).lumber, '4x4');
+  assert.equal(skidLayout({ skid_size: '6x6' }, { width: 8 }).lumber, '6x6');
+  assert.equal(skidLayout({ skid_size: '6x6' }, { width: 8, skid_size: '4x6' }).lumber, '4x6', 'size overrides style');
+  assert.equal(skidLayout({ skid_size: '8x8' }, { width: 8 }).lumber, '4x4', 'unknown sizes ignored');
+  const g4 = shedGeometry({ wall_height: 7 }, { width: 8, depth: 10 }), g6 = shedGeometry({ wall_height: 7, skid_size: '6x6' }, { width: 8, depth: 10 });
+  assert.ok(Math.abs(g6.floorY - g4.floorY - (g6.skids.h - g4.skids.h)) < 1e-9 && g6.floorY > g4.floorY, 'floor sits on top of the taller skids');
+  // saved through the admin: style default + one size's override
+  const st = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === gable.id);
+  assert.equal((await admin.patch(`/api/v1/styles/${st.id}`, { skid_count: 3, skid_spacing: 42, skid_size: '4x6' })).data.skid_size, '4x6');
+  assert.equal((await admin.patch(`/api/v1/styles/${st.id}`, { skid_size: 'huge' })).data.skid_size, null, 'only 4x4 / 4x6 / 6x6');
+  await admin.patch(`/api/v1/styles/${st.id}`, { skid_size: '4x6' });
+  const sizes = st.sizes.map((z, i) => ({ ...z, ...(i === 0 ? { skid_count: 2, skid_spacing: 60, skid_size: '6x6' } : {}) }));
+  assert.equal((await admin.put(`/api/admin/styles/${st.id}/sizes`, sizes)).status, 200);
+  const st2 = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === gable.id);
+  assert.equal(st2.sizes[0].skid_count, 2); assert.equal(st2.sizes[0].skid_spacing, 60); assert.equal(st2.sizes[0].skid_size, '6x6'); assert.equal(st2.sizes[1].skid_count, null);
+  // the floor plan names them for the crew
+  const q = (await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: st2.sizes[1].id }, customer: { first_name: 'Skid', email: 'skid@test.com' } })).data;
+  const svg = await (await fetch(B + `/api/v1/quotes/${q.id}/floorplan.svg`, { headers: { cookie: admin.cookie } })).text();
+  assert.match(svg, /3 skids \(4x6\), 42&quot; on centre|3 skids \(4x6\), 42" on centre/);
+  // a copied style keeps the per-size skids
+  const dup = (await admin.post(`/api/admin/duplicate/styles/${st.id}`)).data;
+  const copy = (await admin.get('/api/admin/catalog')).data.styles.find(s => s.id === dup.id);
+  assert.equal(copy.sizes[0].skid_count, 2); assert.equal(copy.sizes[0].skid_size, '6x6'); assert.equal(copy.skid_spacing, 42);
+  await admin.del(`/api/v1/styles/${dup.id}`);
+  await admin.patch(`/api/v1/styles/${st.id}`, { skid_count: null, skid_spacing: null, skid_size: null });
+  await admin.put(`/api/admin/styles/${st.id}/sizes`, st.sizes);
+});
+
 test('Quote PDF security: upload limits, page bombs, broken PDFs; who may read quotes and the priced PDF', async () => {
   await setS({ ghl_enabled: true, ghl_token: 'good-token', ghl_location_id: 'LOC1', ghl_pipeline_id: '', ghl_send_pdf: 1, ghl_add_note: 0, ghl_custom_fields: {}, ghl_pdf_field: '' });
   const mk = async () => (await admin.post('/api/v1/quotes', { config: { style_id: gable.id, size_id: gable.sizes[0].id }, customer: { first_name: 'Sec', email: 'sec@test.com' }, with_drawings: true })).data;
@@ -699,4 +785,34 @@ test('new 3D parts: carriage + panel doors, double shelves in chosen lengths, wi
     const svg = elevationSVG(pub, saved.config, wall).svg; assert.match(svg, /^<svg/); assert.doesNotMatch(svg, /NaN|undefined/, wall + ' elevation');
   }
   assert.ok(elevationSVG(pub, saved.config, 'front').svg.length > elevationSVG(pub, { ...saved.config, items: [] }, 'front').svg.length + 500, 'carriage doors drawn on the front');
+});
+
+test('garage doors: four stock doors, admin fields saved and checked, priced, drawn on the plan and elevations', async () => {
+  const cat = (await admin.get('/api/v1/catalog')).data;
+  const g = cat.options.filter(o => o.kind === 'door_garage');
+  assert.equal(g.length, 4);
+  const car = g.find(o => o.garage_panel === 'carriage' && !o.insulated), std = g.find(o => o.garage_panel === 'standard' && o.insulated);
+  // admin: style, windows, insulated and slanted corners save; size is adjustable; a bad style is dropped
+  const made = (await admin.post('/api/v1/options', { name: "16' x 7' Garage Door", category: 'doors', kind: 'door_garage', placement: 'opening', swap_group: 'door', width: 16, height: 7, price: 2400, garage_panel: 'carriage', garage_windows: 1, insulated: 1, slanted_corners: 1 })).data;
+  let row = (await admin.get('/api/v1/options/' + made.id)).data;
+  assert.equal(row.garage_panel, 'carriage'); assert.equal(row.garage_windows, 1); assert.equal(row.insulated, 1); assert.equal(row.slanted_corners, 1); assert.equal(row.width, 16);
+  await admin.patch('/api/v1/options/' + made.id, { garage_panel: '<script>', slanted_corners: 0, width: 10, height: 8 });
+  row = (await admin.get('/api/v1/options/' + made.id)).data;
+  assert.equal(row.garage_panel, null, 'unknown style dropped'); assert.equal(row.slanted_corners, 0); assert.equal(row.width, 10); assert.equal(row.height, 8);
+  await admin.del('/api/v1/options/' + made.id);
+  // on a building: priced, plan + elevations draw without errors, slanted corners and sections show up
+  const st = cat.styles.find(s => s.name === 'Garage') || cat.styles[0], size = st.sizes.find(z => z.width >= 12) || st.sizes.at(-1);
+  for (const door of [car, std]) {
+    const cfg = { style_id: st.id, size_id: size.id, items: [{ option_id: door.id, wall: 'front', offset: 0 }] };
+    const q = await admin.post('/api/v1/quotes', { config: cfg, customer: { first_name: 'Gar', email: 'gar@test.com' } });
+    assert.equal(q.status, 201, JSON.stringify(q.data));
+    const pr = (await admin.post('/api/v1/price', cfg)).data; assert.ok(pr.lines.some(l => l.label === door.name && l.amount === door.price), door.name + ' priced: ' + JSON.stringify(pr.lines.map(l => [l.label, l.amount]))); assert.equal(q.data.pricing.total, pr.total);
+    const plan = await (await fetch(B + `/api/v1/quotes/${q.data.id}/floorplan.svg`, { headers: { cookie: admin.cookie } })).text();
+    assert.match(plan, /^<svg/); assert.doesNotMatch(plan, /NaN|undefined/); assert.match(plan, /stroke-dasharray="6 4"/, 'overhead door: no swing, dashed line');
+    const { elevationSVG } = await import('../public/js/shared/elevations.js');
+    const saved = (await admin.get('/api/v1/quotes/' + q.data.id)).data, svg = elevationSVG(cat, saved.config, 'front').svg;
+    assert.doesNotMatch(svg, /NaN|undefined/);
+    if (door === car) { assert.match(svg, /fill="#3a4448"/, 'window row'); assert.match(svg, /h-?[\d.]+L[\d.]+ [\d.]+Z/, 'slanted corners'); }
+    else assert.ok(!/fill="#3a4448"/.test(svg), 'no windows on the standard door');
+  }
 });

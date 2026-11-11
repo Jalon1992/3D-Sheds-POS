@@ -1,7 +1,7 @@
 // Admin dashboard (vanilla JS SPA).
 import { ShedScene, BUILTIN_KINDS } from '../js/shed3d.js';
 import { defaultConfig, money, WALLS, DEFAULT_ROOFING, MAX_TIERS, roofingList } from '../js/shared/pricing.js';
-import { shedGeometry, roofSections } from '../js/shared/geometry.js';
+import { shedGeometry, roofSections, skidLayout } from '../js/shared/geometry.js';
 import { buildDrawingPackage } from '../js/drawings.js';
 import { crmContacts, crmConversations, crmPipeline, crmTasks, ordersBoard, messagingPage } from './crm.js';
 import { posPage } from './pos.js';
@@ -390,6 +390,10 @@ const STYLE_FIELDS = () => [
   { key: 'trim_type', label: 'Wood trim', type: 'select', options: [['lp', 'LP SmartSide trim (cedar texture)'], ['smooth', 'Smooth trim']], help: 'Corner boards, fascia, door & window trim. Metal trim is always smooth.' },
   { key: 'overhang', label: 'Eave overhang (ft)', type: 'number', step: '0.05', help: 'Along the low sides of the roof (where water runs off).' },
   { key: 'gable_overhang', label: 'Gable overhang (ft)', type: 'number', step: '0.05', help: 'At the gable/rake ends. Blank = same as eave.' },
+  { key: 'skid_size', label: 'Skid size', type: 'select', options: [['', '4x4 (standard)'], ['4x6', '4x6 (on edge)'], ['6x6', '6x6']], help: 'Lumber for the skids. Taller skids raise the building. Each size can use its own in the size table below.' },
+  { key: 'skid_count', label: 'Skids (how many)', type: 'number', step: '1', ph: 'auto', help: '4x4 skids under the floor, running front to back. Blank = about one per 4 ft of width. Each size can set its own in the size table below.' },
+  { key: 'skid_spacing', label: 'Skid spacing (inches, centre to centre)', type: 'number', step: '0.25', ph: 'spread edge to edge', help: 'Blank = outer skids at the edges and the rest evenly between. With a spacing and no count, as many as fit, centred.' },
+  { key: 'overhang_right', label: 'Deeper eave on one side (ft)', type: 'number', step: '0.05', help: 'Optional. A longer overhang on the right-hand eave (seen from the front), e.g. over a chicken coop\'s windows. On a style whose ridge runs across, it\'s the front eave. Blank = same as the eave overhang.' },
   { type: 'section', label: 'Trim sizes (inches)' },
   { key: 'fascia_size', label: 'Fascia height (in)', type: 'number', step: '0.25', ph: '5.5', help: 'Board along the eaves. Trim color.' },
   { type: 'section', label: 'Roof edges (rake & drip edge)' },
@@ -450,6 +454,9 @@ function styleEditor(style) {
   let stds = (s.standard_options || []).filter(x => catalog.options.some(o => o.id === Number(x.option_id))).map(x => ({ ...x }));
   let previewIdx = Math.min(sizes.length - 1, 1);
   let avail = Array.isArray(s.available_options) ? s.available_options.map(Number) : null; // null = all options
+  // options limited to other styles (e.g. coop parts): off here unless ticked, which adds this style to the option
+  const limited = o => Array.isArray(o.only_styles) && o.only_styles.length > 0 && !o.only_styles.map(Number).includes(Number(s.id));
+  const unlock = new Set();
   const availHTML = () => {
     const stdIds = new Set(stds.map(x => Number(x.option_id)));
     const cats = CATEGORIES.filter(([k]) => catalog.options.some(o => o.category === k));
@@ -457,7 +464,7 @@ function styleEditor(style) {
     return `<div class="row" style="gap:14px;margin-bottom:8px"><span class="muted" style="font-size:13px">${off ? `<b>${off}</b> option${off > 1 ? 's' : ''} hidden on this style` : 'Every option is offered on this style'}</span>
         <button type="button" class="btn link sm" id="avAll">Tick all</button><button type="button" class="btn link sm" id="avNone">Untick all</button></div>
       <div class="avgrid">${cats.map(([k, l]) => `<div><b>${esc(l)}</b>${catalog.options.filter(o => o.category === k).map(o => {
-        const std = stdIds.has(o.id), on = !avail || std || avail.includes(o.id);
+        const std = stdIds.has(o.id), on = std || (limited(o) ? unlock.has(o.id) : !avail || avail.includes(o.id));
         return `<label class="chk"><input type="checkbox" data-av="${o.id}" ${on ? 'checked' : ''} ${std ? 'disabled title="Standard on this style — always offered"' : ''}>${esc(o.name)}${std ? ' <span class="muted">(standard)</span>' : ''}${o.active ? '' : ' <span class="muted">(hidden everywhere)</span>'}</label>`;
       }).join('')}</div>`).join('')}</div>
       <div class="muted" style="font-size:12px;margin-top:6px">Untick anything this style shouldn't offer — customers won't see it on this style. Standard options are always offered. While everything is ticked, options you add later are offered here automatically; once something is unticked, tick new options here to offer them.</div>`;
@@ -470,10 +477,10 @@ function styleEditor(style) {
   const colorSel = cat => `<label class="fld"><span>Default ${cat} color</span><select name="dc_${cat}"><option value="">First in list</option>${catalog.colors.filter(c => c.category === cat).map(c => `<option value="${c.id}" ${c.id === s.default_colors?.[cat] ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
   const isBarn = () => (document.querySelector('#sf [name=roof_type]')?.value || s.roof_type) === 'barn';
   const styleVal = k => document.querySelector(`#sf [name=${k}]`)?.value || s[k] || '';
-  const sizesHTML = () => `<table class="mini"><tr><th>Width (ft)</th><th>Depth (ft)</th><th>Base price</th>${isBarn() ? '<th title="Gambrel hip (lower section) length for this size">Hip len (ft)</th><th title="Gambrel upper section length for this size">Upper len (ft)</th>' : ''}<th>Active</th><th></th><th></th></tr>
+  const sizesHTML = () => `<table class="mini"><tr><th>Width (ft)</th><th>Depth (ft)</th><th>Base price</th>${isBarn() ? '<th title="Gambrel hip (lower section) length for this size">Hip len (ft)</th><th title="Gambrel upper section length for this size">Upper len (ft)</th>' : ''}<th title="Skid lumber for this size (blank = the style setting)">Skid size</th><th title="How many skids for this size (blank = the style setting)">Skids</th><th title="Skid spacing for this size, inches centre to centre (blank = the style setting)">Spacing (in)</th><th>Active</th><th></th><th></th></tr>
     ${sizes.map((z, i) => `<tr><td><input type="number" step="0.5" data-sz="${i}" data-k="width" value="${z.width}"></td><td><input type="number" step="0.5" data-sz="${i}" data-k="depth" value="${z.depth}"></td>
     <td><input type="number" step="1" data-sz="${i}" data-k="price" value="${z.price}"></td>
-    ${isBarn() ? `<td><input type="number" step="0.0625" data-sz="${i}" data-k="hip_len" value="${z.hip_len ?? ''}" placeholder="${esc(styleVal('gambrel_lower_len') || 'style')}"></td><td><input type="number" step="0.0625" data-sz="${i}" data-k="upper_len" value="${z.upper_len ?? ''}" placeholder="${esc(styleVal('gambrel_upper_len') || 'auto')}"></td>` : ''}<td><input type="checkbox" data-sz="${i}" data-k="active" ${z.active !== 0 ? 'checked' : ''}></td>
+    ${isBarn() ? `<td><input type="number" step="0.0625" data-sz="${i}" data-k="hip_len" value="${z.hip_len ?? ''}" placeholder="${esc(styleVal('gambrel_lower_len') || 'style')}"></td><td><input type="number" step="0.0625" data-sz="${i}" data-k="upper_len" value="${z.upper_len ?? ''}" placeholder="${esc(styleVal('gambrel_upper_len') || 'auto')}"></td>` : ''}${(() => { const l = skidLayout({ skid_count: styleVal('skid_count'), skid_spacing: styleVal('skid_spacing'), skid_size: styleVal('skid_size') }, { width: Number(z.width) || 8, skid_size: z.skid_size }); return `<td><select data-sz="${i}" data-k="skid_size"><option value="">${esc(styleVal('skid_size') || '4x4')}</option>${['4x4', '4x6', '6x6'].map(v => `<option ${z.skid_size === v ? 'selected' : ''}>${v}</option>`).join('')}</select></td><td><input type="number" step="1" min="1" max="12" style="width:64px" data-sz="${i}" data-k="skid_count" value="${z.skid_count ?? ''}" placeholder="${l.count}"></td><td><input type="number" step="0.25" style="width:76px" data-sz="${i}" data-k="skid_spacing" value="${z.skid_spacing ?? ''}" placeholder="${l.spacingIn || ''}"></td>`; })()}<td><input type="checkbox" data-sz="${i}" data-k="active" ${z.active !== 0 ? 'checked' : ''}></td>
     <td><button type="button" class="icon-btn" data-pvsize="${i}" title="Preview this size" style="${i === previewIdx ? 'border-color:var(--brand);color:var(--brand)' : ''}">👁</button></td><td><button type="button" class="icon-btn" data-rmsize="${i}">${TRASH}</button></td></tr>`).join('')}</table>
     ${isBarn() ? '<div class="muted" style="font-size:12px;margin-top:6px">Hip / upper lengths: leave blank to use the style\'s values. Measured along the slope without overhang. Click 👁 to preview a size — the roof readout above shows each section\'s pitch and length.</div>' : ''}
     <div class="row" style="margin-top:8px"><button type="button" class="btn ghost sm" id="addSize">+ Add size</button>
@@ -514,7 +521,7 @@ function styleEditor(style) {
         try {
           const d = collect();
           const sz = sizes[previewIdx] || sizes[0]; if (!sz || !sz.width || !sz.depth) return;
-          const st = { ...d, id: -1, sizes: [{ ...sz, id: -1, width: Number(sz.width), depth: Number(sz.depth), price: Number(sz.price) || 0, hip_len: Number(sz.hip_len) || null, upper_len: Number(sz.upper_len) || null }] };
+          const st = { ...d, id: -1, sizes: [{ ...sz, id: -1, width: Number(sz.width), depth: Number(sz.depth), price: Number(sz.price) || 0, hip_len: Number(sz.hip_len) || null, upper_len: Number(sz.upper_len) || null, skid_count: Number(sz.skid_count) || null, skid_spacing: Number(sz.skid_spacing) || null, skid_size: sz.skid_size || null }] };
           const cat = { ...catalog, settings: { ...catalog.settings, roofing: roofing() }, styles: [st] };
           const cfg = defaultConfig(cat, -1, -1); cfg.roof_material = d.roof_material;
           modalScene.build(cat, cfg);
@@ -540,7 +547,8 @@ function styleEditor(style) {
         if (d.std !== undefined) { stds[d.std][d.k] = stdVal(d.k, e.target); later(); }
         if (d.av !== undefined) {
           const ticked = $$('[data-av]', root).filter(x => x.checked && !x.disabled).map(x => Number(x.dataset.av));
-          const free = catalog.options.filter(o => !stds.some(x => Number(x.option_id) === o.id)).map(o => o.id);
+          for (const o of catalog.options.filter(limited)) ticked.includes(o.id) ? unlock.add(o.id) : unlock.delete(o.id);
+          const free = catalog.options.filter(o => !stds.some(x => Number(x.option_id) === o.id) && !limited(o)).map(o => o.id);
           avail = free.every(id => ticked.includes(id)) ? null : ticked;
           redrawAvail();
         }
@@ -562,7 +570,8 @@ function styleEditor(style) {
         const d = collect();
         if (!d.name) throw new Error('Name is required');
         const saved = isNew ? await api('POST', '/api/v1/styles', d) : await api('PATCH', `/api/v1/styles/${s.id}`, d);
-        await api('PUT', `/api/admin/styles/${saved.id}/sizes`, sizes.map(z => ({ ...z, width: Number(z.width), depth: Number(z.depth), price: Number(z.price), hip_len: Number(z.hip_len) || null, upper_len: Number(z.upper_len) || null })));
+        for (const id of unlock) { const o = catalog.options.find(x => x.id === id); if (o) await api('PATCH', `/api/v1/options/${id}`, { only_styles: [...new Set([...o.only_styles.map(Number), Number(saved.id)])] }); }
+        await api('PUT', `/api/admin/styles/${saved.id}/sizes`, sizes.map(z => ({ ...z, width: Number(z.width), depth: Number(z.depth), price: Number(z.price), hip_len: Number(z.hip_len) || null, upper_len: Number(z.upper_len) || null, skid_count: Number(z.skid_count) || null, skid_spacing: Number(z.skid_spacing) || null, skid_size: z.skid_size || null })));
         closeModal(); toast('Style saved'); styles();
       });
       preview();
@@ -658,6 +667,11 @@ const OPTION_FIELDS = () => [
   { key: 'grid_top', label: 'Top half grid (columns × rows)', type: 'select', options: [['', 'Standard grid'], ['none', 'No grid (clear glass)'], ['1x2', '1 × 2'], ['2x1', '2 × 1'], ['2x2', '2 × 2'], ['3x1', '3 × 1'], ['3x2', '3 × 2'], ['2x3', '2 × 3'], ['3x3', '3 × 3'], ['4x2', '4 × 2']], help: 'Set the top and/or bottom to give the window two sashes, each with its own grid (meeting rail across the middle). Leave both on "Standard grid" for the regular one-piece grid.' },
   { key: 'grid_bottom', label: 'Bottom half grid (columns × rows)', type: 'select', options: [['', 'Standard grid'], ['none', 'No grid (clear glass)'], ['1x2', '1 × 2'], ['2x1', '2 × 1'], ['2x2', '2 × 2'], ['3x1', '3 × 1'], ['3x2', '3 × 2'], ['2x3', '2 × 3'], ['3x3', '3 × 3'], ['4x2', '4 × 2']] },
   { key: 'gable_mode', label: 'Can it go up in the gable?', type: 'select', full: true, options: [['', 'No — walls only'], ['allow', 'Yes — customer can put it on the wall or up in the gable'], ['only', 'Gable only (e.g. a gable/attic window)']], help: 'Windows & vents. In the gable it is centred between the top of the wall and the roof line, if it fits.' },
+  { type: 'html', html: '<div class="section-t full">Garage doors &amp; door trim</div>' },
+  { key: 'garage_panel', label: 'Garage door style', type: 'select', options: [['', '—'], ['standard', 'Standard (raised short panels)'], ['carriage', 'Carriage house (grooved panels, hinges & handles)']], help: 'For the "Garage door" built-in model. Set the door size with Width and Height above (e.g. 9 × 7, 10 × 8, 16 × 7).' },
+  { key: 'garage_windows', label: 'Row of windows across the top section', type: 'checkbox' },
+  { key: 'insulated', label: 'Insulated', type: 'checkbox', help: 'Insulated doors are drawn thicker (2" foam core). Keep insulated and uninsulated as separate options so each has its own price, and say "Insulated" in the name so it reads that way on quotes.' },
+  { key: 'slanted_corners', label: 'Slanted top corners on the trim', type: 'checkbox', help: 'Any door: adds 45° trim blocks in the two top corners of the opening.' },
   { key: 'price', label: 'Price ($)', type: 'number', step: '0.01' },
   { key: 'price_unit', label: 'Priced', type: 'select', options: PRICE_UNITS },
   { key: 'max_qty', label: 'Max per shed', type: 'number' },
@@ -746,10 +760,11 @@ function optionEditor(row) {
         <div class="section-t">Offered on these styles</div>
         <div class="full row" style="gap:6px 16px" id="optStyles">${catalog.styles.map(st => {
           const std = row && (st.standard_options || []).some(x => Number(x.option_id) === row.id);
-          const on = !row ? !Array.isArray(st.available_options) : (std || !Array.isArray(st.available_options) || st.available_options.map(Number).includes(row.id));
+          const only = Array.isArray(o.only_styles) && o.only_styles.length ? o.only_styles.map(Number) : null;
+          const on = !row ? !Array.isArray(st.available_options) : (std || ((!only || only.includes(st.id)) && (!Array.isArray(st.available_options) || st.available_options.map(Number).includes(row.id))));
           return `<label class="chk"><input type="checkbox" data-ost="${st.id}" ${on ? 'checked' : ''} ${std ? 'disabled title="Standard on this style"' : ''}>${esc(st.name)}${std ? ' <span class="muted">(standard)</span>' : ''}</label>`;
         }).join('')}</div>
-        <div class="full muted" style="font-size:12px">Untick a style to hide this option there. Same setting as “Options offered on this style” in the style editor.</div>
+        <div class="full muted" style="font-size:12px">Untick a style to hide this option there (e.g. nest boxes only on chicken coops).</div>
         <div class="section-t">What's in this package <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">(optional — e.g. an electrical package)</span></div>
         <div class="full" id="pkgBox"></div></form>
       <div><div class="preview3d" id="pv"><div class="pv-note">3D preview</div></div>
@@ -808,21 +823,15 @@ function optionEditor(row) {
         const d = readFields($('#of', root), fields);
         if (!d.name) throw new Error('Name is required');
         d.package_items = pkOut();
+        // per-style availability: the ticked styles are stored on the option ("only on these styles"; all ticked =
+        // every style, including styles added later). A style that lists its options one by one gets this one added.
+        const ticked = $$('[data-ost]', root).filter(el => el.checked).map(el => Number(el.dataset.ost));
+        d.only_styles = ticked.length === catalog.styles.length ? null : ticked;
         const saved = row ? await api('PATCH', `/api/v1/options/${row.id}`, d) : await api('POST', '/api/v1/options', d);
         const id = Number(saved?.id ?? row?.id);
-        // per-style availability
-        for (const el of $$('[data-ost]', root)) {
-          if (el.disabled) continue;
-          const st = catalog.styles.find(x => x.id === Number(el.dataset.ost)); if (!st) continue;
-          const list = Array.isArray(st.available_options) ? st.available_options.map(Number) : null;
-          const has = !list || list.includes(id);
-          if (el.checked === has) continue;
-          let next;
-          if (el.checked) next = [...list, id];
-          else next = (list || catalog.options.map(o => o.id).concat(row ? [] : [id])).filter(x => x !== id);
-          const allIds = catalog.options.map(o => o.id).concat(row ? [] : [id]);
-          if (allIds.every(x => next.includes(x))) next = null; // everything offered again
-          await api('PATCH', `/api/v1/styles/${st.id}`, { available_options: next });
+        for (const stId of ticked) {
+          const st = catalog.styles.find(x => x.id === stId);
+          if (st && Array.isArray(st.available_options) && !st.available_options.map(Number).includes(id)) await api('PATCH', `/api/v1/styles/${st.id}`, { available_options: [...st.available_options.map(Number), id] });
         }
         closeModal(); toast('Option saved'); options();
       });
@@ -1107,7 +1116,37 @@ async function systemPage() {
     <div class="card"><table class="tbl"><tr><th>Backup</th><th>Kind</th><th>Size</th><th>Made</th><th></th></tr>
       ${s.backups.map(b => `<tr><td><code style="font-size:12px">${esc(b.name)}</code></td><td>${b.kind === 'full' ? 'Full' : 'Database, before an update'}</td><td>${bytes(b.size)}</td><td class="muted">${fmtDate(b.at)}</td>
         <td class="num"><a class="btn ghost sm" href="/api/admin/system/backups/${encodeURIComponent(b.name)}" download>Download</a></td></tr>`).join('') || '<tr><td colspan="5" class="empty">No backups yet.</td></tr>'}</table></div>
-    <p class="muted" style="font-size:13px;margin-top:12px">To restore: stop the service, replace <code>shedbuilder.db</code> (and the <code>uploads</code> / <code>files</code> folders from a full backup) on the volume, then start it again. GO_LIVE.md has the steps.</p>`;
+    ${s.restored ? `<div class="callout" style="margin-top:16px"><b>Restored ${fmtDate(s.restored.applied_at)}</b> from <code>${esc(s.restored.from || 'a backup')}</code>${s.restored.company ? ` (${esc(s.restored.company)})` : ''}. Check <b>Settings → Company → Public URL</b> and your integrations if this install has a new address.</div>` : ''}
+    <div class="card card-pad" style="margin-top:16px"><h2>Restore from a backup</h2>
+      <p class="muted" style="margin:4px 0 12px">Replaces <b>everything on this install</b> (catalog, prices, settings, logins, customers, quotes, contracts, uploaded files) with a backup. Use it to move a company to a new install: download a <b>full backup</b> on the old install, then upload it here. This install is backed up first, and you'll sign in again afterwards.</p>
+      <form class="form" id="rf"><label class="fld full"><span>Backup file (.tar.gz full backup, or a .db database backup)</span><input type="file" name="backup" accept=".gz,.tgz,.tar.gz,.db,application/gzip"></label>
+        <label class="fld"><span>Type RESTORE to confirm</span><input name="confirm" autocomplete="off" placeholder="RESTORE"></label></form>
+      <div class="row" style="margin-top:12px;gap:12px;align-items:center"><button class="btn danger" id="rgo" type="button">Restore this backup</button><span class="muted" id="rstat"></span></div>
+      <div id="rbar" hidden style="height:6px;background:var(--line);border-radius:4px;margin-top:10px;overflow:hidden"><div style="height:100%;width:0;background:var(--brand);transition:width .2s"></div></div></div>`;
+  $('#rgo').onclick = guard(async () => {
+    const f = $('#rf'), file = f.backup.files[0];
+    if (!file) throw new Error('Choose a backup file first.');
+    if (f.confirm.value.trim().toUpperCase() !== 'RESTORE') throw new Error('Type RESTORE to confirm.');
+    if (!confirmBox(`Replace everything on this install with ${file.name}? This install is backed up first.`)) return;
+    const stat = $('#rstat'), bar = $('#rbar'), fill = bar.firstElementChild; bar.hidden = false; $('#rgo').disabled = true;
+    const fd = new FormData(); fd.append('confirm', 'RESTORE'); fd.append('backup', file);
+    const started = Date.now();
+    const r = await new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest(); x.open('POST', '/api/admin/system/restore');
+      x.upload.onprogress = e => { if (e.lengthComputable) { fill.style.width = Math.round(e.loaded / e.total * 90) + '%'; stat.textContent = `Uploading… ${Math.round(e.loaded / e.total * 100)}%`; } };
+      x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch { /* */ } x.status < 300 ? resolve(j) : reject(new Error(j.error || `Restore failed (${x.status})`)); };
+      x.onerror = () => reject(new Error('Upload failed — check the connection and try again.'));
+      stat.textContent = 'Uploading…'; x.send(fd);
+    }).catch(e => { $('#rgo').disabled = false; bar.hidden = true; stat.textContent = ''; throw e; });
+    fill.style.width = '95%';
+    stat.textContent = `Checked ${r.restored?.company ? `“${r.restored.company}” — ` : ''}${r.restored?.counts?.quotes ?? 0} quotes, ${r.restored?.counts?.styles ?? 0} styles. Restarting to swap it in…`;
+    // wait for the restart: the health check answers again with a fresh uptime
+    for (let i = 0; i < 90; i++) {
+      await new Promise(res => setTimeout(res, 2000));
+      try { const h = await (await fetch('/healthz', { cache: 'no-store' })).json(); if (h.uptime_s * 1000 < Date.now() - started + 5000 && h.checks?.database) { fill.style.width = '100%'; stat.textContent = 'Restored. Sign in again…'; setTimeout(() => location.assign('/admin/'), 1500); return; } } catch { /* restarting */ }
+    }
+    stat.textContent = "The app hasn't come back yet. In your hosting dashboard (Railway), restart the service; the restore finishes when it starts.";
+  });
   $('#bnow').onclick = guard(async () => { $('#bnow').disabled = true; $('#bnow').textContent = 'Backing up…'; try { const r = await api('POST', '/api/admin/system/backup'); toast(`Backup made (${bytes(r.size)})${r.offsite?.ok ? ' and copied off the server' : ''}`); } finally { systemPage(); } });
 }
 

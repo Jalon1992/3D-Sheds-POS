@@ -2,11 +2,12 @@
 import express from 'express';
 import multer from 'multer';
 import crypto from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync, readFileSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, readFileSync, rmSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { db, all, get, run, getSettings, setSettings, getCatalog, JSON_COLS, SCHEMA_VERSION, DB_SCHEMA, BACKUP_DIR, PRE_UPDATE } from './src/db.js';
+import { db, all, get, run, getSettings, setSettings, getCatalog, JSON_COLS, SCHEMA_VERSION, DB_SCHEMA, BACKUP_DIR, PRE_UPDATE, RESTORED } from './src/db.js';
+import { stageRestore, cancelRestore } from './src/restore.js';
 import { APP_VERSION } from './src/version.js';
 import { backupNow, listBackups, startBackups, offsiteOn, offsite, NAME_RE } from './src/backup.js';
 import { seed } from './src/seed.js';
@@ -40,6 +41,9 @@ await seedContracts();
 if (getSettings().modules === undefined) setSettings({ modules: normalizeModules(process.env.MODULES || 'all') });
 let MODS = normalizeModules(getSettings().modules);
 setModuleSource(() => MODS);
+// Just restored a backup: everyone signs in again (the backup's own sign-in key is replaced, so logins made on the
+// install the backup came from don't work here), and the System page says what was restored.
+if (RESTORED) { run("DELETE FROM settings WHERE key = '_session_secret'"); setSettings({ _restored: RESTORED }); }
 // The developer login (DEVOPS_EMAIL + DEVOPS_PASSWORD) is the only one that can switch modules once it exists.
 // Re-applied on every start, so the password in the hosting settings always works (also a lock-out fix).
 (function ensureDevops() {
@@ -330,19 +334,22 @@ v1.post('/quotes/:id/resend', (req, res) => {
 
 // ---- Generic CRUD for catalog + webhooks
 const TABLES = {
-  styles: ['name', 'description', 'image_url', 'roof_type', 'ridge_axis', 'wall_height', 'roof_pitch', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'rake_tail', 'overhang', 'gable_overhang', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'roof_edge', 'rake_cap_size', 'drip_edge_size', 'drip_edge_color', 'corner_trim', 'casing_trim', 'siding_type', 'trim_type', 'roof_material', 'roof_choices', 'available_options', 'standard_options', 'default_colors', 'active', 'sort'],
-  sizes: ['style_id', 'width', 'depth', 'price', 'hip_len', 'upper_len', 'active', 'sort'],
+  styles: ['skid_size', 'skid_count', 'skid_spacing', 'name', 'description', 'image_url', 'roof_type', 'ridge_axis', 'wall_height', 'roof_pitch', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'rake_tail', 'overhang', 'gable_overhang', 'overhang_right', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'roof_edge', 'rake_cap_size', 'drip_edge_size', 'drip_edge_color', 'corner_trim', 'casing_trim', 'siding_type', 'trim_type', 'roof_material', 'roof_choices', 'available_options', 'standard_options', 'default_colors', 'active', 'sort'],
+  sizes: ['style_id', 'width', 'depth', 'price', 'hip_len', 'upper_len', 'skid_size', 'skid_count', 'skid_spacing', 'active', 'sort'],
   colors: ['name', 'hex', 'category', 'material', 'price', 'active', 'sort'],
-  options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
+  options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'only_styles', 'garage_panel', 'garage_windows', 'insulated', 'slanted_corners', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
   webhooks: ['name', 'url', 'events', 'secret', 'headers', 'active'],
 };
 function clean(table, body) {
   const out = {};
   for (const k of TABLES[table]) if (body && k in body) {
     let v = body[k];
-    if (k === 'available_options' && !Array.isArray(v)) v = null;
+    if ((k === 'available_options' || k === 'only_styles') && !Array.isArray(v)) v = null;
+    else if (k === 'only_styles') v = v.length ? JSON.stringify([...new Set(v.map(Number).filter(n => n > 0))]) : null;
     else if (JSON_COLS.has(k) && typeof v !== 'string') v = JSON.stringify(v ?? (k === 'headers' || k === 'default_colors' ? {} : []));
-    if (['gable_overhang', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'hip_len', 'upper_len', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'rake_cap_size', 'drip_edge_size', 'corner_trim', 'casing_trim'].includes(k) && (v === '' || v === undefined)) v = null;
+    if ((k === 'skid_size') && !['4x4', '4x6', '6x6'].includes(v)) v = null;
+    if (k === 'garage_panel' && !['standard', 'carriage'].includes(v)) v = null;
+    if (['skid_count', 'skid_spacing', 'overhang_right', 'gable_overhang', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'hip_len', 'upper_len', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'rake_cap_size', 'drip_edge_size', 'corner_trim', 'casing_trim'].includes(k) && (v === '' || v === undefined)) v = null;
     if (typeof v === 'boolean') v = v ? 1 : 0;
     if (v === '') v = null;
     out[k] = v;
@@ -461,7 +468,7 @@ admin.get('/system', (req, res) => {
   if (!canManageModules(req.user)) return bad(res, 'Only the developer login can see this.', 403);
   const o = offsite();
   res.json({ version: APP_VERSION, schema: DB_SCHEMA, schema_code: SCHEMA_VERSION, node: process.version, uptime_s: Math.round(process.uptime()),
-    backups: listBackups(), last: getSettings()._backup_last || null, pre_update: PRE_UPDATE.file ? { name: PRE_UPDATE.file.split(/[\\/]/).pop(), from: PRE_UPDATE.from } : null,
+    backups: listBackups(), last: getSettings()._backup_last || null, restored: getSettings()._restored || null, pre_update: PRE_UPDATE.file ? { name: PRE_UPDATE.file.split(/[\\/]/).pop(), from: PRE_UPDATE.from } : null,
     offsite: offsiteOn() ? { on: true, endpoint: o.endpoint.replace(/^https?:\/\//, ''), bucket: o.bucket, prefix: o.prefix || null } : { on: false },
     schedule: process.env.BACKUP_DISABLED === '1' ? 'off' : `daily at ${process.env.BACKUP_HOUR || 3}:00 (${getSettings().timezone || 'America/Chicago'}) and before every update`, dir: BACKUP_DIR });
 });
@@ -469,6 +476,28 @@ admin.post('/system/backup', wrap(async (req, res) => {
   if (!canManageModules(req.user)) return bad(res, 'Only the developer login can do this.', 403);
   const r = await backupNow('manual');
   r.error && !r.size ? bad(res, 'Backup failed: ' + r.error, 500) : res.json(r);
+}));
+// Restore: upload a backup (full .tar.gz or database .db), it's checked, a safety backup of what's here now is made,
+// then the app restarts and swaps the backup in before the database opens. Moves a company to a new install.
+const restoreUpload = multer({ storage: multer.diskStorage({ destination: (req, f, cb) => { try { mkdirSync(BACKUP_DIR, { recursive: true }); cb(null, BACKUP_DIR); } catch (e) { cb(e); } }, filename: (req, f, cb) => cb(null, `.incoming-${crypto.randomBytes(8).toString('hex')}`) }),
+  limits: { fileSize: (Number(process.env.RESTORE_MAX_MB) || 2048) * 1024 * 1024, files: 1, fields: 2 } });
+admin.post('/system/restore', (req, res, next) => (canManageModules(req.user) ? next() : bad(res, 'Only the developer login can restore backups.', 403)), restoreUpload.single('backup'), wrap(async (req, res) => {
+  const tmp = req.file?.path;
+  try {
+    if (!tmp) return bad(res, 'Choose a backup file.');
+    if (String(req.body?.confirm || '').trim().toUpperCase() !== 'RESTORE') return bad(res, 'Type RESTORE to confirm.');
+    let info;
+    try { info = await stageRestore(tmp, req.file.originalname, req.user.email); } catch (e) { return bad(res, e.message); }
+    const safety = await backupNow('before restore');
+    if (safety.error && !safety.size) { cancelRestore(); return bad(res, 'Could not back up this install first, so nothing was restored: ' + safety.error, 500); }
+    res.json({ ok: true, restarting: true, restored: info, safety_backup: safety.name });
+    console.log(`  Restoring ${req.file.originalname} (from ${info.company || 'unknown company'}): restarting to swap it in.`);
+    // restart: the hosting platform starts the app again (Railway's restart policy restarts on a non-zero exit)
+    setTimeout(() => {
+      const stop = () => { try { db.close(); } catch { /* */ } process.exit(3); };
+      server.close(stop); setTimeout(stop, 3000); // open live-update streams never close on their own
+    }, 300);
+  } finally { if (tmp) rmSync(tmp, { force: true }); }
 }));
 admin.get('/system/backups/:name', (req, res) => {
   if (!canManageModules(req.user)) return bad(res, 'Only the developer login can download backups.', 403);
@@ -615,7 +644,12 @@ admin.post('/duplicate/:table/:id', (req, res) => {
   const keys = Object.keys(row);
   const id = Number(run(`INSERT INTO ${t} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, ...keys.map(k => row[k])).lastInsertRowid);
   if (t === 'styles') for (const z of db.prepare('SELECT * FROM sizes WHERE style_id = ?').all(Number(req.params.id)))
-    run('INSERT INTO sizes (style_id, width, depth, price, active, sort) VALUES (?,?,?,?,?,?)', id, z.width, z.depth, z.price, z.active, z.sort);
+    run('INSERT INTO sizes (style_id, width, depth, price, active, sort, hip_len, upper_len, skid_count, skid_spacing, skid_size) VALUES (?,?,?,?,?,?,?,?,?,?,?)', id, z.width, z.depth, z.price, z.active, z.sort, z.hip_len ?? null, z.upper_len ?? null, z.skid_count ?? null, z.skid_spacing ?? null, z.skid_size ?? null);
+  // options limited to the original style (e.g. coop parts) are offered on the copy too
+  if (t === 'styles') for (const o of db.prepare('SELECT id, only_styles FROM options WHERE only_styles IS NOT NULL').all()) {
+    let list; try { list = JSON.parse(o.only_styles); } catch { continue; }
+    if (Array.isArray(list) && list.map(Number).includes(Number(req.params.id))) run('UPDATE options SET only_styles = ? WHERE id = ?', JSON.stringify([...list, id]), o.id);
+  }
   res.json({ id });
 });
 admin.put('/styles/:id/sizes', (req, res) => {
@@ -627,8 +661,10 @@ admin.put('/styles/:id/sizes', (req, res) => {
     if (!w || !d) continue;
     const on = !(z.active === false || z.active === 0 || z.active === '0');
     const len = v => (Number(v) > 0 ? Number(v) : null);
-    if (z.id && get('SELECT id FROM sizes WHERE id=? AND style_id=?', Number(z.id), sid)) { run('UPDATE sizes SET width=?, depth=?, price=?, active=?, sort=?, hip_len=?, upper_len=? WHERE id=? AND style_id=?', w, d, Number(z.price) || 0, on ? 1 : 0, i, len(z.hip_len), len(z.upper_len), Number(z.id), sid); keep.push(Number(z.id)); }
-    else keep.push(Number(run('INSERT INTO sizes (style_id, width, depth, price, active, sort, hip_len, upper_len) VALUES (?,?,?,?,?,?,?,?)', sid, w, d, Number(z.price) || 0, on ? 1 : 0, i, len(z.hip_len), len(z.upper_len)).lastInsertRowid));
+    const lum = ['4x4', '4x6', '6x6'].includes(z.skid_size) ? z.skid_size : null;
+    const cnt = Number(z.skid_count) >= 1 ? Math.min(12, Math.round(Number(z.skid_count))) : null, sp = Number(z.skid_spacing) > 0 ? Math.min(240, Number(z.skid_spacing)) : null;
+    if (z.id && get('SELECT id FROM sizes WHERE id=? AND style_id=?', Number(z.id), sid)) { run('UPDATE sizes SET width=?, depth=?, price=?, active=?, sort=?, hip_len=?, upper_len=?, skid_count=?, skid_spacing=?, skid_size=? WHERE id=? AND style_id=?', w, d, Number(z.price) || 0, on ? 1 : 0, i, len(z.hip_len), len(z.upper_len), cnt, sp, lum, Number(z.id), sid); keep.push(Number(z.id)); }
+    else keep.push(Number(run('INSERT INTO sizes (style_id, width, depth, price, active, sort, hip_len, upper_len, skid_count, skid_spacing, skid_size) VALUES (?,?,?,?,?,?,?,?,?,?,?)', sid, w, d, Number(z.price) || 0, on ? 1 : 0, i, len(z.hip_len), len(z.upper_len), cnt, sp, lum).lastInsertRowid));
   }
   run(`DELETE FROM sizes WHERE style_id = ? ${keep.length ? `AND id NOT IN (${keep.join(',')})` : ''}`, sid);
   res.json(all('SELECT * FROM sizes WHERE style_id = ? ORDER BY sort', sid));

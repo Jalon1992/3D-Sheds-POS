@@ -110,14 +110,21 @@ The app backs itself up:
 
 **Back up now** makes one on demand.
 
-**Restore:**
-1. Download the backup and unpack it: `tar -xzf backup-….tar.gz`.
-2. In Railway, open the service → **Volume**.
-3. Stop the service, or set it to 0 replicas.
-4. Replace `shedbuilder.db` and the `uploads` and `files` folders on the volume with the ones from the backup.
-5. Start the service again.
+**Restore** (developer login → **Settings → System & backups → Restore from a backup**):
+1. Choose the backup file: a full backup (`.tar.gz`), or a *pre-update* backup (`.db`, the database only).
+2. Type `RESTORE` and click **Restore this backup**.
+3. The app checks the file, backs up this install first, then restarts and swaps the backup in. That takes about a minute.
+4. Everyone signs in again.
 
-A *pre-update* backup is just the database file: put it in as `shedbuilder.db`.
+**Move a company to its own install** (for example, splitting your real company off a test install):
+1. On the old install, **Back up now**, then **Download** the full backup.
+2. Create the new install (sections 1–3 above): a new Railway service, its own volume and its own variables.
+3. On the new install, sign in with the developer login and restore that backup.
+4. Afterwards on the new install, check:
+   - **Settings → Company → Public URL**
+   - the custom domain
+   - integrations that point at an address (GoHighLevel webhooks, embed codes)
+5. API keys and webhook secrets came along too. If the old install keeps running, make new ones on either install, so the two don't share them.
 
 ## 10. Updates
 You don't do anything per company. When you merge a release into `stable`, every company's service redeploys on its own. The steps, the pilot group and how to undo a bad release are in [RELEASES.md](RELEASES.md). Data is untouched, because it lives in the volume, not in the code.

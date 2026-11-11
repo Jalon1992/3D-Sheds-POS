@@ -3,9 +3,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { APP_VERSION } from './version.js';
+import { applyPendingRestore } from './restore-apply.js';
 
 const DB_PATH = process.env.DB_PATH || './data/shedbuilder.db';
 mkdirSync(dirname(DB_PATH), { recursive: true });
+// a backup uploaded on System & backups is swapped in here, before the database opens (then migrations bring it up to date)
+export const RESTORED = applyPendingRestore(DB_PATH);
 const existed = existsSync(DB_PATH);
 export const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -212,6 +215,16 @@ for (const sql of [
   'ALTER TABLE styles ADD COLUMN rake_tail TEXT',
   'ALTER TABLE sizes ADD COLUMN hip_len REAL',
   'ALTER TABLE sizes ADD COLUMN upper_len REAL',
+  'ALTER TABLE styles ADD COLUMN skid_count INTEGER',                // skids under the floor; null = automatic (about one per 4 ft of width)
+  'ALTER TABLE styles ADD COLUMN skid_spacing REAL',                 // centre-to-centre, inches; null = spread edge to edge
+  'ALTER TABLE sizes ADD COLUMN skid_count INTEGER',                 // per-size overrides of the two above
+  'ALTER TABLE sizes ADD COLUMN skid_spacing REAL',
+  'ALTER TABLE styles ADD COLUMN skid_size TEXT',                    // '4x4' | '4x6' | '6x6'; null = 4x4
+  'ALTER TABLE sizes ADD COLUMN skid_size TEXT',                     // per-size override
+  'ALTER TABLE options ADD COLUMN garage_panel TEXT',                // garage doors: 'standard' (raised panels) | 'carriage' (carriage house)
+  'ALTER TABLE options ADD COLUMN garage_windows INTEGER',           // garage doors: windows across the top section
+  'ALTER TABLE options ADD COLUMN insulated INTEGER',                // garage doors: insulated (shown to customers, priced on the option)
+  'ALTER TABLE options ADD COLUMN slanted_corners INTEGER',          // doors: trim with slanted (45°) top corners
   'ALTER TABLE options ADD COLUMN package_items TEXT',
   'ALTER TABLE options ADD COLUMN package_only INTEGER DEFAULT 0',
   'ALTER TABLE quotes ADD COLUMN contact_id INTEGER',
@@ -234,6 +247,8 @@ for (const sql of [
   'ALTER TABLE options ADD COLUMN grid_top TEXT',
   'ALTER TABLE options ADD COLUMN grid_bottom TEXT',
   'ALTER TABLE options ADD COLUMN length_choices TEXT',
+  'ALTER TABLE options ADD COLUMN only_styles TEXT',                 // JSON list of style ids; null = every style
+  'ALTER TABLE styles ADD COLUMN overhang_right REAL',               // deeper eave on the second (right) side; null = same as overhang
 ]) { try { db.exec(sql); } catch { /* column already exists */ } }
 
 // One-time data fixes for existing databases
@@ -268,7 +283,7 @@ export const DB_SCHEMA = dbVersion();
 if (DB_SCHEMA > SCHEMA_VERSION) console.warn(`  ⚠  This database (schema ${DB_SCHEMA}) is newer than this version of the app (schema ${SCHEMA_VERSION}). That's expected right after undoing an update.`);
 
 // ---- JSON column helpers -----------------------------------------------------
-export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
+export const JSON_COLS = new Set(['standard_options', 'default_colors', 'roof_choices', 'available_options', 'only_styles', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
   'tags', 'stages', 'pages', 'fields', 'data', 'values_json', 'roles', 'read_by', 'payload']);
 
 export function parseRow(row) {

@@ -319,21 +319,39 @@ function carriageLeaf(g, w, h, M, x, zf, hingeSide, { window: hasWin = true } = 
   box(fb, winH, 0.04, M.trim, x - iw / 2 + fb / 2, wy, mz, g); box(fb, winH, 0.04, M.trim, x + iw / 2 - fb / 2, wy, mz, g);
   for (let k = 1; k < 5; k++) box(0.045, winH, 0.035, M.trim, x - iw / 2 + iw * k / 5, wy, mz, g);
   }
-  // T-hinges on the hinge edge (top, middle, bottom): an upright plate at the edge and a short strap that
-  // tapers to a point across the door
-  const ex = x + hingeSide * (w / 2), hz = zb + F / 2 + 0.006, dir = -hingeSide;   // strap runs toward the door's centre
-  const strapLen = Math.min(0.72, w * 0.3), plateW = 0.11, plateH = 0.4;
+  // T-hinges on the hinge edge: top hinge on the top rail (above the window), middle on the mid rail, bottom on the bottom rail
+  const plateH = 0.4;
+  tHinges(g, M, x + hingeSide * (w / 2), zb + F / 2 + 0.006, -hingeSide, Math.min(0.72, w * 0.3),
+    [[h - topR / 2, Math.min(plateH, topR - 0.04)], [yMid, plateH], [botR / 2 + 0.03, Math.min(plateH, botR - 0.04)]]);
+}
+/** Black T-hinges: an upright plate at the hinge edge (ex) and a strap tapering toward the door's centre (dir = ±1),
+ *  one per [y, plate height] row; hz = the face they sit on. */
+function tHinges(g, M, ex, hz, dir, strapLen, rows) {
+  const plateW = 0.11;
   const strap = new THREE.Shape([new THREE.Vector2(0, -0.07), new THREE.Vector2(strapLen * 0.35, -0.045), new THREE.Vector2(strapLen, -0.012),
     new THREE.Vector2(strapLen, 0.012), new THREE.Vector2(strapLen * 0.35, 0.045), new THREE.Vector2(0, 0.07)]);
   const strapGeo = new THREE.ExtrudeGeometry(strap, { depth: 0.02, bevelEnabled: false });
-  // top hinge sits on the top rail (above the window), middle on the mid rail, bottom on the bottom rail
-  for (const [y, ph] of [[h - topR / 2, Math.min(plateH, topR - 0.04)], [yMid, plateH], [botR / 2 + 0.03, Math.min(plateH, botR - 0.04)]]) {
+  for (const [y, ph] of rows) {
     box(plateW, ph, 0.022, M.metal, ex + dir * plateW / 2, y, hz + 0.011, g);   // upright plate at the edge
     const st = new THREE.Mesh(strapGeo, M.metal); st.castShadow = true;
     st.position.set(ex + dir * (plateW - 0.01), y, hz); st.scale.x = dir; g.add(st);
-    for (const d of [0.2, 0.42]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * (plateW + d), y, hz + 0.024); g.add(b); }
+    for (const d of [0.2, 0.42].filter(d => d < strapLen)) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * (plateW + d), y, hz + 0.024); g.add(b); }
     for (const dy of [-ph * 0.33, ph * 0.33]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * plateW / 2, y + dy, hz + 0.026); g.add(b); }
   }
+}
+/** Trim with slanted (45°) top corners, as on many garage and carriage doors: a trim-coloured triangle in each top corner. */
+function slantCorners(g, w, h, M) {
+  const c = Math.min(0.85, Math.max(0.4, w * 0.09)), zOut = WALL_T / 2;
+  const tri = new THREE.ExtrudeGeometry(new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(c, 0), new THREE.Vector2(0, -c)]), { depth: 0.06, bevelEnabled: false });
+  for (const sx of [-1, 1]) { const m = new THREE.Mesh(tri, M.trim); m.position.set(sx * w / 2, h, zOut); m.scale.x = -sx; m.castShadow = true; g.add(m); }
+}
+/** Painted siding colour without the board texture (small parts: coop door body, nest box floor, ramp). */
+const sidingPlain = M => M.sidingPlain || (M.sidingPlain = new THREE.MeshStandardMaterial({ color: M.siding.color.clone(), roughness: 0.85 }));
+/** The siding material (grooved LP panel) scaled to a w x h ft face of a box, so the grooves match the walls. */
+function sidingFor(M, w, h) {
+  const m = M.siding.clone();
+  for (const k of ['map', 'bumpMap']) if (M.siding[k]) { m[k] = M.siding[k].clone(); m[k].repeat.set(M.siding[k].repeat.x * w, M.siding[k].repeat.y * h); m[k].needsUpdate = true; }
+  return m;
 }
 function panelDoorLeaf(g, w, h, M, x, z) {
   box(w, h, 0.12, M.door, x, h / 2, z, g);
@@ -392,9 +410,11 @@ function windowUnit(g, w, h, M, opts = {}) {
 
 export const BUILTIN_KINDS = {
   breaker: 'Breaker box (sub-panel)', switch: 'Light switch', door_single: 'Single door', door_carriage: 'Carriage-house door (single, hinged left)', door_carriage_right: 'Carriage-house door (single, right half of the 72", hinged right)', door_panel: 'Standard door (single, right half of the 6\' double, hinged right)', door_panel_double: 'Panel double doors (no windows)', door_carriage_double: 'Carriage-house double doors', door_glass: 'Glass/lite door', door_double: 'Double barn doors', door_french: 'French doors',
-  door_rollup: 'Roll-up door', window: 'Window', window_shutters: 'Window with shutters', window_transom: 'Transom window',
+  door_rollup: 'Roll-up door', door_garage: 'Garage door (overhead, standard or carriage house)', window: 'Window', window_shutters: 'Window with shutters', window_transom: 'Transom window',
   vent: 'Gable vent', flowerbox: 'Flower box', ext_light: 'Exterior light', shelf: 'Shelf', shelf_double: 'Double shelves (two levels)', workbench: 'Workbench',
-  loft: 'Loft', light: 'Ceiling light', outlet: 'Outlet', ramp: 'Ramp', cupola: 'Cupola', box: 'Generic box', none: 'No model (line item only)',
+  loft: 'Loft', light: 'Ceiling light', outlet: 'Outlet', ramp: 'Ramp', cupola: 'Cupola',
+  door_coop: 'Coop door (siding-colour body, trim frame, black hinges)', nest_box: 'Chicken nest box (outside, hinged lid)', pop_door: 'Chicken door with ramp', roost: 'Chicken roost bars',
+  box: 'Generic box', none: 'No model (line item only)',
 };
 
 /** "3x2" → [3 cols, 2 rows]; "none" / blank → no muntins ([1,1]); undefined when not set. */
@@ -489,6 +509,61 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       for (const sx of [-1, 1]) for (const y of [h * 0.2, h * 0.8]) box(0.5, 0.08, 0.03, M.metal, sx * (w / 2 - 0.3), y, zOut + 0.04, g);
       box(0.06, 0.7, 0.05, M.metal, -0.12, h / 2, zOut + 0.06, g); box(0.06, 0.7, 0.05, M.metal, 0.12, h / 2, zOut + 0.06, g);
       casing(g, w, h, M, zOut);
+      break;
+    }
+    case 'door_garage': {
+      // Overhead sectional garage door. Standard: raised short panels (4 per section on a 9' door). Carriage house:
+      // grooved panels, black strap hinges and centre handles. Optional row of windows across the top section.
+      const o = ctx.opt || {}, carriage = o.garage_panel === 'carriage', wins = !!Number(o.garage_windows);
+      casing(g, w, h, M, zOut);
+      const zf = zOut - 0.09, fz = zf + 0.061;
+      const shade = M.garageShade || (M.garageShade = new THREE.MeshStandardMaterial({ color: M.door.color.clone().multiplyScalar(0.8), roughness: 0.6 }));
+      const n = Math.max(3, Math.round(h / (carriage ? 2.25 : 1.75))), sh = h / n;
+      const ins = !!Number(o.insulated);
+      box(w - 0.02, h - 0.02, 0.12, M.door, 0, h / 2, zf, g);
+      if (ins) box(w - 0.02, h - 0.02, 0.1, M.door, 0, h / 2, zf - 0.1, g);                           // foam-core back
+      for (let i = 1; i < n; i++) box(w - 0.02, 0.022, 0.01, shade, 0, i * sh, fz, g);               // section joints
+      const cols = Math.max(2, Math.round(w / 2.25)), mx = 0.3, gap = 0.24;
+      const pw = (w - 2 * mx - (cols - 1) * gap) / cols, ph = sh - (carriage ? 0.42 : 0.5);
+      const px = c => -w / 2 + mx + pw / 2 + c * (pw + gap);
+      for (let i = 0; i < n; i++) {
+        const yc = (i + 0.5) * sh;
+        if (wins && i === n - 1) {
+          // windows: one across each pair of panels, framed, with a 6 x 2 grid
+          for (let c = 0; c + 1 < cols; c += 2) {
+            const xc = (px(c) + px(c + 1)) / 2, ww = pw * 2 + gap, wh = ph * 0.92;
+            box(ww, wh, 0.02, M.glass, xc, yc, fz + 0.005, g);
+            for (const sy of [-1, 1]) box(ww + 0.08, 0.06, 0.03, M.door, xc, yc + sy * (wh / 2 + 0.02), fz + 0.02, g);
+            for (const sx of [-1, 1]) box(0.06, wh + 0.1, 0.03, M.door, xc + sx * (ww / 2 + 0.02), yc, fz + 0.02, g);
+            for (let k = 1; k < 6; k++) box(0.025, wh, 0.02, M.door, xc - ww / 2 + ww * k / 6, yc, fz + 0.02, g);
+            box(ww, 0.025, 0.02, M.door, xc, yc, fz + 0.02, g);
+          }
+          continue;
+        }
+        for (let c = 0; c < cols; c++) {
+          const xc = px(c);
+          if (carriage) {
+            // recessed outline with vertical grooves
+            for (const sy of [-1, 1]) box(pw, 0.025, 0.008, shade, xc, yc + sy * ph / 2, fz + 0.004, g);
+            for (const sx of [-1, 1]) box(0.025, ph, 0.008, shade, xc + sx * pw / 2, yc, fz + 0.004, g);
+            for (let k = 1; k < 5; k++) box(0.02, ph - 0.12, 0.006, shade, xc - pw / 2 + pw * k / 5, yc, fz + 0.004, g);
+          } else {
+            // raised panel: the face sits proud, with a shadowed bevel along the bottom and right
+            box(pw, ph, 0.03, M.door, xc, yc, fz + 0.015, g);
+            box(pw, 0.035, 0.032, shade, xc, yc - ph / 2 + 0.0175, fz + 0.016, g);
+            box(0.035, ph, 0.032, shade, xc + pw / 2 - 0.0175, yc, fz + 0.016, g);
+          }
+        }
+      }
+      if (carriage) {
+        const len = Math.min(1.25, w * 0.14), rows = [[sh * 0.5, 0.3], [sh * (n - (wins ? 1.5 : 0.5)), 0.3]];
+        tHinges(g, M, -w / 2 + 0.02, fz + 0.02, 1, len, rows);
+        tHinges(g, M, w / 2 - 0.02, fz + 0.02, -1, len, rows);
+        const hy = sh * Math.floor(n / 2) + sh * 0.5 * (n % 2 ? 1 : 0.15);
+        for (const sx of [-1, 1]) { box(0.05, 0.62, 0.04, M.metal, sx * 0.16, hy, fz + 0.05, g); for (const ey of [-0.33, 0.33]) box(0.11, 0.07, 0.03, M.metal, sx * 0.16, hy + ey, fz + 0.035, g); }
+      }
+      box(w - 0.02, 0.045, 0.14, M.dark, 0, 0.022, zf, g);                                            // bottom seal
+      box(w + 0.3, 0.025, 0.45, M.steel, 0, 0.0125, zOut + 0.2, g);                                    // aluminium diamond-plate threshold
       break;
     }
     case 'door_rollup': {
@@ -619,6 +694,108 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       cap.rotation.y = Math.PI / 4; cap.position.y = bh + 0.12 + h * 0.21; cap.castShadow = true; g.add(cap);
       const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.9, 6), M.metal); rod.position.y = bh + h * 0.42 + 0.5; g.add(rod);
       const vane = box(0.7, 0.18, 0.02, M.metal, 0.15, bh + h * 0.42 + 0.75, 0, g);
+      break;
+    }
+    // ---- Chicken coop parts --------------------------------------------------------------------------------
+    case 'door_coop': { // walk-in coop door: siding-coloured boards, trim-coloured frame, black T-hinges on the right
+      casing(g, w, h, M, zOut);
+      const lw = w - 0.04, lh = h - 0.02, zf = zOut - 0.06, b = 0.3, z2 = zf + 0.075, mid = lh * 0.47;
+      box(lw, lh, 0.1, sidingPlain(M), 0, lh / 2, zf, g);
+      const groove = M.coopGroove || (M.coopGroove = new THREE.MeshStandardMaterial({ color: M.siding.color.clone().multiplyScalar(0.7), roughness: 0.9 }));
+      for (let k = 1; k * 0.667 < lw - 0.1; k++) box(0.02, lh, 0.004, groove, -lw / 2 + k * 0.667, lh / 2, zf + 0.052, g);
+      for (const sx of [-1, 1]) box(b, lh, 0.05, M.door, sx * (lw / 2 - b / 2), lh / 2, z2, g);              // stiles
+      for (const y of [lh - b / 2, mid, b / 2]) box(lw - 2 * b, b, 0.05, M.door, 0, y, z2, g);           // top, middle, bottom rails
+      tHinges(g, M, lw / 2, z2 + 0.031, -1, Math.min(0.6, lw * 0.28), [[lh - b / 2, 0.26], [mid, 0.26], [b / 2, 0.26]]);
+      box(0.05, 0.42, 0.04, M.metal, -lw / 2 + 0.17, mid, z2 + 0.05, g);                                  // pull handle
+      box(0.16, 0.06, 0.03, M.metal, -lw / 2 + 0.17, mid - 0.32, z2 + 0.04, g);                           // barrel bolt
+      break;
+    }
+    case 'nest_box': {
+      // Outside nest box hung on the wall under the windows (as built on Trimline coops): box with a grooved front,
+      // sloped lid in sections (trim edges, battens between sections, black hinges on a trim hinge board), end boards
+      // running down past the box. Through the wall hole, the inside shows the nest compartments behind a 2x4 lip.
+      // w = length along the wall, h = height of the hole into the coop, d = how far the box sticks out.
+      const D = Math.max(0.8, d), zf = zOut + D, pT = 0.06, bot = -0.1;
+      const backTop = h + 0.15, frontTop = Math.max(h * 0.6, backTop - D * 0.38);
+      const SP = sidingPlain(M), osb = M.osbTop || (M.osbTop = new THREE.MeshStandardMaterial({ color: 0xffffff, map: osbTex(), roughness: 0.9 }));
+      const lum = M.lumber || (M.lumber = new THREE.MeshStandardMaterial({ color: 0xffffff, map: lumberTex(), roughness: 0.75 }));
+      box(w, 0.1, D, SP, 0, -0.05, zOut + D / 2, g);                                                // floor (top = bottom of the hole)
+      box(w - 0.12, 0.012, D - 0.08, osb, 0, 0.007, zOut + D / 2, g);
+      box(w, frontTop - bot, pT, sidingFor(M, w, frontTop - bot), 0, (frontTop + bot) / 2, zf - pT / 2, g);   // front
+      box(w - 0.12, frontTop - 0.02, 0.012, osb, 0, frontTop / 2, zf - pT - 0.007, g);
+      const end = new THREE.Shape([new THREE.Vector2(zOut, bot), new THREE.Vector2(zf, bot), new THREE.Vector2(zf, frontTop), new THREE.Vector2(zOut, backTop)]);
+      const endGeo = new THREE.ExtrudeGeometry(end, { depth: pT, bevelEnabled: false });
+      for (const sx of [-1, 1]) { const m = new THREE.Mesh(endGeo, SP); m.rotation.y = -Math.PI / 2; m.position.x = sx < 0 ? -w / 2 + pT : w / 2; m.castShadow = m.receiveShadow = true; g.add(m); }
+      // white corner boards: wrap the front corners and run a little below the box (optional per nest box)
+      if (ctx.item?.corner_trim !== false) {
+        const eb = 0.29, ey0 = bot - 0.22, eh = frontTop - ey0;
+        for (const sx of [-1, 1]) {
+          box(eb, eh, 0.06, M.trim, sx * (w / 2 - eb / 2 + 0.03), ey0 + eh / 2, zf + 0.03, g);
+          box(0.06, eh, eb, M.trim, sx * (w / 2 + 0.03), ey0 + eh / 2, zf - eb / 2 + 0.06, g);
+        }
+      }
+      // a siding-coloured board across the top of the front, with a shadow line under it
+      box(w, 0.4, 0.05, SP, 0, frontTop - 0.2, zf + 0.025, g);
+      box(w - 0.02, 0.012, 0.03, M.coopGroove || SP, 0, frontTop - 0.405, zf + 0.012, g);
+      // hinge board on the wall above the lid
+      const hbH = 0.28; box(w + 0.6, hbH, 0.06, M.trim, 0, backTop + hbH / 2, zOut + 0.03, g);
+      // lid: sloped from the hinge board out past the front
+      const run = D + 0.12, drop = (backTop - frontTop) * run / D, len = Math.hypot(run, drop), ang = Math.atan2(drop, run);
+      const lid = new THREE.Group(); lid.position.set(0, backTop + 0.04, zOut + 0.02); lid.rotation.x = ang; g.add(lid);
+      // lid as built: siding colour all over, white caps on both ends running front to back, and a short white
+      // batten between lid sections (from the hinge board, stopping short of the front); a black hinge on each
+      box(w + 0.12, 0.06, len, SP, 0, 0, len / 2, lid);
+      const cap = 0.42, n = Math.max(1, Math.round(w / 2.6)), secW = w / n, hx = [];
+      for (const sx of [-1, 1]) { box(cap, 0.06, len + 0.04, M.trim, sx * (w / 2 + 0.06 - cap / 2), 0.06, len / 2 + 0.02, lid); hx.push(sx * (w / 2 + 0.06 - cap / 2)); }
+      const bl = len * 0.68;
+      for (let k = 1; k < n; k++) { const x = -w / 2 + secW * k; box(0.36, 0.05, bl, M.trim, x, 0.055, bl / 2, lid); hx.push(x); }
+      for (const x of hx) {
+        box(0.13, 0.17, 0.025, M.metal, x, backTop + 0.11, zOut + 0.072, g);                             // plate on the hinge board
+        box(0.08, 0.02, 0.42, M.metal, x, 0.1, 0.23, lid);                                               // strap on the cap / batten
+      }
+      for (let k = 0; k < n; k++) box(0.05, 0.12, 0.03, M.steel, -w / 2 + secW * (k + 0.5) + secW * 0.25, frontTop - 0.1, zf + 0.04, g); // small hook latch
+      // inside: nest compartments (OSB dividers about every 12") and a 2x4 lip / header on the inside face
+      const nn = Math.max(1, Math.round((w - 2 * pT) / 1.0)), zi = -T / 2, zb = zf - pT;
+      // dividers follow the lid's slope (no corner poking through it)
+      const div = new THREE.ExtrudeGeometry(new THREE.Shape([new THREE.Vector2(zi, 0.01), new THREE.Vector2(zb, 0.01), new THREE.Vector2(zb, frontTop - 0.08),
+        new THREE.Vector2(zOut, Math.min(h, backTop) - 0.08), new THREE.Vector2(zi, h - 0.05)]), { depth: 0.045, bevelEnabled: false });
+      for (let k = 1; k < nn; k++) { const m = new THREE.Mesh(div, osb); m.rotation.y = -Math.PI / 2; m.position.x = -w / 2 + pT + (w - 2 * pT) * k / nn + 0.0225; m.castShadow = m.receiveShadow = true; g.add(m); }
+      box(w + 0.3, 0.29, 0.125, lum, 0, 0.1, zi - 0.0625, g);
+      box(w + 0.3, 0.29, 0.125, lum, 0, h + 0.145, zi - 0.0625, g);
+      break;
+    }
+    case 'pop_door': { // small chicken door near the floor, trimmed like the windows, with a cleated ramp to the ground
+      casing(g, w, h, M, zOut);
+      box(w, 0.05, T + 0.04, M.wood, 0, 0.025, 0, g);                                                // threshold
+      const cw = M.cw ?? 0.33;
+      box(0.05, 0.05, 0.08, M.metal, -w / 2 - cw / 2, h * 0.55, zOut + 0.08, g);                     // hook & eye latch
+      box(0.18, 0.02, 0.02, M.metal, -w / 2 - cw / 2 + 0.06, h * 0.55, zOut + 0.12, g);
+      const drop = (ctx.floorY ?? FLOOR_Y) + (Number(ctx.elev) || 0), run = Math.max(1.4, d), len = Math.hypot(run, drop), ang = Math.atan2(drop, run);
+      const rg = new THREE.Group(); rg.position.set(0, 0.04, zOut + 0.02); rg.rotation.x = ang; g.add(rg);
+      const RM = sidingPlain(M);
+      box(w * 0.96, 0.06, len, RM, 0, -0.03, len / 2, rg);
+      for (let t = 0.32; t < len - 0.12; t += 0.4) box(w * 0.96, 0.05, 0.1, RM, 0, 0.025, t, rg);    // cleats
+      break;
+    }
+    case 'roost': {
+      // Roost bars like the shop builds them: 2x4s laid flat at two heights (the lower one further out, so birds
+      // don't sit right above each other), each on 2x4 arms with 45° braces back to a ledger on the wall studs.
+      // h = height of the top bar, d = how far the outer bar sits from the wall, w = length.
+      const lum = M.lumber || (M.lumber = new THREE.MeshStandardMaterial({ color: 0xffffff, map: lumberTex(), roughness: 0.75 }));
+      const t = 1.5 / 12, wd = 3.5 / 12;
+      const bars = h >= 3.4 ? [[h * 0.62, d], [h, Math.max(0.8, d * 0.55)]] : [[h, d]];
+      const spans = Math.max(1, Math.ceil((w - 0.3) / 3)), xs = [];
+      for (let i = 0; i <= spans; i++) xs.push(-w / 2 + t / 2 + (w - t) * i / spans);
+      for (const [y, z] of bars) {
+        box(w, t, wd, lum, 0, y - t / 2, z - wd / 2, g);                                   // the roost bar
+        const ya = y - t - wd / 2;                                                         // arms under the bar
+        box(w, wd, t, lum, 0, ya, t / 2, g);                                               // ledger on the wall
+        for (const x of xs) {
+          box(t, wd, z, lum, x, ya, z / 2, g);
+          const rise = Math.min(z * 0.9, ya - 0.2), bl = Math.hypot(z * 0.9, rise);       // 45° brace from the wall up to the arm
+          const br = box(t, wd * 0.8, bl, lum, x, ya - wd / 2 - rise / 2, z * 0.45, g); br.rotation.x = -Math.atan2(rise, z * 0.9);
+        }
+      }
       break;
     }
     case 'none': break;
@@ -805,7 +982,7 @@ export class ShedScene {
     this.pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.camera.updateMatrixWorld(); this.root.updateMatrixWorld(true);
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const g = this.geo, y0 = FLOOR_Y;
+    const g = this.geo, y0 = g.floorY ?? FLOOR_Y;
     const planeHit = y => { const p = new THREE.Vector3(); return this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), p) ? p : null; };
     if (kind === 'ceiling' || kind === 'roof') {
       const p = planeHit(kind === 'ceiling' ? y0 + g.H - 0.45 : y0 + g.H + g.peak); if (!p) return null;
@@ -850,8 +1027,8 @@ export class ShedScene {
 
   frame(view = 'front34', animate = true) {
     const g = this.geo; if (!g) return;
-    const top = FLOOR_Y + g.H + g.peak;
-    const target = new THREE.Vector3(0, this.interior ? FLOOR_Y + 1.5 : top * 0.45, 0);
+    const fy = g.floorY ?? FLOOR_Y, top = fy + g.H + g.peak;
+    const target = new THREE.Vector3(0, this.interior ? fy + 1.5 : top * 0.45, 0);
     const R = Math.max(g.W, g.D, top) * 1.8 + 11;
     const dirs = {
       front34: [0.75, 0.45, 1], front: [0, 0.3, 1], back: [0, 0.3, -1], left: [-1, 0.3, 0], right: [1, 0.3, 0],
@@ -907,7 +1084,7 @@ export class ShedScene {
     if (M.steel) M.steel.envMap = this.envTex;
     M.cw = (style.casing_trim === null || style.casing_trim === undefined || style.casing_trim === '' ? 4 : Number(style.casing_trim)) / 12;
     const { W, D, H } = geo;
-    const y0 = FLOOR_Y;
+    const y0 = geo.floorY ?? FLOOR_Y;
     const shed = new THREE.Group(); this.root.add(shed);
 
     // --- Gravel pad, skids, floor
@@ -915,8 +1092,7 @@ export class ShedScene {
       const pad = new THREE.Mesh(new THREE.PlaneGeometry(W + 4, D + 4), new THREE.MeshStandardMaterial({ map: tiled(gravelTex(), W + 4, D + 4), roughness: 1 }));
       pad.rotation.x = -Math.PI / 2; pad.position.y = 0.02; pad.receiveShadow = true; pad.userData.solid = true; shed.add(pad);
     }
-    const skids = Math.max(2, Math.round(W / 4) + 1);
-    for (let i = 0; i < skids; i++) box(0.33, 0.35, D, M.wood, -W / 2 + 0.3 + (W - 0.6) * i / (skids - 1), 0.2, 0, shed).userData.solid = true;
+    const sk = geo.skids; for (const x of sk.xs) box(sk.w, sk.h, D, M.wood, x, 0.025 + sk.h / 2, 0, shed).userData.solid = true;   // skids (count / spacing / lumber from the style or size)
     box(W, 0.4, D, M.trim, 0, y0 - 0.2, 0, shed).userData.solid = true;
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(W - 2 * T, D - 2 * T), new THREE.MeshStandardMaterial({ map: tiled(plyTex(), W, D), roughness: 0.85 }));
     fl.rotation.x = -Math.PI / 2; fl.position.y = y0 + 0.005; fl.receiveShadow = true; fl.userData.solid = true; shed.add(fl);
@@ -981,7 +1157,7 @@ export class ShedScene {
     // --- Roof
     const roofG = new THREE.Group(); roofG.position.y = y0 + H; shed.add(roofG); this.roofGroup = roofG;
     if (!geo.ridgeAlongZ) roofG.rotation.y = -Math.PI / 2;
-    const ov = geo.eaveOv, th = 0.22;
+    const ov = geo.eaveOv, ov2 = geo.eaveOv2 ?? geo.eaveOv, th = 0.22;
     const ridgeLen = geo.L + 2 * geo.gableOv, RL = ridgeLen / 2;
     const metalRoof = M.roofTex.userData.tileFt === 3;
     const rt = 0.07;                                   // rake / fascia board thickness
@@ -991,7 +1167,7 @@ export class ShedScene {
     const nSeg = prof.length - 1;
     const dirOf = (a, b) => { const du = b[0] - a[0], dh = b[1] - a[1], l = Math.hypot(du, dh); return [du / l, dh / l]; };
     { const [ux, uy] = dirOf(prof[0], prof[1]), k = ov / Math.max(ux, 0.3); prof[0] = [prof[0][0] - ux * k, prof[0][1] - uy * k]; }
-    { const [ux, uy] = dirOf(prof[nSeg - 1], prof[nSeg]), k = ov / Math.max(ux, 0.3); prof[nSeg] = [prof[nSeg][0] + ux * k, prof[nSeg][1] + uy * k]; }
+    { const [ux, uy] = dirOf(prof[nSeg - 1], prof[nSeg]), k = ov2 / Math.max(ux, 0.3); prof[nSeg] = [prof[nSeg][0] + ux * k, prof[nSeg][1] + uy * k]; }
     const normal = i => { const [ux, uy] = dirOf(prof[i], prof[i + 1]); return [-uy, ux]; };
     // The profile offset outward by d, mitred where two slopes meet
     const offLine = d => prof.map((p, i) => {
@@ -1236,7 +1412,8 @@ export class ShedScene {
         default: continue;
       }
       const opening = o.placement === 'opening';
-      const model = buildKind(o.kind || 'box', kindW, kindH, kindD, M, { floorY: y0, opt: o });
+      const model = buildKind(o.kind || 'box', kindW, kindH, kindD, M, { floorY: y0, opt: o, elev: p.elev, item: it });
+      if (Number(o.slanted_corners) && o.placement === 'opening') slantCorners(model, kindW, kindH, M);
       holder.add(model);
       if (o.model_url) {
         loadGLB(o.model_url).then(src => {

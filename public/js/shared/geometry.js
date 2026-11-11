@@ -65,10 +65,35 @@ export function shedGeometry(style, size) {
   };
   const peak = Math.max(...profile.map(p => p[1]));
   const eaveOv = Number(style.overhang ?? 0.75) || 0;
+  // second eave (right wall; front when the ridge runs across): a deeper overhang, e.g. over a coop's windows
+  const eaveOv2 = style.overhang_right == null || style.overhang_right === '' ? eaveOv : Number(style.overhang_right) || 0;
   const gableOv = style.gable_overhang == null || style.gable_overhang === '' ? eaveOv : Number(style.gable_overhang) || 0;
   const inch = (v, d) => (v === null || v === undefined || v === '' ? d : Number(v)) / 12;
   const casing = inch(style.casing_trim, 4), corner = inch(style.corner_trim, 5);
-  return { W, D, H, S, L, s, k, ridgeAlongZ, profile, prof, isGable, topAt, profileUs, peak, eaveOv, gableOv, casing, corner, wallLen: w => wallLength(w, size) };
+  const skids = skidLayout(style, size);
+  // floor height: taller skids (4x6, 6x6) lift the whole building by the difference
+  return { W, D, H, S, L, s, k, ridgeAlongZ, profile, prof, isGable, topAt, profileUs, peak, eaveOv, eaveOv2, gableOv, casing, corner, skids, floorY: FLOOR_Y + skids.h - SKIDS['4x4'].h, wallLen: w => wallLength(w, size) };
+}
+
+/**
+ * Skids under the floor (4x4s running front to back, the length of the building). How many and how far apart come
+ * from the size, else the style, else automatic. Returns { xs: centre lines across the width (ft, 0 = middle),
+ * count, spacingIn: centre-to-centre inches when even, auto }.
+ */
+// skid lumber as drawn (ft): width across the building, height. 4x6 stands on edge.
+export const SKIDS = { '4x4': { w: 0.33, h: 0.35 }, '4x6': { w: 0.29, h: 0.46 }, '6x6': { w: 0.46, h: 0.46 } };
+export function skidLayout(style = {}, size = {}) {
+  const lumber = SKIDS[size.skid_size] ? size.skid_size : SKIDS[style.skid_size] ? style.skid_size : '4x4', sk = SKIDS[lumber];
+  const W = Number(size.width) || 8, half = sk.w / 2, edge = 0.3;           // outer skids sit 0.3' in
+  const pick = k => (Number(size[k]) > 0 ? Number(size[k]) : Number(style[k]) > 0 ? Number(style[k]) : 0);
+  let n = Math.round(pick('skid_count')), sp = pick('skid_spacing') / 12;
+  const room = W - 2 * edge, auto = !n && !sp;
+  if (!n && sp) n = Math.floor(room / sp + 1e-6) + 1;                         // spacing only: as many as fit, centred
+  if (!n) n = Math.max(2, Math.round(W / 4) + 1);                            // automatic, as before
+  n = Math.max(1, Math.min(n, Math.floor((W - 2 * half) / 0.36) + 1));       // never more than fit side by side
+  if (!sp || sp * (n - 1) > W - 2 * half) sp = n > 1 ? room / (n - 1) : 0;    // count only (or too wide): spread edge to edge
+  const xs = Array.from({ length: n }, (_, i) => (i - (n - 1) / 2) * sp);
+  return { xs, count: n, spacingIn: n > 1 ? Math.round(sp * 12 * 4) / 4 : 0, auto, lumber, w: sk.w, h: sk.h };
 }
 
 /** Each roof section: pitch (x/12), length along the slope and horizontal run, in ft (no overhang). */
@@ -91,7 +116,7 @@ export function roofArea(geo) {
     len += l;
     const ux = Math.max(Math.abs(du) / l, 0.3);
     if (i === 0) len += geo.eaveOv / ux;
-    if (i === pr.length - 2) len += geo.eaveOv / ux;
+    if (i === pr.length - 2) len += (geo.eaveOv2 ?? geo.eaveOv) / ux;
   }
   return len * (geo.L + 2 * geo.gableOv);
 }
@@ -113,6 +138,8 @@ export function inGable(geo, opt, item) {
 /** Trim around an opening (ft): side casing, head casing and (windows/vents) the flat bottom casing. */
 function trimPad(geo, opt) {
   if (opt.placement !== 'opening') return { side: 0, head: 0, sill: 0 };
+  // outside nest box: end boards beside it, the sloped lid + hinge board above, end boards running below
+  if (opt.kind === 'nest_box') return { side: 0.3, head: 0.45, sill: 0.3 };
   const win = String(opt.kind || '').startsWith('window'), cw = geo.casing ?? 0.33;
   let side = cw + (win ? 0.1 : 0.05);
   if (opt.kind === 'window_shutters') side = Math.max(side, cw + (Number(opt.width) || 2) * 0.55);

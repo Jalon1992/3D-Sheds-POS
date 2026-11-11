@@ -1,7 +1,7 @@
 // Drawing package: one PDF per quote with a 3D cover + spec sheet, the floor plan and all four elevations.
 // Uses jsPDF + svg2pdf (loaded as /vendor/pdf/*.umd.min.js → window.jspdf).
 import { ShedScene } from './shed3d.js';
-import { floorPlanSVG } from './shared/floorplan.js';
+import { floorPlanSVG, skidNote } from './shared/floorplan.js';
 import { elevationSVG } from './shared/elevations.js';
 import { DRAWING_INITIALS_BOX } from './shared/contract.js';
 
@@ -98,7 +98,8 @@ export async function buildDrawingPackage(catalog, quote, { company = '', withPr
   doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
   doc.text(quote.shed.style, x, y + 10); y += 28;
   doc.setFontSize(10); doc.setFont('helvetica', 'normal');
-  const kv = [['Size', `${quote.shed.size} (${quote.shed.sq_ft} sq ft)`], ['Roofing', quote.shed.roofing || ''],
+  const st = catalog.styles.find(s => s.id === config.style_id), sz = st?.sizes.find(z => z.id === config.size_id);
+  const kv = [['Size', `${quote.shed.size} (${quote.shed.sq_ft} sq ft)`], ['Roofing', quote.shed.roofing || ''], ...(st && sz ? [['Skids', skidNote(st, sz)]] : []),
     ...Object.entries(quote.shed.colors || {}).map(([k, v]) => [k[0].toUpperCase() + k.slice(1), v]),
     ...(quote.dealer ? [['Dealer lot', quote.dealer.name]] : []),
     ['Customer', meta.customer], ['Delivery', [quote.customer?.address, quote.customer?.city, quote.customer?.state, quote.customer?.zip].filter(Boolean).join(', ')]];
