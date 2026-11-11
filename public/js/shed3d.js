@@ -665,31 +665,34 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       const end = new THREE.Shape([new THREE.Vector2(zOut, bot), new THREE.Vector2(zf, bot), new THREE.Vector2(zf, frontTop), new THREE.Vector2(zOut, backTop)]);
       const endGeo = new THREE.ExtrudeGeometry(end, { depth: pT, bevelEnabled: false });
       for (const sx of [-1, 1]) { const m = new THREE.Mesh(endGeo, SP); m.rotation.y = -Math.PI / 2; m.position.x = sx < 0 ? -w / 2 + pT : w / 2; m.castShadow = m.receiveShadow = true; g.add(m); }
-      // end boards: wrap the front corners and run a little below the box
-      const eb = 0.29, ey0 = bot - 0.22, eh = frontTop - ey0;
-      for (const sx of [-1, 1]) {
-        box(eb, eh, 0.06, M.trim, sx * (w / 2 - eb / 2 + 0.03), ey0 + eh / 2, zf + 0.03, g);
-        box(0.06, eh, eb, M.trim, sx * (w / 2 + 0.03), ey0 + eh / 2, zf - eb / 2 + 0.06, g);
+      // white corner boards: wrap the front corners and run a little below the box (optional per nest box)
+      if (ctx.item?.corner_trim !== false) {
+        const eb = 0.29, ey0 = bot - 0.22, eh = frontTop - ey0;
+        for (const sx of [-1, 1]) {
+          box(eb, eh, 0.06, M.trim, sx * (w / 2 - eb / 2 + 0.03), ey0 + eh / 2, zf + 0.03, g);
+          box(0.06, eh, eb, M.trim, sx * (w / 2 + 0.03), ey0 + eh / 2, zf - eb / 2 + 0.06, g);
+        }
       }
-      box(w + 0.06, 0.09, 0.07, M.trim, 0, frontTop - 0.045, zf + 0.035, g);                            // trim along the top of the front
+      // a siding-coloured board across the top of the front, with a shadow line under it
+      box(w, 0.4, 0.05, SP, 0, frontTop - 0.2, zf + 0.025, g);
+      box(w - 0.02, 0.012, 0.03, M.coopGroove || SP, 0, frontTop - 0.405, zf + 0.012, g);
       // hinge board on the wall above the lid
       const hbH = 0.28; box(w + 0.6, hbH, 0.06, M.trim, 0, backTop + hbH / 2, zOut + 0.03, g);
       // lid: sloped from the hinge board out past the front
       const run = D + 0.12, drop = (backTop - frontTop) * run / D, len = Math.hypot(run, drop), ang = Math.atan2(drop, run);
       const lid = new THREE.Group(); lid.position.set(0, backTop + 0.04, zOut + 0.02); lid.rotation.x = ang; g.add(lid);
+      // lid as built: siding colour all over, white caps on both ends running front to back, and a short white
+      // batten between lid sections (from the hinge board, stopping short of the front); a black hinge on each
       box(w + 0.12, 0.06, len, SP, 0, 0, len / 2, lid);
-      box(w + 0.16, 0.1, 0.07, M.trim, 0, -0.02, len - 0.035, lid);                                    // front edge trim
-      for (const sx of [-1, 1]) box(0.14, 0.08, len, M.trim, sx * (w / 2 + 0.01), 0.04, len / 2, lid); // end trim
-      const n = Math.max(1, Math.round(w / 2.6)), secW = w / n;
-      for (let k = 1; k < n; k++) box(0.24, 0.05, len - 0.06, M.trim, -w / 2 + secW * k, 0.055, len / 2 - 0.03, lid);   // battens between sections
-      for (let k = 0; k < n; k++) {
-        const cx = -w / 2 + secW * (k + 0.5);
-        for (const hx of [cx - secW / 2 + 0.38, cx + secW / 2 - 0.38]) {                                // black hinges: plate on the board, strap on the lid
-          box(0.13, 0.17, 0.025, M.metal, hx, backTop + 0.11, zOut + 0.072, g);
-          box(0.09, 0.025, 0.5, M.metal, hx, 0.045, 0.27, lid);
-        }
-        box(0.1, 0.2, 0.03, M.metal, cx, frontTop - 0.16, zf + 0.02, g);                              // latch
+      const cap = 0.42, n = Math.max(1, Math.round(w / 2.6)), secW = w / n, hx = [];
+      for (const sx of [-1, 1]) { box(cap, 0.06, len + 0.04, M.trim, sx * (w / 2 + 0.06 - cap / 2), 0.06, len / 2 + 0.02, lid); hx.push(sx * (w / 2 + 0.06 - cap / 2)); }
+      const bl = len * 0.68;
+      for (let k = 1; k < n; k++) { const x = -w / 2 + secW * k; box(0.36, 0.05, bl, M.trim, x, 0.055, bl / 2, lid); hx.push(x); }
+      for (const x of hx) {
+        box(0.13, 0.17, 0.025, M.metal, x, backTop + 0.11, zOut + 0.072, g);                             // plate on the hinge board
+        box(0.08, 0.02, 0.42, M.metal, x, 0.1, 0.23, lid);                                               // strap on the cap / batten
       }
+      for (let k = 0; k < n; k++) box(0.05, 0.12, 0.03, M.steel, -w / 2 + secW * (k + 0.5) + secW * 0.25, frontTop - 0.1, zf + 0.04, g); // small hook latch
       // inside: nest compartments (OSB dividers about every 12") and a 2x4 lip / header on the inside face
       const nn = Math.max(1, Math.round((w - 2 * pT) / 1.0)), zi = -T / 2, zb = zf - pT;
       // dividers follow the lid's slope (no corner poking through it)
@@ -1349,7 +1352,7 @@ export class ShedScene {
         default: continue;
       }
       const opening = o.placement === 'opening';
-      const model = buildKind(o.kind || 'box', kindW, kindH, kindD, M, { floorY: y0, opt: o, elev: p.elev });
+      const model = buildKind(o.kind || 'box', kindW, kindH, kindD, M, { floorY: y0, opt: o, elev: p.elev, item: it });
       holder.add(model);
       if (o.model_url) {
         loadGLB(o.model_url).then(src => {

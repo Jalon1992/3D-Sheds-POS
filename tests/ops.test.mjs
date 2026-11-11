@@ -216,3 +216,23 @@ test('restore: move a company to a new install from a full backup (data, files, 
     assert.match(s.log(), /Restored the backup backup\.tar\.gz/);
   } finally { await s.stop(); }
 });
+
+test('catalog upgrade: an install with the first coop gets 14" x 21" windows and a 6\' nest box, unless the shop changed them', async () => {
+  const dir = newDir(); let s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready(); await s.stop();
+  const file = join(dir, 'data', 'shedbuilder.db'), db = new DatabaseSync(file);
+  // the first version of the coop parts…
+  db.prepare(`UPDATE options SET name = 'Coop Window (16" x 27")', width = ?, height = 2.25, elevation = 3.25 WHERE name LIKE 'Coop Window%'`).run(16 / 12);
+  db.exec("UPDATE options SET width = 5 WHERE kind = 'nest_box'; DELETE FROM settings WHERE key = 'migr_coop2'");
+  // …plus a shop that made its own 4' nest box option
+  db.exec("INSERT INTO options (name, category, kind, placement, width, height, depth, price) VALUES ('Shop Nest Box', 'exterior', 'nest_box', 'opening', 4, 1, 1.33, 200)");
+  db.close();
+  s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready();
+  try {
+    const cat = await (await fetch(s.B + '/api/v1/catalog')).json();
+    const win = cat.options.find(o => o.name.startsWith('Coop Window'));
+    assert.equal(win.name, 'Coop Window (14" x 21")'); assert.equal(Math.round(win.width * 12), 14); assert.equal(Math.round(win.height * 12), 21);
+    assert.equal(cat.options.find(o => o.name === 'Outside Nest Box').width, 6);
+    assert.equal(cat.options.find(o => o.name === 'Shop Nest Box').width, 4, "the shop's own option is left alone");
+    assert.match(s.log(), /coop windows 14/);
+  } finally { await s.stop(); }
+});

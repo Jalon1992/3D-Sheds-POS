@@ -127,7 +127,7 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
       o.push(`<rect x="${X(p.offset - p.w / 2 - 0.3)}" y="${Y(yb + backTop + 0.28)}" width="${(p.w + 0.6) * S}" height="${0.28 * S}" fill="#ffffff" stroke="#1d2624" stroke-width="1.2"/>`);
       o.push(`<polygon points="${xe0},${Y(yb + backTop)} ${xe1},${Y(yb + backTop)} ${xe1},${Y(yb + frontTop)} ${xe0},${Y(yb + frontTop)}" fill="${sidingHex}" fill-opacity="0.45" stroke="#1d2624" stroke-width="1.2"/>`);
       o.push(`<rect x="${x0}" y="${Y(yb + frontTop)}" width="${wpx}" height="${(frontTop + 0.1) * S}" fill="${sidingHex}" fill-opacity="0.35" stroke="#1d2624" stroke-width="1.4"/>`);
-      for (const xe of [xe0, xe1 - eb]) o.push(`<rect x="${xe}" y="${Y(yb + frontTop)}" width="${eb}" height="${(frontTop + 0.32) * S}" fill="#ffffff" stroke="#1d2624" stroke-width="1"/>`);
+      if (it.corner_trim !== false) for (const xe of [xe0, xe1 - eb]) o.push(`<rect x="${xe}" y="${Y(yb + frontTop)}" width="${eb}" height="${(frontTop + 0.32) * S}" fill="#ffffff" stroke="#1d2624" stroke-width="1"/>`);
       labels.push({ x: (x0 + x1) / 2, text: `${shortName(op)} (${ftIn(p.w)} long)` });
       continue;
     }

@@ -499,6 +499,12 @@ test('Chicken coop: own style, coop-only parts, nest box and roosts priced by le
   const k = kind => cat.options.find(o => o.kind === kind);
   const nest = k('nest_box'), pop = k('pop_door'), roost = k('roost'), door = k('door_coop'), win = cat.options.find(o => o.name.startsWith('Coop Window'));
   for (const o of [nest, pop, roost, door, win]) assert.deepEqual(o?.only_styles, [coop.id], (o?.name || '?') + ' only on the coop');
+  assert.equal(win.name, 'Coop Window (14" x 21")'); assert.equal(Math.round(win.width * 12), 14); assert.equal(Math.round(win.height * 12), 21);
+  assert.equal(nest.width, 6, "nest box is 6' as built");
+  // the white corner boards on a nest box can be left off; that choice is kept on the quote (and only on nest boxes)
+  const pc = (await admin.post('/api/v1/quotes', { config: { style_id: coop.id, size_id: coop.sizes[0].id, items: [{ uid: 'nb', option_id: nest.id, wall: 'right', offset: 0, corner_trim: false }, { uid: 'rb', option_id: roost.id, wall: 'left', offset: 0, corner_trim: false }] }, customer: { first_name: 'Trim', email: 'trim@test.com' } })).data;
+  assert.equal(pc.config.items.find(i => i.uid === 'nb').corner_trim, false);
+  assert.equal(pc.config.items.find(i => i.uid === 'rb').corner_trim, undefined);
   // the coop with its standard parts: all fit, all included
   const sz = coop.sizes.find(z => z.width === 6 && z.depth === 10);
   const std = (coop.standard_options || []).map((x, i) => ({ uid: 's' + i, standard_of: x.option_id, ...x }));
