@@ -254,6 +254,7 @@ const watch = (page, who) => {
       }
       await admin.goto(B + '/admin/#/pos/templates'); await admin.waitForFunction(() => location.hash === '#/templates');
       await admin.goto(B + '/admin/#/configurator-settings'); await admin.waitForSelector('#main h1');
+      await admin.waitForFunction(() => /Sales tax/i.test(document.querySelector('#main')?.innerText || ''), null, { timeout: 15000 }).catch(() => {});
       const txt = await admin.innerText('#main'); assert(/Sales tax/i.test(txt) && !/Twilio/i.test(txt), 'configurator settings only');
       await admin.goto(B + '/admin/#/pos-settings'); await admin.waitForSelector('#main h1');
       assert(!/Time zone for dates/i.test(await admin.innerText('#main')), 'company fields not on POS settings');

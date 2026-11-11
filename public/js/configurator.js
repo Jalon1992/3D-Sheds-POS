@@ -32,6 +32,7 @@ const ICONS = {
   door_double: '<svg viewBox="0 0 32 32"><rect x="5" y="5" width="22" height="23"/><path d="M16 5v23M5 5l11 23M16 5l11 23M27 5 16 28M16 5 5 28"/></svg>',
   door_french: '<svg viewBox="0 0 32 32"><rect x="5" y="4" width="22" height="25"/><path d="M16 4v25M8 7h5v19H8zM19 7h5v19h-5zM8 13h5M8 19h5M19 13h5M19 19h5"/></svg>',
   door_rollup: '<svg viewBox="0 0 32 32"><rect x="4" y="5" width="24" height="23"/><path d="M4 9h24M4 13h24M4 17h24M4 21h24M4 25h24"/></svg>',
+  door_garage: '<svg viewBox="0 0 32 32"><path d="M3 28V6h26v22"/><rect x="6" y="9" width="20" height="19"/><path d="M6 14h20M6 19h20M6 24h20M11 9v19M16 9v19M21 9v19"/></svg>',
   window: '<svg viewBox="0 0 32 32"><rect x="7" y="6" width="18" height="20"/><path d="M16 6v20M7 16h18M5 27h22"/></svg>',
   window_shutters: '<svg viewBox="0 0 32 32"><rect x="11" y="7" width="10" height="17"/><path d="M16 7v17M11 15h10M4 7h5v17H4zM23 7h5v17h-5z"/></svg>',
   window_transom: '<svg viewBox="0 0 32 32"><rect x="4" y="11" width="24" height="9"/><path d="M12 11v9M20 11v9"/></svg>',
@@ -459,6 +460,7 @@ function selectItem(uid, opts = {}) {
       const fit = lengthFits(it, o);
       return `<div class="ic-label">Length</div><div class="walls">${lc.map((v, i) => { const on = Math.abs(v - cur) < 0.01; const why = v > L + 0.01 ? 'Longer than this wall' : !fit[i] && !on ? 'No open space this long on this wall' : ''; return `<button data-len="${v}" class="${on ? 'on' : ''}" ${why ? `disabled title="${why}"` : ''}>${v}'</button>`; }).join('')}</div>${fit.some((f, i) => !f && lc[i] <= L + 0.01) ? '<div class="ic-meta" style="margin-top:6px">Greyed-out lengths are blocked by a door or window on this wall — try another wall.</div>' : ''}`;
     })()}
+    ${o.kind === 'nest_box' ? `<div class="ic-label">Corner trim</div><div class="walls"><button data-corners="1" class="${it.corner_trim !== false ? 'on' : ''}">White corner boards</button><button data-corners="0" class="${it.corner_trim === false ? 'on' : ''}">None</button></div>` : ''}
     <div class="ic-foot">${pk ? '<span class="ic-meta">Drag it or use the arrows to move it</span>' : `<button class="link-danger" data-act="remove">Remove${removedCredit && showPrices() ? ` (${fmt(removedCredit)})` : ''}</button>`}
       <button class="btn primary sm" data-act="close">Done</button></div>`;
   card.hidden = false;
@@ -542,6 +544,7 @@ $('#itemcard').addEventListener('click', e => {
   else if (b.dataset.elev) setElev(uid, Number(b.dataset.elev));
   else if (b.dataset.elevreset) resetElev(uid);
   else if (b.dataset.len) setLength(uid, Number(b.dataset.len));
+  else if (b.dataset.corners) { const it = state.config.items.find(i => i.uid === uid); if (it) { if (b.dataset.corners === '1') delete it.corner_trim; else it.corner_trim = false; rebuild(); selectItem(uid, { edit: true }); } }
 });
 
 // ---------------------------------------------------------------------------

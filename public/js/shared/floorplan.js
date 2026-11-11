@@ -1,7 +1,13 @@
 // Floor plan generator (top-down, to scale). Returns a standalone SVG string.
 // Shared between browser (customer download) and server (API / admin download).
 import { wallPoint, wallLength, roofingList } from './pricing.js';
-import { itemSize } from './geometry.js';
+import { itemSize, skidLayout } from './geometry.js';
+
+/** "3 skids (4x4), 45\" on centre" for drawings and production notes */
+export function skidNote(style, size) {
+  const k = skidLayout(style, size);
+  return `${k.count} skid${k.count === 1 ? '' : 's'} (${k.lumber})${k.count > 1 ? `, ${k.spacingIn}" on centre` : ''}`;
+}
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -37,6 +43,8 @@ export function floorPlanSVG(catalog, config, meta = {}) {
   out.push(`<rect width="100%" height="100%" fill="#ffffff"/>`);
   // floor grid
   out.push(`<rect x="${X(-W / 2)}" y="${Z(-D / 2)}" width="${W * S}" height="${D * S}" fill="url(#grid)"/>`);
+  // skids under the floor (dashed: hidden below), running front to back
+  const skl = skidLayout(style, size); for (const x of skl.xs) out.push(`<rect x="${X(x - skl.w / 2)}" y="${Z(-D / 2)}" width="${skl.w * S}" height="${D * S}" fill="none" stroke="#8a7a5c" stroke-width="1" stroke-dasharray="6 4"/>`);
 
   // Openings by wall to cut gaps
   const items = (config.items || []).filter(it => optById[it.option_id]).map(it => { const o = optById[it.option_id]; const z = itemSize(o, it); return { it, o: { ...o, width: z.w, height: z.h } }; });
@@ -83,7 +91,7 @@ export function floorPlanSVG(catalog, config, meta = {}) {
         out.push(`<rect x="${-w / 2}" y="${T / 2}" width="${w}" height="${rd}" fill="#efe6d6" stroke="#1d2624" stroke-width="1"/>`);
         for (let k = 1; k < 5; k++) out.push(`<line x1="${-w / 2}" y1="${T / 2 + rd * k / 5}" x2="${w / 2}" y2="${T / 2 + rd * k / 5}" stroke="#1d2624" stroke-opacity=".4"/>`);
       } else if (kind.startsWith('door')) {
-        if (kind === 'door_rollup') {
+        if (kind === 'door_rollup' || kind === 'door_garage') {
           out.push(`<line x1="${-w / 2}" y1="0" x2="${w / 2}" y2="0" stroke="#1d2624" stroke-width="2" stroke-dasharray="6 4"/>`);
           out.push(`<rect x="${-w / 2}" y="${-T / 2}" width="${w}" height="${T}" fill="none" stroke="#1d2624" stroke-width="1"/>`);
         } else {
@@ -183,7 +191,7 @@ export function floorPlanSVG(catalog, config, meta = {}) {
   const who = [c.first_name, c.last_name].filter(Boolean).join(' ');
   out.push(`<text x="24" y="${ty + 54}" font-size="13" fill="#3b4744">${esc(settings.company_name || '')}${who ? ' · Prepared for ' + esc(who) : ''}${meta.quote_number ? ' · Quote ' + esc(meta.quote_number) : ''}</text>`);
   const roofName = (roofingList(catalog).find(r => r.key === config.roof_material) || {}).name;
-  out.push(`<text x="24" y="${ty + 74}" font-size="12" fill="#7d8885">${roofName ? esc(roofName) + ' roof · ' : ''}${esc(meta.date || new Date().toLocaleDateString('en-US'))} · Scale: 1 grid square = 1 ft · Door swings shown inward</text>`);
+  out.push(`<text x="24" y="${ty + 74}" font-size="12" fill="#7d8885">${roofName ? esc(roofName) + ' roof · ' : ''}${esc(meta.date || new Date().toLocaleDateString('en-US'))} · ${esc(skidNote(style, size))} (dashed) · Scale: 1 grid square = 1 ft · Door swings shown inward</text>`);
   // electrical legend
   if (elec.size) {
     const L = [['outlet', 'Outlet'], ['switch', 'Switch'], ['light', 'Ceiling light'], ['breaker', 'Breaker panel']].filter(([k]) => elec.has(k));

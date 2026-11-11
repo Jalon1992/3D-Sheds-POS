@@ -1,7 +1,7 @@
 // Admin dashboard (vanilla JS SPA).
 import { ShedScene, BUILTIN_KINDS } from '../js/shed3d.js';
 import { defaultConfig, money, WALLS, DEFAULT_ROOFING, MAX_TIERS, roofingList } from '../js/shared/pricing.js';
-import { shedGeometry, roofSections } from '../js/shared/geometry.js';
+import { shedGeometry, roofSections, skidLayout } from '../js/shared/geometry.js';
 import { buildDrawingPackage } from '../js/drawings.js';
 import { crmContacts, crmConversations, crmPipeline, crmTasks, ordersBoard, messagingPage } from './crm.js';
 import { posPage } from './pos.js';
@@ -390,6 +390,9 @@ const STYLE_FIELDS = () => [
   { key: 'trim_type', label: 'Wood trim', type: 'select', options: [['lp', 'LP SmartSide trim (cedar texture)'], ['smooth', 'Smooth trim']], help: 'Corner boards, fascia, door & window trim. Metal trim is always smooth.' },
   { key: 'overhang', label: 'Eave overhang (ft)', type: 'number', step: '0.05', help: 'Along the low sides of the roof (where water runs off).' },
   { key: 'gable_overhang', label: 'Gable overhang (ft)', type: 'number', step: '0.05', help: 'At the gable/rake ends. Blank = same as eave.' },
+  { key: 'skid_size', label: 'Skid size', type: 'select', options: [['', '4x4 (standard)'], ['4x6', '4x6 (on edge)'], ['6x6', '6x6']], help: 'Lumber for the skids. Taller skids raise the building. Each size can use its own in the size table below.' },
+  { key: 'skid_count', label: 'Skids (how many)', type: 'number', step: '1', ph: 'auto', help: '4x4 skids under the floor, running front to back. Blank = about one per 4 ft of width. Each size can set its own in the size table below.' },
+  { key: 'skid_spacing', label: 'Skid spacing (inches, centre to centre)', type: 'number', step: '0.25', ph: 'spread edge to edge', help: 'Blank = outer skids at the edges and the rest evenly between. With a spacing and no count, as many as fit, centred.' },
   { key: 'overhang_right', label: 'Deeper eave on one side (ft)', type: 'number', step: '0.05', help: 'Optional. A longer overhang on the right-hand eave (seen from the front), e.g. over a chicken coop\'s windows. On a style whose ridge runs across, it\'s the front eave. Blank = same as the eave overhang.' },
   { type: 'section', label: 'Trim sizes (inches)' },
   { key: 'fascia_size', label: 'Fascia height (in)', type: 'number', step: '0.25', ph: '5.5', help: 'Board along the eaves. Trim color.' },
@@ -474,10 +477,10 @@ function styleEditor(style) {
   const colorSel = cat => `<label class="fld"><span>Default ${cat} color</span><select name="dc_${cat}"><option value="">First in list</option>${catalog.colors.filter(c => c.category === cat).map(c => `<option value="${c.id}" ${c.id === s.default_colors?.[cat] ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
   const isBarn = () => (document.querySelector('#sf [name=roof_type]')?.value || s.roof_type) === 'barn';
   const styleVal = k => document.querySelector(`#sf [name=${k}]`)?.value || s[k] || '';
-  const sizesHTML = () => `<table class="mini"><tr><th>Width (ft)</th><th>Depth (ft)</th><th>Base price</th>${isBarn() ? '<th title="Gambrel hip (lower section) length for this size">Hip len (ft)</th><th title="Gambrel upper section length for this size">Upper len (ft)</th>' : ''}<th>Active</th><th></th><th></th></tr>
+  const sizesHTML = () => `<table class="mini"><tr><th>Width (ft)</th><th>Depth (ft)</th><th>Base price</th>${isBarn() ? '<th title="Gambrel hip (lower section) length for this size">Hip len (ft)</th><th title="Gambrel upper section length for this size">Upper len (ft)</th>' : ''}<th title="Skid lumber for this size (blank = the style setting)">Skid size</th><th title="How many skids for this size (blank = the style setting)">Skids</th><th title="Skid spacing for this size, inches centre to centre (blank = the style setting)">Spacing (in)</th><th>Active</th><th></th><th></th></tr>
     ${sizes.map((z, i) => `<tr><td><input type="number" step="0.5" data-sz="${i}" data-k="width" value="${z.width}"></td><td><input type="number" step="0.5" data-sz="${i}" data-k="depth" value="${z.depth}"></td>
     <td><input type="number" step="1" data-sz="${i}" data-k="price" value="${z.price}"></td>
-    ${isBarn() ? `<td><input type="number" step="0.0625" data-sz="${i}" data-k="hip_len" value="${z.hip_len ?? ''}" placeholder="${esc(styleVal('gambrel_lower_len') || 'style')}"></td><td><input type="number" step="0.0625" data-sz="${i}" data-k="upper_len" value="${z.upper_len ?? ''}" placeholder="${esc(styleVal('gambrel_upper_len') || 'auto')}"></td>` : ''}<td><input type="checkbox" data-sz="${i}" data-k="active" ${z.active !== 0 ? 'checked' : ''}></td>
+    ${isBarn() ? `<td><input type="number" step="0.0625" data-sz="${i}" data-k="hip_len" value="${z.hip_len ?? ''}" placeholder="${esc(styleVal('gambrel_lower_len') || 'style')}"></td><td><input type="number" step="0.0625" data-sz="${i}" data-k="upper_len" value="${z.upper_len ?? ''}" placeholder="${esc(styleVal('gambrel_upper_len') || 'auto')}"></td>` : ''}${(() => { const l = skidLayout({ skid_count: styleVal('skid_count'), skid_spacing: styleVal('skid_spacing'), skid_size: styleVal('skid_size') }, { width: Number(z.width) || 8, skid_size: z.skid_size }); return `<td><select data-sz="${i}" data-k="skid_size"><option value="">${esc(styleVal('skid_size') || '4x4')}</option>${['4x4', '4x6', '6x6'].map(v => `<option ${z.skid_size === v ? 'selected' : ''}>${v}</option>`).join('')}</select></td><td><input type="number" step="1" min="1" max="12" style="width:64px" data-sz="${i}" data-k="skid_count" value="${z.skid_count ?? ''}" placeholder="${l.count}"></td><td><input type="number" step="0.25" style="width:76px" data-sz="${i}" data-k="skid_spacing" value="${z.skid_spacing ?? ''}" placeholder="${l.spacingIn || ''}"></td>`; })()}<td><input type="checkbox" data-sz="${i}" data-k="active" ${z.active !== 0 ? 'checked' : ''}></td>
     <td><button type="button" class="icon-btn" data-pvsize="${i}" title="Preview this size" style="${i === previewIdx ? 'border-color:var(--brand);color:var(--brand)' : ''}">👁</button></td><td><button type="button" class="icon-btn" data-rmsize="${i}">${TRASH}</button></td></tr>`).join('')}</table>
     ${isBarn() ? '<div class="muted" style="font-size:12px;margin-top:6px">Hip / upper lengths: leave blank to use the style\'s values. Measured along the slope without overhang. Click 👁 to preview a size — the roof readout above shows each section\'s pitch and length.</div>' : ''}
     <div class="row" style="margin-top:8px"><button type="button" class="btn ghost sm" id="addSize">+ Add size</button>
@@ -518,7 +521,7 @@ function styleEditor(style) {
         try {
           const d = collect();
           const sz = sizes[previewIdx] || sizes[0]; if (!sz || !sz.width || !sz.depth) return;
-          const st = { ...d, id: -1, sizes: [{ ...sz, id: -1, width: Number(sz.width), depth: Number(sz.depth), price: Number(sz.price) || 0, hip_len: Number(sz.hip_len) || null, upper_len: Number(sz.upper_len) || null }] };
+          const st = { ...d, id: -1, sizes: [{ ...sz, id: -1, width: Number(sz.width), depth: Number(sz.depth), price: Number(sz.price) || 0, hip_len: Number(sz.hip_len) || null, upper_len: Number(sz.upper_len) || null, skid_count: Number(sz.skid_count) || null, skid_spacing: Number(sz.skid_spacing) || null, skid_size: sz.skid_size || null }] };
           const cat = { ...catalog, settings: { ...catalog.settings, roofing: roofing() }, styles: [st] };
           const cfg = defaultConfig(cat, -1, -1); cfg.roof_material = d.roof_material;
           modalScene.build(cat, cfg);
@@ -568,7 +571,7 @@ function styleEditor(style) {
         if (!d.name) throw new Error('Name is required');
         const saved = isNew ? await api('POST', '/api/v1/styles', d) : await api('PATCH', `/api/v1/styles/${s.id}`, d);
         for (const id of unlock) { const o = catalog.options.find(x => x.id === id); if (o) await api('PATCH', `/api/v1/options/${id}`, { only_styles: [...new Set([...o.only_styles.map(Number), Number(saved.id)])] }); }
-        await api('PUT', `/api/admin/styles/${saved.id}/sizes`, sizes.map(z => ({ ...z, width: Number(z.width), depth: Number(z.depth), price: Number(z.price), hip_len: Number(z.hip_len) || null, upper_len: Number(z.upper_len) || null })));
+        await api('PUT', `/api/admin/styles/${saved.id}/sizes`, sizes.map(z => ({ ...z, width: Number(z.width), depth: Number(z.depth), price: Number(z.price), hip_len: Number(z.hip_len) || null, upper_len: Number(z.upper_len) || null, skid_count: Number(z.skid_count) || null, skid_spacing: Number(z.skid_spacing) || null, skid_size: z.skid_size || null })));
         closeModal(); toast('Style saved'); styles();
       });
       preview();
@@ -664,6 +667,11 @@ const OPTION_FIELDS = () => [
   { key: 'grid_top', label: 'Top half grid (columns × rows)', type: 'select', options: [['', 'Standard grid'], ['none', 'No grid (clear glass)'], ['1x2', '1 × 2'], ['2x1', '2 × 1'], ['2x2', '2 × 2'], ['3x1', '3 × 1'], ['3x2', '3 × 2'], ['2x3', '2 × 3'], ['3x3', '3 × 3'], ['4x2', '4 × 2']], help: 'Set the top and/or bottom to give the window two sashes, each with its own grid (meeting rail across the middle). Leave both on "Standard grid" for the regular one-piece grid.' },
   { key: 'grid_bottom', label: 'Bottom half grid (columns × rows)', type: 'select', options: [['', 'Standard grid'], ['none', 'No grid (clear glass)'], ['1x2', '1 × 2'], ['2x1', '2 × 1'], ['2x2', '2 × 2'], ['3x1', '3 × 1'], ['3x2', '3 × 2'], ['2x3', '2 × 3'], ['3x3', '3 × 3'], ['4x2', '4 × 2']] },
   { key: 'gable_mode', label: 'Can it go up in the gable?', type: 'select', full: true, options: [['', 'No — walls only'], ['allow', 'Yes — customer can put it on the wall or up in the gable'], ['only', 'Gable only (e.g. a gable/attic window)']], help: 'Windows & vents. In the gable it is centred between the top of the wall and the roof line, if it fits.' },
+  { type: 'html', html: '<div class="section-t full">Garage doors &amp; door trim</div>' },
+  { key: 'garage_panel', label: 'Garage door style', type: 'select', options: [['', '—'], ['standard', 'Standard (raised short panels)'], ['carriage', 'Carriage house (grooved panels, hinges & handles)']], help: 'For the "Garage door" built-in model. Set the door size with Width and Height above (e.g. 9 × 7, 10 × 8, 16 × 7).' },
+  { key: 'garage_windows', label: 'Row of windows across the top section', type: 'checkbox' },
+  { key: 'insulated', label: 'Insulated', type: 'checkbox', help: 'Insulated doors are drawn thicker (2" foam core). Keep insulated and uninsulated as separate options so each has its own price, and say "Insulated" in the name so it reads that way on quotes.' },
+  { key: 'slanted_corners', label: 'Slanted top corners on the trim', type: 'checkbox', help: 'Any door: adds 45° trim blocks in the two top corners of the opening.' },
   { key: 'price', label: 'Price ($)', type: 'number', step: '0.01' },
   { key: 'price_unit', label: 'Priced', type: 'select', options: PRICE_UNITS },
   { key: 'max_qty', label: 'Max per shed', type: 'number' },
