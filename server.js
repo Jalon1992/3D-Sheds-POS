@@ -312,7 +312,11 @@ v1.patch('/quotes/:id', (req, res) => {
   emit(status && status !== q.status ? 'quote.status_changed' : 'quote.updated', nq, baseUrl(req));
   res.json(formatQuote(nq, baseUrl(req)));
 });
-v1.delete('/quotes/:id', (req, res) => { run('DELETE FROM quotes WHERE id = ?', Number(req.params.id)); res.sendStatus(204); });
+v1.delete('/quotes/:id', (req, res) => {
+  const q = get('SELECT id, dealer_id FROM quotes WHERE id = ?', Number(req.params.id));
+  if (!q || !ownQuote(req, q)) return bad(res, 'Not found', 404);   // a dealer's login can't delete another dealer's quote
+  run('DELETE FROM quotes WHERE id = ?', q.id); res.sendStatus(204);
+});
 v1.get('/quotes/:id/quote.pdf', wrap(async (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
   if (!q || !ownQuote(req, q)) return bad(res, 'Not found', 404);
@@ -326,7 +330,7 @@ v1.get('/quotes/:id/floorplan.svg', (req, res) => {
 });
 v1.post('/quotes/:id/resend', (req, res) => {
   const q = get('SELECT * FROM quotes WHERE id = ?', Number(req.params.id));
-  if (!q) return bad(res, 'Not found', 404);
+  if (!q || !ownQuote(req, q)) return bad(res, 'Not found', 404);
   emit('quote.created', q, baseUrl(req));
   resendQuotePdf(q.id, baseUrl(req));
   res.status(202).json({ queued: true });
@@ -349,6 +353,7 @@ function clean(table, body) {
     else if (JSON_COLS.has(k) && typeof v !== 'string') v = JSON.stringify(v ?? (k === 'headers' || k === 'default_colors' ? {} : []));
     if ((k === 'skid_size') && !['4x4', '4x6', '6x6'].includes(v)) v = null;
     if (k === 'garage_panel' && !['standard', 'carriage'].includes(v)) v = null;
+    if (['garage_windows', 'insulated', 'slanted_corners'].includes(k)) v = v === true || v === 1 || v === '1' || v === 'on' || v === 'true' ? 1 : 0;   // on/off flags: only ever 0 or 1
     if (['skid_count', 'skid_spacing', 'overhang_right', 'gable_overhang', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'hip_len', 'upper_len', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'rake_cap_size', 'drip_edge_size', 'corner_trim', 'casing_trim'].includes(k) && (v === '' || v === undefined)) v = null;
     if (typeof v === 'boolean') v = v ? 1 : 0;
     if (v === '') v = null;
