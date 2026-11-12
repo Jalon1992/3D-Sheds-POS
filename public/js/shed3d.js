@@ -852,7 +852,7 @@ export class ShedScene {
       const bg = new THREE.CanvasTexture(c); bg.colorSpace = THREE.SRGBColorSpace; this.scene.background = bg;
       this.scene.fog = new THREE.Fog(0xe6eef1, 70, 160);
     }
-    this.camera = new THREE.PerspectiveCamera(compact ? 35 : 38, 1, 0.1, 500);
+    this.camera = new THREE.PerspectiveCamera(compact ? 35 : 38, 1, 0.25, 400); // tighter near/far = steadier depth sorting
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true; this.controls.dampingFactor = 0.08;
     this.controls.maxPolarAngle = Math.PI / 2 - 0.04; this.controls.minDistance = 6; this.controls.maxDistance = 90;
@@ -1092,8 +1092,10 @@ export class ShedScene {
       const pad = new THREE.Mesh(new THREE.PlaneGeometry(W + 4, D + 4), new THREE.MeshStandardMaterial({ map: tiled(gravelTex(), W + 4, D + 4), roughness: 1 }));
       pad.rotation.x = -Math.PI / 2; pad.position.y = 0.02; pad.receiveShadow = true; pad.userData.solid = true; shed.add(pad);
     }
-    const sk = geo.skids; for (const x of sk.xs) box(sk.w, sk.h, D, M.wood, x, 0.025 + sk.h / 2, 0, shed).userData.solid = true;   // skids (count / spacing / lumber from the style or size)
-    box(W, 0.4, D, M.trim, 0, y0 - 0.2, 0, shed).userData.solid = true;
+    const sk = geo.skids; for (const x of sk.xs) box(sk.w, sk.h, D - 0.06, M.wood, x, 0.025 + sk.h / 2, 0, shed).userData.solid = true;   // skids (count / spacing / lumber from the style or size)
+    // floor band sits 1/4" proud of the walls: the siding runs a little below the floor line, and two faces in the
+    // same plane flicker (z-fighting) as the camera moves; skid ends are tucked just behind it for the same reason
+    box(W + 0.04, 0.4, D + 0.04, M.trim, 0, y0 - 0.2, 0, shed).userData.solid = true;
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(W - 2 * T, D - 2 * T), new THREE.MeshStandardMaterial({ map: tiled(plyTex(), W, D), roughness: 0.85 }));
     fl.rotation.x = -Math.PI / 2; fl.position.y = y0 + 0.005; fl.receiveShadow = true; fl.userData.solid = true; shed.add(fl);
 
