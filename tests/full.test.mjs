@@ -208,6 +208,13 @@ test('pricing: tiers by dealer lot and by ZIP (percent, overrides, tier delivery
   assert.equal((await price(cfg('lotA'), rep)).data.dealer.id, 'lotB', 'price API locked to the lot');
   const q = await rep.post('/api/v1/quotes', { config: cfg('lotA'), customer: { first_name: 'Lou', email: 'lou@test.com' } });
   assert.equal(q.status, 201); assert.equal(q.data.dealer.id, 'lotB'); assert.equal(q.data.pricing.total, b.total);
+  // a lot's sales rep can't resend or delete quotes; admin logins are always company-wide (a lot is ignored)
+  assert.equal((await rep.post(`/api/v1/quotes/${q.data.id}/resend`, {})).status, 403);
+  assert.equal((await rep.del('/api/v1/quotes/' + q.data.id)).status, 403);
+  await admin.post('/api/admin/users', { email: 'lota-admin@test.com', name: 'Lot A manager', password: 'password-123', role: 'admin', dealer_id: 'lotA' });
+  const mgr = new Client(); await mgr.login('lota-admin@test.com', 'password-123');
+  assert.equal((await mgr.get('/api/auth/me')).data.dealer_id, null, 'admin logins are never tied to one lot');
+  assert.equal((await admin.get('/api/v1/quotes/' + q.data.id)).status, 200, 'quote still there');
 
   await setS({ pricing_mode: 'zip', zip_tiers: [{ match: '383', tier: 2 }, { match: '38301', tier: 3 }, { match: '37000-37999', tier: 4 }] });
   const z = async zip => (await price({ style_id: gable.id, size_id: size.id, zip })).data;
@@ -796,9 +803,9 @@ test('garage doors: four stock doors, admin fields saved and checked, priced, dr
   const made = (await admin.post('/api/v1/options', { name: "16' x 7' Garage Door", category: 'doors', kind: 'door_garage', placement: 'opening', swap_group: 'door', width: 16, height: 7, price: 2400, garage_panel: 'carriage', garage_windows: 1, insulated: 1, slanted_corners: 1 })).data;
   let row = (await admin.get('/api/v1/options/' + made.id)).data;
   assert.equal(row.garage_panel, 'carriage'); assert.equal(row.garage_windows, 1); assert.equal(row.insulated, 1); assert.equal(row.slanted_corners, 1); assert.equal(row.width, 16);
-  await admin.patch('/api/v1/options/' + made.id, { garage_panel: '<script>', slanted_corners: 0, width: 10, height: 8 });
+  await admin.patch('/api/v1/options/' + made.id, { garage_panel: '<script>', slanted_corners: 0, garage_windows: '<img src=x onerror=alert(1)>', width: 10, height: 8 });
   row = (await admin.get('/api/v1/options/' + made.id)).data;
-  assert.equal(row.garage_panel, null, 'unknown style dropped'); assert.equal(row.slanted_corners, 0); assert.equal(row.width, 10); assert.equal(row.height, 8);
+  assert.equal(row.garage_panel, null, 'unknown style dropped'); assert.equal(row.garage_windows, 0, 'flags are only ever 0 or 1'); assert.equal(row.slanted_corners, 0); assert.equal(row.width, 10); assert.equal(row.height, 8);
   await admin.del('/api/v1/options/' + made.id);
   // on a building: priced, plan + elevations draw without errors, slanted corners and sections show up
   const st = cat.styles.find(s => s.name === 'Garage') || cat.styles[0], size = st.sizes.find(z => z.width >= 12) || st.sizes.at(-1);
