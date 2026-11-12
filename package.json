@@ -16,7 +16,9 @@
     "test:browser": "node tests/browser.cjs && node tests/modules-ui.cjs",
     "test:e2e": "node tests/e2e.cjs",
     "test:messaging": "node --test tests/messaging.test.mjs",
-    "test:sweep": "node --disable-warning=ExperimentalWarning tests/sweep.cjs"
+    "test:sweep": "node --disable-warning=ExperimentalWarning tests/sweep.cjs",
+    "test:glitch": "node tests/glitch.cjs",
+    "test:flicker": "node tests/flicker.cjs"
   },
   "dependencies": {
     "express": "^4.22.3",

@@ -1,6 +1,6 @@
 // Customer-facing configurator: Style → Size → Colors → Options → Quote.
 import { ShedScene } from './shed3d.js';
-import { defaultConfig, priceConfig, money, WALLS, colorGroupEnabled, resolveTier, tierCatalog, findDealer, roofChoices, roofColorsFor, roofMaterialPrice, roofingList, optionAvailable, isPackage, placePackage, lengthChoices, windowHeightAdjustable, isWindow } from './shared/pricing.js';
+import { defaultConfig, priceConfig, money, WALLS, colorGroupEnabled, resolveTier, tierCatalog, findDealer, roofChoices, roofColorsFor, roofMaterialPrice, roofingList, optionAvailable, sanitizeConfig, isPackage, placePackage, lengthChoices, windowHeightAdjustable, isWindow } from './shared/pricing.js';
 import { shedGeometry, findSpot, canPlace, resolvePlacement, gableMode, inGable } from './shared/geometry.js';
 import { floorPlanSVG } from './shared/floorplan.js';
 import { buildDrawingPackage } from './drawings.js';
@@ -133,7 +133,8 @@ $('#panel').addEventListener('input', e => {
 const avail = o => optionAvailable(curStyle(), o) && o.active !== 0;
 const listable = o => avail(o) && !o.package_only;          // parts only sold inside a package aren't listed
 const pkgOf = it => it?.package_of && state.config.items.find(x => x.uid === it.package_of);
-function pricing() { try { return priceConfig(state.catalog, state.config); } catch { return null; } }
+// price exactly what the server will keep (it drops parts that aren't allowed), so the two never disagree
+function pricing() { try { return priceConfig(state.catalog, sanitizeConfig(state.catalog, state.config)); } catch { return null; } }
 function rebuild() {
   scene.build(state.catalog, state.config);
   renderTotal();
@@ -181,6 +182,7 @@ function addOption(o) {
   const items = state.config.items;
   // only what this style offers (the server drops anything else, so the price would disagree)
   if (!optionAvailable(curStyle(), o)) throw new Error(`${o.name} isn't offered on the ${curStyle()?.name || 'selected'} style`);
+  if (o.package_only) throw new Error(`${o.name} only comes as part of a package`);
   if (o.placement === 'none') {
     const have = items.find(i => i.option_id === o.id && !i.package_of);
     if (have) return removeItem(have.uid);

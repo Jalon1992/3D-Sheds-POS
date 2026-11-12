@@ -167,8 +167,9 @@ const metalRoofTex = () => canvasTex('ag-panel', 1024, (g, n) => {
   for (const fx of [0.18, 0.68]) {
     for (let i = 0; i < ribs; i++) for (const off of [0.2, 0.8]) {
       const cx = n * fx, cy = i * step + step * off;
-      g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.arc(cx + 1.5, cy + 1.5, 5, 0, 7); g.fill();
-      g.fillStyle = '#f0f0f0'; g.beginPath(); g.arc(cx, cy, 5, 0, 7); g.fill();
+      // faint: high-contrast specks sparkle when the roof is seen far off or edge-on (the 3D screws show up close)
+      g.fillStyle = 'rgba(0,0,0,.12)'; g.beginPath(); g.arc(cx + 1, cy + 1, 5, 0, 7); g.fill();
+      g.fillStyle = 'rgba(255,255,255,.35)'; g.beginPath(); g.arc(cx, cy, 5, 0, 7); g.fill();
     }
   }
 }, 3);
@@ -231,7 +232,7 @@ function makeMaterials(style, colors) {
     roof: (u, v) => new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), map: tiled(roofTex, u, v), roughness: style.roof_material === 'metal' ? 0.4 : 0.95, metalness: style.roof_material === 'metal' ? 0.35 : 0 }),
     roofPlain: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e').multiplyScalar(0.85), roughness: 0.8 }),
     roofTrim: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), roughness: 0.42, metalness: 0.45 }),
-    agPanel: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), roughness: 0.38, metalness: 0.55, side: THREE.DoubleSide }),
+    agPanel: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), roughness: 0.55, metalness: 0.55, side: THREE.DoubleSide }),   // .55: glints on the thin ribs sparkled at .38
     screw: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e').multiplyScalar(0.8), roughness: 0.35, metalness: 0.6 }),
     door: new THREE.MeshStandardMaterial({ color: c(colors.door, colors.trim || '#f4f4ef'), roughness: 0.6 }),
     window: new THREE.MeshStandardMaterial({ color: c(colors.window, colors.trim || '#f4f4ef'), roughness: 0.55 }),
@@ -335,10 +336,17 @@ function tHinges(g, M, ex, hz, dir, strapLen, rows) {
     box(plateW, ph, 0.022, M.metal, ex + dir * plateW / 2, y, hz + 0.011, g);   // upright plate at the edge
     const st = new THREE.Mesh(strapGeo, M.metal); st.castShadow = true;
     st.position.set(ex + dir * (plateW - 0.01), y, hz); st.scale.x = dir; g.add(st);
-    for (const d of [0.2, 0.42].filter(d => d < strapLen)) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * (plateW + d), y, hz + 0.024); g.add(b); }
-    for (const dy of [-ph * 0.33, ph * 0.33]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * plateW / 2, y + dy, hz + 0.026); g.add(b); }
+    for (const d of [0.2, 0.42].filter(d => d < strapLen)) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * (plateW + d), y, hz + 0.024); b.userData.detail = 0.028; g.add(b); }
+    for (const dy of [-ph * 0.33, ph * 0.33]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), M.steel); b.rotation.x = Math.PI / 2; b.position.set(ex + dir * plateW / 2, y + dy, hz + 0.026); b.userData.detail = 0.028; g.add(b); }
   }
 }
+// roll-up door slat: light face, soft shadowed groove at the bottom edge, small highlight just above it
+const rollupTex = () => canvasTex('rollup', 64, (g, n) => {
+  const gr = g.createLinearGradient(0, 0, 0, n);
+  gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.72, '#f1f1f1'); gr.addColorStop(0.8, '#fafafa'); gr.addColorStop(0.86, '#8a8a8a'); gr.addColorStop(0.94, '#5c5c5c'); gr.addColorStop(1, '#d8d8d8');
+  g.fillStyle = gr; g.fillRect(0, 0, n, n);
+});
+const FRAME_H = 0.4; // floor frame depth below the floor line; the siding and corner boards run down over it
 /** Trim with slanted (45°) top corners, as on many garage and carriage doors: a trim-coloured triangle in each top corner. */
 function slantCorners(g, w, h, M) {
   const c = Math.min(0.85, Math.max(0.4, w * 0.09)), zOut = WALL_T / 2;
@@ -569,11 +577,11 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
     case 'door_rollup': {
       casing(g, w, h, M, zOut);
       const n = Math.round(h / 0.33);
-      for (let i = 0; i < n; i++) {
-        const y = (i + 0.5) * (h / n);
-        box(w - 0.04, h / n - 0.03, 0.06, M.door, 0, y, zOut - 0.1, g);
-        box(w - 0.04, 0.03, 0.03, M.dark, 0, i * (h / n), zOut - 0.12, g);
-      }
+      // slats painted as a texture (one groove per slat): modelled hairline gaps shimmer and crawl as the camera moves,
+      // a texture is smoothed (mipmapped) as it gets smaller on screen
+      const tex = rollupTex().clone(); tex.repeat.set(1, n); tex.needsUpdate = true;
+      const slats = new THREE.MeshStandardMaterial({ color: M.door.color, map: tex, roughness: M.door.roughness });
+      box(w - 0.04, h - 0.02, 0.06, slats, 0, h / 2, zOut - 0.1, g);
       box(0.6, 0.12, 0.08, M.metal, 0, 0.5, zOut - 0.04, g);
       break;
     }
@@ -921,7 +929,7 @@ export class ShedScene {
     this.resize = this.resize.bind(this);
     new ResizeObserver(this.resize).observe(container);
     this.resize();
-    const loop = () => { this.controls.update(); this.renderer.render(this.scene, this.camera); this.raf = requestAnimationFrame(loop); };
+    const loop = () => { this.controls.update(); this.updateDetails(); this.renderer.render(this.scene, this.camera); this.raf = requestAnimationFrame(loop); };
     loop();
   }
 
@@ -1085,17 +1093,18 @@ export class ShedScene {
     M.cw = (style.casing_trim === null || style.casing_trim === undefined || style.casing_trim === '' ? 4 : Number(style.casing_trim)) / 12;
     const { W, D, H } = geo;
     const y0 = geo.floorY ?? FLOOR_Y;
-    const shed = new THREE.Group(); this.root.add(shed);
+    const shed = new THREE.Group(); this.root.add(shed); this._details = null;   // re-collect tiny details after a rebuild
 
     // --- Gravel pad, skids, floor
     if (this.ground) {
       const pad = new THREE.Mesh(new THREE.PlaneGeometry(W + 4, D + 4), new THREE.MeshStandardMaterial({ map: tiled(gravelTex(), W + 4, D + 4), roughness: 1 }));
       pad.rotation.x = -Math.PI / 2; pad.position.y = 0.02; pad.receiveShadow = true; pad.userData.solid = true; shed.add(pad);
     }
-    const sk = geo.skids; for (const x of sk.xs) box(sk.w, sk.h, D - 0.06, M.wood, x, 0.025 + sk.h / 2, 0, shed).userData.solid = true;   // skids (count / spacing / lumber from the style or size)
-    // floor band sits 1/4" proud of the walls: the siding runs a little below the floor line, and two faces in the
-    // same plane flicker (z-fighting) as the camera moves; skid ends are tucked just behind it for the same reason
-    box(W + 0.04, 0.4, D + 0.04, M.trim, 0, y0 - 0.2, 0, shed).userData.solid = true;
+    // skids: ends and outer faces kept just inside the siding (faces in the same plane flicker as the camera moves)
+    const sk = geo.skids, skX = W / 2 - sk.w / 2 - 0.03;
+    for (const x of sk.xs) box(sk.w, sk.h, D - 0.06, M.wood, Math.max(-skX, Math.min(skX, x)), 0.025 + sk.h / 2, 0, shed).userData.solid = true;   // skids (count / spacing / lumber from the style or size)
+// floor frame: hidden inside the walls - the siding runs down over it to the skids, as on a real shed
+    box(W - 0.1, FRAME_H, D - 0.1, M.trim, 0, y0 - FRAME_H / 2, 0, shed).userData.solid = true;
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(W - 2 * T, D - 2 * T), new THREE.MeshStandardMaterial({ map: tiled(plyTex(), W, D), roughness: 0.85 }));
     fl.rotation.x = -Math.PI / 2; fl.position.y = y0 + 0.005; fl.receiveShadow = true; fl.userData.solid = true; shed.add(fl);
 
@@ -1111,14 +1120,14 @@ export class ShedScene {
       const L = geo.wallLen(wall);
       // Outline starts slightly below the floor line so door holes (which start at 0) never touch it.
       const shape = new THREE.Shape();
-      shape.moveTo(-L / 2, -0.05); shape.lineTo(L / 2, -0.05);
+      shape.moveTo(-L / 2, -FRAME_H); shape.lineTo(L / 2, -FRAME_H);   // siding covers the floor frame down to the skids
       if (geo.isGable(wall)) {
         const pts = geo.profileUs(wall).sort((a, b) => b[0] - a[0]); // right → left
         for (const [u, h] of pts) shape.lineTo(Math.max(-L / 2, Math.min(L / 2, u)), h);
       } else {
         shape.lineTo(L / 2, geo.topAt(wall, L / 2)); shape.lineTo(-L / 2, geo.topAt(wall, -L / 2));
       }
-      shape.lineTo(-L / 2, -0.05);
+      shape.lineTo(-L / 2, -FRAME_H);
       for (const { it, o } of placed) {
         if (it.wall !== wall || o.placement !== 'opening') continue;
         const p = resolvePlacement(geo, o, it);
@@ -1153,7 +1162,7 @@ export class ShedScene {
     // --- Corner boards
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
       const h = geo.H + geo.prof(geo.ridgeAlongZ ? sx * geo.s : sz * geo.s);
-      box(cornerW, h, cornerW, M.trim, sx * (W / 2 + 0.06 - cornerW / 2), y0 + h / 2, sz * (D / 2 + 0.06 - cornerW / 2), shed).userData.solid = true;
+      box(cornerW, h + FRAME_H, cornerW, M.trim, sx * (W / 2 + 0.06 - cornerW / 2), y0 + (h - FRAME_H) / 2, sz * (D / 2 + 0.06 - cornerW / 2), shed).userData.solid = true;
     }
 
     // --- Roof
@@ -1221,7 +1230,7 @@ export class ShedScene {
         mm.compose(new THREE.Vector3(A[0] + u[0] * d + n[0] * 0.012, A[1] + u[1] * d + n[1] * 0.012, -z), q, new THREE.Vector3(1, 1, 1));
         inst.setMatrixAt(k++, mm);
       }
-      inst.userData.solid = true; roofG.add(inst);
+      inst.userData.solid = true; inst.userData.detail = 0.056; roofG.add(inst);   // tiny: hidden when it would be under ~3 px (it sparkles)
     };
     for (let i = 0; i < nSeg; i++) {
       const B0 = prof[i], B1 = prof[i + 1];
@@ -1234,7 +1243,9 @@ export class ShedScene {
       // solid slab (trim colour on edges/underside) – top sunk a hair below the textured skin
       const n = normal(i), e = 0.006;
       const shape = new THREE.Shape([V2(B0), V2(B1), V2([T1[0] - n[0] * e, T1[1] - n[1] * e]), V2([T0[0] - n[0] * e, T0[1] - n[1] * e])]);
-      const slab = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: ridgeLen, bevelEnabled: false }), M.trim);
+      // the deck is drawn pushed back in depth (polygon offset) so the roofing laid on it never fights it for pixels
+      if (!M.roofDeck) { M.roofDeck = M.trim.clone(); M.roofDeck.polygonOffset = true; M.roofDeck.polygonOffsetFactor = 2; M.roofDeck.polygonOffsetUnits = 4; }
+      const slab = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: ridgeLen, bevelEnabled: false }), M.roofDeck);
       slab.position.z = -RL; slab.castShadow = slab.receiveShadow = true; slab.userData.solid = true; roofG.add(slab);
       if (lapAt[i] !== undefined) {
         // metal: the upper panels lift over the transition trim and run a couple of inches past the bend.
@@ -1448,10 +1459,33 @@ export class ShedScene {
     return new Blob([data], { type: 'model/gltf-binary' });
   }
 
+  /** Tiny details (roof screws, hinge bolts) are hidden when they'd be under ~3 px on screen: smaller than that they
+   *  sparkle on and off as the camera moves. userData.detail = the part's size in feet. */
+  updateDetails() {
+    this._dTick = ((this._dTick || 0) + 1) % 30;   // re-collect after a rebuild, and twice a second in case doors were added or moved
+    if (!this._details || !this._dTick) { this._details = []; this.root.traverse(o => { if (o.userData?.detail) this._details.push(o); }); }
+    // cedar-grain bump on the trim: full strength up close, eased off further back, where it only shimmers
+    const tr = this.M?.trim;
+    if (tr?.bumpMap) {
+      tr.userData.bump ??= tr.bumpScale;
+      const d = this.camera.position.distanceTo(this.controls?.target || new THREE.Vector3());
+      tr.bumpScale = tr.userData.bump * Math.max(0, Math.min(1, (34 - d) / 18));
+    }
+    if (!this._details.length) return;
+    const hPx = this.renderer.domElement.height || 600, k = hPx / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2));
+    const camPos = this.camera.position, c = new THREE.Vector3();
+    for (const o of this._details) {
+      let d;
+      if (o.isInstancedMesh) { if (!o.boundingSphere) o.computeBoundingSphere(); c.copy(o.boundingSphere.center).applyMatrix4(o.matrixWorld); d = Math.max(0.1, camPos.distanceTo(c) - o.boundingSphere.radius); }
+      else d = camPos.distanceTo(o.getWorldPosition(c));
+      const px = o.userData.detail * k / d;
+      o.visible = o.visible ? px >= 2.7 : px >= 3.3;   // a little hysteresis: no blinking on and off right at the threshold
+    }
+  }
   snapshot(w = 640, h = 420) {
     const prev = [this.renderer.domElement.width, this.renderer.domElement.height];
     this.selBox.visible = this.selFill.visible = false;
-    this.renderer.render(this.scene, this.camera);
+    this.updateDetails(); this.renderer.render(this.scene, this.camera);
     const url = this.renderer.domElement.toDataURL('image/jpeg', 0.85);
     this.select(this.selected);
     return url;
