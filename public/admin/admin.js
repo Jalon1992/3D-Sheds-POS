@@ -671,6 +671,7 @@ const OPTION_FIELDS = () => [
   { key: 'garage_panel', label: 'Garage door style', type: 'select', options: [['', '—'], ['standard', 'Standard (raised short panels)'], ['carriage', 'Carriage house (grooved panels, hinges & handles)']], help: 'For the "Garage door" built-in model. Set the door size with Width and Height above (e.g. 9 × 7, 10 × 8, 16 × 7).' },
   { key: 'garage_windows', label: 'Row of windows across the top section', type: 'checkbox' },
   { key: 'insulated', label: 'Insulated', type: 'checkbox', help: 'Insulated doors are drawn thicker (2" foam core). Keep insulated and uninsulated as separate options so each has its own price, and say "Insulated" in the name so it reads that way on quotes.' },
+  { key: 'no_corner_trim', label: 'No corner trim on the egg box', type: 'checkbox', help: 'Egg (nest) box only: builds it without the white corner boards. Leave unticked for corner boards.' },
   { key: 'slanted_corners', label: 'Slanted top corners on the trim', type: 'checkbox', help: 'Any door: adds 45° trim blocks in the two top corners of the opening.' },
   { key: 'price', label: 'Price ($)', type: 'number', step: '0.01' },
   { key: 'price_unit', label: 'Priced', type: 'select', options: PRICE_UNITS },

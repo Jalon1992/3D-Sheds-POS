@@ -341,7 +341,7 @@ const TABLES = {
   styles: ['skid_size', 'skid_count', 'skid_spacing', 'name', 'description', 'image_url', 'roof_type', 'ridge_axis', 'wall_height', 'roof_pitch', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'rake_tail', 'overhang', 'gable_overhang', 'overhang_right', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'roof_edge', 'rake_cap_size', 'drip_edge_size', 'drip_edge_color', 'corner_trim', 'casing_trim', 'siding_type', 'trim_type', 'roof_material', 'roof_choices', 'available_options', 'standard_options', 'default_colors', 'active', 'sort'],
   sizes: ['style_id', 'width', 'depth', 'price', 'hip_len', 'upper_len', 'skid_size', 'skid_count', 'skid_spacing', 'active', 'sort'],
   colors: ['name', 'hex', 'category', 'material', 'price', 'active', 'sort'],
-  options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'only_styles', 'garage_panel', 'garage_windows', 'insulated', 'slanted_corners', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
+  options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'only_styles', 'garage_panel', 'garage_windows', 'insulated', 'slanted_corners', 'no_corner_trim', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
   webhooks: ['name', 'url', 'events', 'secret', 'headers', 'active'],
 };
 function clean(table, body) {
@@ -353,7 +353,7 @@ function clean(table, body) {
     else if (JSON_COLS.has(k) && typeof v !== 'string') v = JSON.stringify(v ?? (k === 'headers' || k === 'default_colors' ? {} : []));
     if ((k === 'skid_size') && !['4x4', '4x6', '6x6'].includes(v)) v = null;
     if (k === 'garage_panel' && !['standard', 'carriage'].includes(v)) v = null;
-    if (['garage_windows', 'insulated', 'slanted_corners'].includes(k)) v = v === true || v === 1 || v === '1' || v === 'on' || v === 'true' ? 1 : 0;   // on/off flags: only ever 0 or 1
+    if (['garage_windows', 'insulated', 'slanted_corners', 'no_corner_trim'].includes(k)) v = v === true || v === 1 || v === '1' || v === 'on' || v === 'true' ? 1 : 0;   // on/off flags: only ever 0 or 1
     if (['skid_count', 'skid_spacing', 'overhang_right', 'gable_overhang', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'hip_len', 'upper_len', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'rake_cap_size', 'drip_edge_size', 'corner_trim', 'casing_trim'].includes(k) && (v === '' || v === undefined)) v = null;
     if (typeof v === 'boolean') v = v ? 1 : 0;
     if (v === '') v = null;

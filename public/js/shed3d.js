@@ -735,7 +735,7 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       const endGeo = new THREE.ExtrudeGeometry(end, { depth: pT, bevelEnabled: false });
       for (const sx of [-1, 1]) { const m = new THREE.Mesh(endGeo, SP); m.rotation.y = -Math.PI / 2; m.position.x = sx < 0 ? -w / 2 + pT : w / 2; m.castShadow = m.receiveShadow = true; g.add(m); }
       // white corner boards: wrap the front corners and run a little below the box (optional per nest box)
-      if (ctx.item?.corner_trim !== false) {
+      if (!Number(ctx.opt?.no_corner_trim)) {   // set per option in the admin
         const eb = 0.29, ey0 = bot - 0.22, eh = frontTop - ey0;
         for (const sx of [-1, 1]) {
           box(eb, eh, 0.06, M.trim, sx * (w / 2 - eb / 2 + 0.03), ey0 + eh / 2, zf + 0.03, g);

@@ -508,10 +508,18 @@ test('Chicken coop: own style, coop-only parts, nest box and roosts priced by le
   for (const o of [nest, pop, roost, door, win]) assert.deepEqual(o?.only_styles, [coop.id], (o?.name || '?') + ' only on the coop');
   assert.equal(win.name, 'Coop Window (14" x 21")'); assert.equal(Math.round(win.width * 12), 14); assert.equal(Math.round(win.height * 12), 21);
   assert.equal(nest.width, 6, "nest box is 6' as built");
-  // the white corner boards on a nest box can be left off; that choice is kept on the quote (and only on nest boxes)
+  // corner trim on the egg box is an admin setting on the option (customers can't change it per quote)
+  assert.ok(!nest.no_corner_trim, 'corner boards by default');
+  await admin.patch('/api/v1/options/' + nest.id, { no_corner_trim: 1 });
+  assert.equal((await admin.get('/api/v1/options/' + nest.id)).data.no_corner_trim, 1);
+  const { elevationSVG } = await import('../public/js/shared/elevations.js');
+  const nestCfg = { style_id: coop.id, size_id: coop.sizes[0].id, items: [{ uid: 'nb', option_id: nest.id, wall: 'right', offset: 0 }] };
+  const boards = c => (elevationSVG(c, nestCfg, 'right').svg.match(/fill="#ffffff" stroke/g) || []).length;
+  const without = boards((await admin.get('/api/v1/catalog')).data);
+  await admin.patch('/api/v1/options/' + nest.id, { no_corner_trim: 0 });
+  assert.equal(boards((await admin.get('/api/v1/catalog')).data), without + 2, 'two corner boards drawn when on, none when off');
   const pc = (await admin.post('/api/v1/quotes', { config: { style_id: coop.id, size_id: coop.sizes[0].id, items: [{ uid: 'nb', option_id: nest.id, wall: 'right', offset: 0, corner_trim: false }, { uid: 'rb', option_id: roost.id, wall: 'left', offset: 0, corner_trim: false }] }, customer: { first_name: 'Trim', email: 'trim@test.com' } })).data;
-  assert.equal(pc.config.items.find(i => i.uid === 'nb').corner_trim, false);
-  assert.equal(pc.config.items.find(i => i.uid === 'rb').corner_trim, undefined);
+  assert.equal(pc.config.items.find(i => i.uid === 'nb').corner_trim, undefined, 'a per-quote corner choice is ignored');
   // the coop with its standard parts: all fit, all included
   const sz = coop.sizes.find(z => z.width === 6 && z.depth === 10);
   const std = (coop.standard_options || []).map((x, i) => ({ uid: 's' + i, standard_of: x.option_id, ...x }));
