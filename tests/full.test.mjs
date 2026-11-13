@@ -831,3 +831,48 @@ test('garage doors: four stock doors, admin fields saved and checked, priced, dr
     else assert.ok(!/fill="#3a4448"/.test(svg), 'no windows on the standard door');
   }
 });
+
+test('paint colors: entered once, offered for siding, trim and doors; prices and drawings use it everywhere', async () => {
+  const made = (await admin.post('/api/v1/colors', { name: 'Barn Red Test', hex: '#8b1e1e', uses: ['siding', 'trim', 'door', 'bogus'], price: 25 })).data;
+  let row = (await admin.get('/api/v1/colors/' + made.id)).data;
+  assert.deepEqual(row.uses, ['siding', 'trim', 'door'], 'unknown places dropped'); assert.equal(row.category, 'siding');
+  const { colorFor } = await import('../public/js/shared/pricing.js');
+  const cat = (await anon.get('/api/v1/catalog')).data, c = cat.colors.find(x => x.id === made.id);
+  for (const k of ['siding', 'trim', 'door']) assert.ok(colorFor(c, k), 'offered for ' + k);
+  assert.ok(!colorFor(c, 'roof') && !colorFor(c, 'window'));
+  // one paint picked for siding, trim and doors: priced in each place, labelled by where it's used
+  const st = cat.styles[0];
+  const pr = (await anon.post('/api/v1/price', { style_id: st.id, size_id: st.sizes[0].id, colors: { siding: c.id, trim: c.id, door: c.id }, items: [] })).data;
+  for (const k of ['Siding', 'Trim', 'Door']) assert.ok(pr.lines.some(l => l.label === `${k} color: Barn Red Test` && l.amount === 25), k + ' line');
+  // editing "used for" moves it between lists; an old single-category color still works
+  await admin.patch('/api/v1/colors/' + made.id, { uses: ['trim'] });
+  row = (await admin.get('/api/v1/colors/' + made.id)).data; assert.deepEqual(row.uses, ['trim']); assert.equal(row.category, 'trim');
+  const old = cat.colors.find(x => !x.uses && x.category === 'roof'); assert.ok(old && colorFor(old, 'roof') && !colorFor(old, 'siding'));
+  await admin.del('/api/v1/colors/' + made.id);
+});
+
+test('combine duplicate paints: one paint, offered everywhere it was, quotes and style defaults repointed', async () => {
+  const a = (await admin.post('/api/v1/colors', { name: 'Dup Green', hex: '#2f5d3a', category: 'siding', price: 0 })).data;
+  const b = (await admin.post('/api/v1/colors', { name: 'dup green ', hex: '#2F5D3A', category: 'trim', price: 0 })).data;
+  const d = (await admin.post('/api/v1/colors', { name: 'Dup Green', hex: '#2f5d3a', category: 'door', price: 0 })).data;
+  const roofDup = (await admin.post('/api/v1/colors', { name: 'Dup Green', hex: '#2f5d3a', category: 'roof', price: 0 })).data;
+  let cat = (await admin.get('/api/v1/catalog')).data; const st = cat.styles[0];
+  await admin.patch('/api/v1/styles/' + st.id, { default_colors: { ...(st.default_colors || {}), trim: b.id } });
+  const q = await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: st.sizes[0].id, colors: { siding: a.id, trim: b.id, door: d.id }, items: [] }, customer: { first_name: 'Paint', email: 'paint@test.com' } });
+  assert.equal(q.status, 201);
+  await admin.post('/api/admin/users', { email: 'paint-rep@test.com', name: 'Paint Rep', password: 'password-123', role: 'sales' });
+  const rep = new Client(); await rep.login('paint-rep@test.com', 'password-123');
+  assert.equal((await rep.post('/api/admin/colors/combine', {})).status, 403, 'admins only');
+  const r = (await admin.post('/api/admin/colors/combine', {})).data;
+  assert.ok(r.combined >= 2);
+  cat = (await admin.get('/api/v1/catalog')).data;
+  const left = cat.colors.filter(c => c.name.trim().toLowerCase() === 'dup green');
+  const paint = left.find(c => c.id === a.id);
+  assert.ok(paint, 'the first one is kept'); assert.deepEqual(paint.uses, ['siding', 'trim', 'door']);
+  assert.ok(left.some(c => c.id === roofDup.id), 'roof colors are left alone');
+  assert.ok(!left.some(c => c.id === b.id || c.id === d.id), 'duplicates removed');
+  const saved = (await admin.get('/api/v1/quotes/' + q.data.id)).data;
+  assert.deepEqual([saved.config.colors.siding, saved.config.colors.trim, saved.config.colors.door], [a.id, a.id, a.id], 'quote repointed');
+  assert.equal(cat.styles.find(s => s.id === st.id).default_colors.trim, a.id, 'style default repointed');
+  const again = (await admin.post('/api/admin/colors/combine', {})).data; assert.equal(again.combined, 0, 'nothing left to combine');
+});

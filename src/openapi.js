@@ -118,7 +118,7 @@ Failed deliveries are retried after 1s, 5s and 25s.
           },
         },
         Size: { type: 'object', properties: { id: { type: 'integer', readOnly: true }, style_id: { type: 'integer' }, width: { type: 'number' }, depth: { type: 'number' }, price: { type: 'number' }, hip_len: { type: ['number', 'null'], description: 'Lofted barn: hip (lower section) length for this size, ft' }, upper_len: { type: ['number', 'null'], description: 'Lofted barn: upper section length for this size, ft' }, active: { type: 'integer' }, sort: { type: 'integer' } } },
-        Color: { type: 'object', properties: { id: { type: 'integer', readOnly: true }, name: { type: 'string' }, hex: { type: 'string' }, category: { type: 'string', enum: ['siding', 'trim', 'roof', 'door', 'window'] }, material: { type: 'string', nullable: true, description: 'Roof colors: which roofing material it is offered for (null = all)' }, price: { type: 'number' }, active: { type: 'integer' } } },
+        Color: { type: 'object', properties: { id: { type: 'integer', readOnly: true }, name: { type: 'string' }, hex: { type: 'string' }, uses: { type: 'array', items: { type: 'string', enum: ['siding', 'trim', 'door', 'window', 'roof'] }, description: 'Where this paint is offered (enter once, use for several). Empty = just its category.' }, category: { type: 'string', enum: ['siding', 'trim', 'roof', 'door', 'window'] }, material: { type: 'string', nullable: true, description: 'Roof colors: which roofing material it is offered for (null = all)' }, price: { type: 'number' }, active: { type: 'integer' } } },
         Option: {
           type: 'object', properties: {
             id: { type: 'integer', readOnly: true }, name: { type: 'string' }, description: { type: 'string' },
