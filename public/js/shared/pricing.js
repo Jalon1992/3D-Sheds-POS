@@ -85,9 +85,12 @@ export function roofMaterialPrice(mat, style, size) {
     default: return p;
   }
 }
+/** Where a color is offered: the paint's "Used for" list (one paint for siding, trim and doors), else its one category. */
+export const colorUses = c => (Array.isArray(c?.uses) && c.uses.length ? c.uses : [c?.category]);
+export const colorFor = (c, cat) => colorUses(c).includes(cat);
 /** Roof colors that work with a roofing material (colors with no material set work with all). */
 export function roofColorsFor(catalog, matKey) {
-  return catalog.colors.filter(c => c.category === 'roof' && c.active !== 0 && (!c.material || c.material === matKey));
+  return catalog.colors.filter(c => colorFor(c, 'roof') && c.active !== 0 && (!c.material || c.material === matKey));
 }
 
 export function money(n, symbol = '$') {
@@ -122,7 +125,7 @@ export function optionPrice(opt, size, qty = 1, wall = null, item = null) {
 export function defaultConfig(catalog, styleId, sizeId) {
   const style = catalog.styles.find(s => s.id === styleId) || catalog.styles[0];
   const size = (style.sizes.find(s => s.id === sizeId)) || style.sizes[0];
-  const firstColor = cat => (catalog.colors.find(c => c.category === cat && c.active !== 0) || {}).id || null;
+  const firstColor = cat => (catalog.colors.find(c => colorFor(c, cat) && c.active !== 0) || {}).id || null;
   const d = style.default_colors || {};
   // skip standard options whose option was deleted or hidden since the style was set up
   const live = new Set(catalog.options.filter(o => o.active !== 0).map(o => Number(o.id)));
@@ -356,7 +359,6 @@ export function sanitizeConfig(catalog, raw) {
       ...(i.gable && optById[Number(i.option_id)]?.gable_mode === 'allow' ? { gable: true } : {}),
       ...(i.package_of ? { package_of: String(i.package_of).slice(0, 60) } : {}),
       ...(finite(i.elev) ? { elev: clampNum(i.elev, 0, 30) } : {}),
-      ...(i.corner_trim === false && optById[Number(i.option_id)]?.kind === 'nest_box' ? { corner_trim: false } : {}),   // nest box without the white corner boards
     }));
   for (const it of items) {
     const o = optById[it.option_id];

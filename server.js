@@ -240,6 +240,7 @@ app.get('/q/pdf/:pdfToken', (req, res) => {
   res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${q.number}-quote.pdf"`, 'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex' }).send(bytes);
 });
 
+const COLOR_CATS = ['siding', 'trim', 'door', 'window', 'roof'];
 function cleanUtm(u) {
   const out = {};
   if (u && typeof u === 'object' && !Array.isArray(u))
@@ -340,20 +341,27 @@ v1.post('/quotes/:id/resend', (req, res) => {
 const TABLES = {
   styles: ['skid_size', 'skid_count', 'skid_spacing', 'name', 'description', 'image_url', 'roof_type', 'ridge_axis', 'wall_height', 'roof_pitch', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'rake_tail', 'overhang', 'gable_overhang', 'overhang_right', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'roof_edge', 'rake_cap_size', 'drip_edge_size', 'drip_edge_color', 'corner_trim', 'casing_trim', 'siding_type', 'trim_type', 'roof_material', 'roof_choices', 'available_options', 'standard_options', 'default_colors', 'active', 'sort'],
   sizes: ['style_id', 'width', 'depth', 'price', 'hip_len', 'upper_len', 'skid_size', 'skid_count', 'skid_spacing', 'active', 'sort'],
-  colors: ['name', 'hex', 'category', 'material', 'price', 'active', 'sort'],
-  options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'only_styles', 'garage_panel', 'garage_windows', 'insulated', 'slanted_corners', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
+  colors: ['name', 'hex', 'category', 'uses', 'material', 'price', 'active', 'sort'],
+  options: ['name', 'description', 'category', 'kind', 'placement', 'swap_group', 'width', 'height', 'depth', 'elevation', 'gable_mode', 'package_items', 'package_only', 'grid_top', 'grid_bottom', 'length_choices', 'only_styles', 'garage_panel', 'garage_windows', 'insulated', 'slanted_corners', 'no_corner_trim', 'price', 'price_unit', 'model_url', 'image_url', 'plan_label', 'max_qty', 'active', 'sort'],
   webhooks: ['name', 'url', 'events', 'secret', 'headers', 'active'],
 };
 function clean(table, body) {
   const out = {};
   for (const k of TABLES[table]) if (body && k in body) {
     let v = body[k];
+    if (k === 'uses') {   // paint "Used for": known places only; the first one is also kept as the color's category
+      const u = Array.isArray(v) ? [...new Set(v.filter(x => COLOR_CATS.includes(x)))] : [];
+      v = u.length ? JSON.stringify(u) : null;
+      if (u.length && table === 'colors' && !u.includes(body.category)) out.category = u[0];
+      out[k] = v; continue;
+    }
+    if (k === 'category' && table === 'colors' && !COLOR_CATS.includes(v)) v = Array.isArray(body.uses) && COLOR_CATS.includes(body.uses[0]) ? body.uses[0] : 'siding';
     if ((k === 'available_options' || k === 'only_styles') && !Array.isArray(v)) v = null;
     else if (k === 'only_styles') v = v.length ? JSON.stringify([...new Set(v.map(Number).filter(n => n > 0))]) : null;
     else if (JSON_COLS.has(k) && typeof v !== 'string') v = JSON.stringify(v ?? (k === 'headers' || k === 'default_colors' ? {} : []));
     if ((k === 'skid_size') && !['4x4', '4x6', '6x6'].includes(v)) v = null;
     if (k === 'garage_panel' && !['standard', 'carriage'].includes(v)) v = null;
-    if (['garage_windows', 'insulated', 'slanted_corners'].includes(k)) v = v === true || v === 1 || v === '1' || v === 'on' || v === 'true' ? 1 : 0;   // on/off flags: only ever 0 or 1
+    if (['garage_windows', 'insulated', 'slanted_corners', 'no_corner_trim'].includes(k)) v = v === true || v === 1 || v === '1' || v === 'on' || v === 'true' ? 1 : 0;   // on/off flags: only ever 0 or 1
     if (['skid_count', 'skid_spacing', 'overhang_right', 'gable_overhang', 'roof_pitch_lower', 'roof_pitch_back', 'gambrel_break', 'gambrel_lower_len', 'gambrel_upper_len', 'hip_len', 'upper_len', 'fascia_size', 'rake_size', 'metal_rake_size', 'metal_rake_leg', 'rake_cap_size', 'drip_edge_size', 'corner_trim', 'casing_trim'].includes(k) && (v === '' || v === undefined)) v = null;
     if (typeof v === 'boolean') v = v ? 1 : 0;
     if (v === '') v = null;
@@ -469,6 +477,46 @@ admin.post('/account/sign-out-others', (req, res) => { endSessions(req.user.id);
 const devopsRow = id => get('SELECT id FROM users WHERE id = ? AND COALESCE(is_devops, 0) = 1', Number(id));
 admin.get('/users', (req, res) => res.json(all(`SELECT id, email, name, phone, COALESCE(role, 'admin') AS role, dealer_id, COALESCE(active, 1) AS active, COALESCE(is_devops, 0) AS devops, created_at FROM users ${req.user.devops ? '' : 'WHERE COALESCE(is_devops, 0) = 0'}`)));
 // ---- System & backups (same people who can switch modules)
+// Combine duplicate paints: colors with the same name and hex code (e.g. "Arctic White" entered once for siding and
+// again for trim) become one paint used in all those places. Quotes and style defaults that pointed at a duplicate
+// are repointed to the kept one. Roof colors are left alone (they're roofing, not paint).
+function combineDuplicateColors() {
+  const cats = ['siding', 'trim', 'door', 'window'];
+  const rows = all('SELECT * FROM colors ORDER BY id');
+  const js = v => { if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch { return null; } };   // all() already parses JSON columns
+  const uses = r => { const u = js(r.uses); return Array.isArray(u) && u.length ? u : [r.category]; };
+  const groups = new Map();
+  for (const r of rows) {
+    const u = uses(r); if (u.includes('roof') || !u.every(x => cats.includes(x))) continue;
+    const key = String(r.name).trim().toLowerCase() + '|' + String(r.hex).trim().toLowerCase();
+    if (!groups.has(key)) groups.set(key, []); groups.get(key).push(r);
+  }
+  const remap = new Map(); let combined = 0;
+  db.exec('BEGIN');
+  try {
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      const keep = g[0], all_ = [...new Set(g.flatMap(uses))].sort((a, b) => cats.indexOf(a) - cats.indexOf(b));
+      // keep the first one's price/sort; available if any of them was
+      run('UPDATE colors SET uses = ?, active = ? WHERE id = ?', JSON.stringify(all_), g.some(r => r.active !== 0) ? 1 : 0, keep.id);
+      for (const r of g.slice(1)) { remap.set(r.id, keep.id); run('DELETE FROM colors WHERE id = ?', r.id); combined++; }
+    }
+    if (remap.size) {
+      const fix = obj => { let ch = false; for (const k of Object.keys(obj || {})) { const n = remap.get(Number(obj[k])); if (n) { obj[k] = n; ch = true; } } return ch; };
+      for (const st of all('SELECT id, default_colors FROM styles')) {
+        const d = js(st.default_colors); if (!d || typeof d !== 'object') continue;
+        if (fix(d)) run('UPDATE styles SET default_colors = ? WHERE id = ?', JSON.stringify(d), st.id);
+      }
+      for (const q of all('SELECT id, config FROM quotes')) {
+        const c = js(q.config); if (!c || typeof c !== 'object') continue;
+        if (fix(c.colors)) run('UPDATE quotes SET config = ? WHERE id = ?', JSON.stringify(c), q.id);
+      }
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  return { combined, paints: [...groups.values()].filter(g => g.length > 1).length };
+}
+admin.post('/colors/combine', (req, res) => res.json(combineDuplicateColors()));
 admin.get('/system', (req, res) => {
   if (!canManageModules(req.user)) return bad(res, 'Only the developer login can see this.', 403);
   const o = offsite();

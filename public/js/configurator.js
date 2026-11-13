@@ -1,6 +1,6 @@
 // Customer-facing configurator: Style → Size → Colors → Options → Quote.
 import { ShedScene } from './shed3d.js';
-import { defaultConfig, priceConfig, money, WALLS, colorGroupEnabled, resolveTier, tierCatalog, findDealer, roofChoices, roofColorsFor, roofMaterialPrice, roofingList, optionAvailable, sanitizeConfig, isPackage, placePackage, lengthChoices, windowHeightAdjustable, isWindow } from './shared/pricing.js';
+import { defaultConfig, priceConfig, money, WALLS, colorGroupEnabled, resolveTier, tierCatalog, findDealer, roofChoices, roofColorsFor, roofMaterialPrice, roofingList, optionAvailable, sanitizeConfig, isPackage, placePackage, lengthChoices, windowHeightAdjustable, isWindow, colorFor } from './shared/pricing.js';
 import { shedGeometry, findSpot, canPlace, resolvePlacement, gableMode, inGable } from './shared/geometry.js';
 import { floorPlanSVG } from './shared/floorplan.js';
 import { buildDrawingPackage } from './drawings.js';
@@ -462,7 +462,6 @@ function selectItem(uid, opts = {}) {
       const fit = lengthFits(it, o);
       return `<div class="ic-label">Length</div><div class="walls">${lc.map((v, i) => { const on = Math.abs(v - cur) < 0.01; const why = v > L + 0.01 ? 'Longer than this wall' : !fit[i] && !on ? 'No open space this long on this wall' : ''; return `<button data-len="${v}" class="${on ? 'on' : ''}" ${why ? `disabled title="${why}"` : ''}>${v}'</button>`; }).join('')}</div>${fit.some((f, i) => !f && lc[i] <= L + 0.01) ? '<div class="ic-meta" style="margin-top:6px">Greyed-out lengths are blocked by a door or window on this wall — try another wall.</div>' : ''}`;
     })()}
-    ${o.kind === 'nest_box' ? `<div class="ic-label">Corner trim</div><div class="walls"><button data-corners="1" class="${it.corner_trim !== false ? 'on' : ''}">White corner boards</button><button data-corners="0" class="${it.corner_trim === false ? 'on' : ''}">None</button></div>` : ''}
     <div class="ic-foot">${pk ? '<span class="ic-meta">Drag it or use the arrows to move it</span>' : `<button class="link-danger" data-act="remove">Remove${removedCredit && showPrices() ? ` (${fmt(removedCredit)})` : ''}</button>`}
       <button class="btn primary sm" data-act="close">Done</button></div>`;
   card.hidden = false;
@@ -546,7 +545,6 @@ $('#itemcard').addEventListener('click', e => {
   else if (b.dataset.elev) setElev(uid, Number(b.dataset.elev));
   else if (b.dataset.elevreset) resetElev(uid);
   else if (b.dataset.len) setLength(uid, Number(b.dataset.len));
-  else if (b.dataset.corners) { const it = state.config.items.find(i => i.uid === uid); if (it) { if (b.dataset.corners === '1') delete it.corner_trim; else it.corner_trim = false; rebuild(); selectItem(uid, { edit: true }); } }
 });
 
 // ---------------------------------------------------------------------------
@@ -630,7 +628,7 @@ function renderColors() {
     }).join('')}</div>`;
   }
   html += groups.map(([k, label]) => {
-    const list = k === 'roof' ? roofColorsFor(state.catalog, state.config.roof_material) : cs.filter(c => c.category === k && c.active !== 0);
+    const list = k === 'roof' ? roofColorsFor(state.catalog, state.config.roof_material) : cs.filter(c => colorFor(c, k) && c.active !== 0);
     if (!list.length) return '';
     const sel = list.find(c => c.id === state.config.colors[k]);
     return `<h3>${label}</h3><p class="chosen">${sel ? `<b>${esc(sel.name)}</b>${sel.price && showPrices() ? ' · +' + fmt(sel.price) : ''}` : ''}</p>

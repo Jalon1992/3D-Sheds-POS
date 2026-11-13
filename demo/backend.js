@@ -200,6 +200,19 @@ on('POST', /^\/api\/admin\/duplicate\/(styles|options|colors)\/(\d+)$/, m => {
   if (m[1] === 'styles') db.sizes.filter(z => z.style_id === src.id).forEach(z => db.sizes.push({ ...z, id: nextId(), style_id: copy.id }));
   save(); return json({ id: copy.id });
 });
+// Combine duplicate paints (same as the server): same name + hex -> one paint used in all those places
+on('POST', /^\/api\/admin\/colors\/combine$/, () => {
+  const cats = ['siding', 'trim', 'door', 'window'], uses = c => (Array.isArray(c.uses) && c.uses.length ? c.uses : [c.category]);
+  const groups = new Map();
+  for (const c of [...db.colors].sort((a, b) => a.id - b.id)) { const u = uses(c); if (!u.every(x => cats.includes(x))) continue; const k = String(c.name).trim().toLowerCase() + '|' + String(c.hex).toLowerCase(); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
+  const remap = new Map(); let paints = 0;
+  for (const g of groups.values()) { if (g.length < 2) continue; paints++; g[0].uses = [...new Set(g.flatMap(uses))].sort((a, b) => cats.indexOf(a) - cats.indexOf(b)); for (const c of g.slice(1)) remap.set(c.id, g[0].id); }
+  db.colors = db.colors.filter(c => !remap.has(c.id));
+  const fix = o => { for (const k of Object.keys(o || {})) if (remap.has(Number(o[k]))) o[k] = remap.get(Number(o[k])); };
+  for (const st of db.styles) fix(st.default_colors);
+  for (const q of db.quotes || []) fix(q.config?.colors);
+  save(); return json({ combined: remap.size, paints });
+});
 on('POST', /^\/api\/v1\/webhooks\/(\d+)\/test$/, () => json({ ok: false, status: 0, response: 'Demo mode: webhooks are not sent. They work on your deployed app.' }));
 on('GET', /^\/api\/admin\/webhook-log$/, () => json(db.log));
 on('GET', /^\/api\/admin\/events$/, () => json(['quote.created', 'quote.updated', 'quote.status_changed', 'test']));
