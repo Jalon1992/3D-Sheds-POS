@@ -1,6 +1,6 @@
 // Customer-facing configurator: Style → Size → Colors → Options → Quote.
 import { ShedScene } from './shed3d.js';
-import { defaultConfig, priceConfig, money, WALLS, colorGroupEnabled, resolveTier, tierCatalog, findDealer, roofChoices, roofColorsFor, roofMaterialPrice, roofingList, optionAvailable, sanitizeConfig, isPackage, placePackage, lengthChoices, windowHeightAdjustable, isWindow } from './shared/pricing.js';
+import { defaultConfig, priceConfig, money, WALLS, colorGroupEnabled, resolveTier, tierCatalog, findDealer, roofChoices, roofColorsFor, roofMaterialPrice, roofingList, optionAvailable, sanitizeConfig, isPackage, placePackage, lengthChoices, windowHeightAdjustable, isWindow, colorFor } from './shared/pricing.js';
 import { shedGeometry, findSpot, canPlace, resolvePlacement, gableMode, inGable } from './shared/geometry.js';
 import { floorPlanSVG } from './shared/floorplan.js';
 import { buildDrawingPackage } from './drawings.js';
@@ -628,7 +628,7 @@ function renderColors() {
     }).join('')}</div>`;
   }
   html += groups.map(([k, label]) => {
-    const list = k === 'roof' ? roofColorsFor(state.catalog, state.config.roof_material) : cs.filter(c => c.category === k && c.active !== 0);
+    const list = k === 'roof' ? roofColorsFor(state.catalog, state.config.roof_material) : cs.filter(c => colorFor(c, k) && c.active !== 0);
     if (!list.length) return '';
     const sel = list.find(c => c.id === state.config.colors[k]);
     return `<h3>${label}</h3><p class="chosen">${sel ? `<b>${esc(sel.name)}</b>${sel.price && showPrices() ? ' · +' + fmt(sel.price) : ''}` : ''}</p>

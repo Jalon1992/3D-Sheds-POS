@@ -1,6 +1,6 @@
 // Admin dashboard (vanilla JS SPA).
 import { ShedScene, BUILTIN_KINDS } from '../js/shed3d.js';
-import { defaultConfig, money, WALLS, DEFAULT_ROOFING, MAX_TIERS, roofingList } from '../js/shared/pricing.js';
+import { defaultConfig, money, WALLS, DEFAULT_ROOFING, MAX_TIERS, roofingList, colorUses, colorFor } from '../js/shared/pricing.js';
 import { shedGeometry, roofSections, skidLayout } from '../js/shared/geometry.js';
 import { buildDrawingPackage } from '../js/drawings.js';
 import { crmContacts, crmConversations, crmPipeline, crmTasks, ordersBoard, messagingPage } from './crm.js';
@@ -474,7 +474,7 @@ function styleEditor(style) {
   // chosen option and shows the first one in the list instead (what was saved was right; what was shown wasn't)
   const stdVal = (k, el) => (k === 'gable' ? el.checked : k === 'option_id' ? Number(el.value) : ['offset', 'w', 'h'].includes(k) ? (el.value === '' ? undefined : Number(el.value)) : el.value);
   const optSel = (v, i) => `<select data-std="${i}" data-k="option_id">${catalog.options.filter(o => o.placement !== 'none' || (Array.isArray(o.package_items) && o.package_items.length)).map(o => `<option value="${o.id}" ${o.id === Number(v) ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
-  const colorSel = cat => `<label class="fld"><span>Default ${cat} color</span><select name="dc_${cat}"><option value="">First in list</option>${catalog.colors.filter(c => c.category === cat).map(c => `<option value="${c.id}" ${c.id === s.default_colors?.[cat] ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
+  const colorSel = cat => `<label class="fld"><span>Default ${cat} color</span><select name="dc_${cat}"><option value="">First in list</option>${catalog.colors.filter(c => colorFor(c, cat)).map(c => `<option value="${c.id}" ${c.id === s.default_colors?.[cat] ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
   const isBarn = () => (document.querySelector('#sf [name=roof_type]')?.value || s.roof_type) === 'barn';
   const styleVal = k => document.querySelector(`#sf [name=${k}]`)?.value || s[k] || '';
   const sizesHTML = () => `<table class="mini"><tr><th>Width (ft)</th><th>Depth (ft)</th><th>Base price</th>${isBarn() ? '<th title="Gambrel hip (lower section) length for this size">Hip len (ft)</th><th title="Gambrel upper section length for this size">Upper len (ft)</th>' : ''}<th title="Skid lumber for this size (blank = the style setting)">Skid size</th><th title="How many skids for this size (blank = the style setting)">Skids</th><th title="Skid spacing for this size, inches centre to centre (blank = the style setting)">Spacing (in)</th><th>Active</th><th></th><th></th></tr>
@@ -584,10 +584,10 @@ function styleEditor(style) {
 // ---------------------------------------------------------------------------
 const COLOR_FIELDS = [
   { key: 'name', label: 'Color name', required: true },
-  { key: 'category', label: 'Used for', type: 'select', options: [['siding', 'Siding'], ['trim', 'Trim'], ['roof', 'Roof'], ['door', 'Doors'], ['window', 'Windows']] },
+  { key: 'uses', label: 'Used for', type: 'multi', options: [['siding', 'Siding'], ['trim', 'Trim'], ['door', 'Doors'], ['window', 'Windows'], ['roof', 'Roof']], help: 'Enter a paint once and tick everywhere it\'s offered. It shows up in each of those color lists for customers.' },
   { key: 'hex', label: 'Color', type: 'color' },
   { key: 'material', label: 'Roof colors: offered for', type: 'select', options: () => [['', 'All roofing types'], ...roofing().map(r => [r.key, r.name + ' only'])], help: 'Only used for roof colors.' },
-  { key: 'price', label: 'Upcharge ($)', type: 'number', step: '1', help: '0 = no extra charge' },
+  { key: 'price', label: 'Upcharge ($)', type: 'number', step: '1', help: '0 = no extra charge. Charged each place it\'s picked (e.g. siding and trim = twice).' },
   { key: 'sort', label: 'Sort order', type: 'number' },
   { key: 'active', label: 'Available to customers', type: 'checkbox', default: 1 },
 ];
@@ -598,7 +598,7 @@ async function colors() {
   const cg = settings.color_groups || {};
   const R = roofing();
   const unitTxt = { per_roof_sqft: '/ sq ft of roof', per_sqft: '/ sq ft of floor', each: 'flat' };
-  $('#main').innerHTML = head('Roofing & colors', 'Tip: name a door or window color “Match Trim” and it automatically follows the trim color. Window colors set the window frame and grids; the trim around windows always matches the trim color. Untick “Customers can choose” to hide a color group from customers.', `<button class="btn primary" id="addColor">+ New color</button>`) + `
+  $('#main').innerHTML = head('Roofing & colors', 'Tip: name a door or window color “Match Trim” and it automatically follows the trim color. Window colors set the window frame and grids; the trim around windows always matches the trim color. Untick “Customers can choose” to hide a color group from customers.', (() => { const k = c => String(c.name).trim().toLowerCase() + '|' + String(c.hex).toLowerCase(); const paint = catalog.colors.filter(c => !colorUses(c).includes('roof')); const n = paint.length - new Set(paint.map(k)).size; return n ? `<button class="btn ghost" id="combineColors" title="Paints with the same name and color code become one paint used in all those places">Combine ${n} duplicate paint${n > 1 ? 's' : ''}</button> ` : ''; })() + `<button class="btn primary" id="addColor">+ New color</button>`) + `
     <div class="card" style="margin-bottom:16px"><div class="card-pad" style="padding-bottom:4px"><h2>Roofing materials</h2><p class="muted" style="margin:0">Customers pick these on the “Roof &amp; Colors” step. Each style's <b>standard roofing</b> is included; others charge the difference. Which ones each style offers is set in Styles &amp; sizes.</p></div>
     <table class="tbl"><tr><th>Key</th><th>Name shown to customers</th><th>Description</th><th class="num">Price</th><th>Priced</th><th>Active</th></tr>
     ${R.map((r, i) => `<tr><td class="mono">${esc(r.key)}</td><td><input class="in" data-rf="${i}" data-k="name" value="${esc(r.name)}"></td><td><input class="in" data-rf="${i}" data-k="description" value="${esc(r.description || '')}"></td>
@@ -608,7 +608,7 @@ async function colors() {
     <div class="card-pad" style="padding-top:10px"><button class="btn primary sm" id="saveRoofing">Save roofing</button></div></div>` +
     groups.map(([k, l]) => `<div class="card" style="margin-bottom:16px"><div class="card-pad row" style="padding-bottom:4px;justify-content:space-between"><h2>${l}</h2>
       <label class="chk" title="When off, customers can't change this color and the style's default is used${k === 'door' || k === 'window' ? ' (Match Trim follows the trim color)' : ''}"><input type="checkbox" data-cg="${k}" ${cg[k] !== false ? 'checked' : ''}>Customers can choose</label></div><table class="tbl"><tr><th style="width:50px"></th><th>Name</th><th>Hex</th>${k === 'roof' ? '<th>Roofing</th>' : ''}<th class="num">Upcharge</th><th>Status</th><th></th></tr>
-      ${catalog.colors.filter(c => c.category === k).map(c => `<tr><td><span class="sw" style="background:${esc(c.hex)}"></span></td><td><b>${esc(c.name)}</b></td>${k === 'roof' ? `<td>${esc(R.find(r => r.key === c.material)?.name || 'All')}</td>` : ''}<td class="mono">${esc(c.hex)}</td><td class="num">${c.price ? fmt(c.price) : '—'}</td><td><span class="pill ${c.active ? 'on' : 'off'}">${c.active ? 'Active' : 'Hidden'}</span></td>
+      ${catalog.colors.filter(c => colorFor(c, k)).map(c => `<tr><td><span class="sw" style="background:${esc(c.hex)}"></span></td><td><b>${esc(c.name)}</b>${colorUses(c).length > 1 ? `<div class="muted" style="font-size:12px">Also ${esc(colorUses(c).filter(x => x !== k).map(x => ({ siding: 'siding', trim: 'trim', door: 'doors', window: 'windows', roof: 'roof' })[x]).join(', '))}</div>` : ''}</td>${k === 'roof' ? `<td>${esc(R.find(r => r.key === c.material)?.name || 'All')}</td>` : ''}<td class="mono">${esc(c.hex)}</td><td class="num">${c.price ? fmt(c.price) : '—'}</td><td><span class="pill ${c.active ? 'on' : 'off'}">${c.active ? 'Active' : 'Hidden'}</span></td>
       <td class="num"><button class="icon-btn" data-edit="${c.id}">${PENCIL}</button> <button class="icon-btn" data-del="${c.id}">${TRASH}</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">None yet</td></tr>'}</table></div>`).join('');
   $$('[data-cg]').forEach(el => el.onchange = guard(async () => {
     const next = { ...(settings.color_groups || {}), [el.dataset.cg]: el.checked };
@@ -620,11 +620,16 @@ async function colors() {
     $$('[data-rf]').forEach(el => { const r = out[el.dataset.rf]; const k = el.dataset.k; r[k] = el.type === 'checkbox' ? el.checked : (k === 'price' ? Number(el.value) || 0 : el.value); });
     await api('PUT', '/api/admin/settings', { roofing: out }); toast('Roofing saved'); colors();
   });
-  $('#addColor').onclick = () => simpleEditor('Color', '/api/v1/colors', COLOR_FIELDS, null, colors, { hex: '#888888', category: 'siding', price: 0, active: 1 });
+  const cb = $('#combineColors');
+  if (cb) cb.onclick = guard(async () => {
+    if (!confirmBox('Combine paints that have the same name and color code into one? Each combined paint stays offered everywhere it was, and existing quotes keep their colors.')) return;
+    const r = await api('POST', '/api/admin/colors/combine'); toast(`Combined ${r.combined} duplicate${r.combined === 1 ? '' : 's'} into ${r.paints} paint${r.paints === 1 ? '' : 's'}`); await loadCatalog(); colors();
+  });
+  $('#addColor').onclick = () => simpleEditor('Color', '/api/v1/colors', COLOR_FIELDS, null, colors, { hex: '#888888', uses: ['siding', 'trim', 'door'], price: 0, active: 1 });
   $('#main').onclick = guard(async e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.edit) simpleEditor('Color', '/api/v1/colors', COLOR_FIELDS, catalog.colors.find(c => c.id === Number(b.dataset.edit)), colors);
-    if (b.dataset.del && confirmBox('Delete this color?')) { await api('DELETE', `/api/v1/colors/${b.dataset.del}`); colors(); }
+    if (b.dataset.edit) { const c = catalog.colors.find(c => c.id === Number(b.dataset.edit)); simpleEditor('Color', '/api/v1/colors', COLOR_FIELDS, c && { ...c, uses: colorUses(c) }, colors); }
+    if (b.dataset.del && confirmBox(colorUses(catalog.colors.find(c => c.id === Number(b.dataset.del))).length > 1 ? 'Delete this color? It\'s removed from every list it\'s used in.' : 'Delete this color?')) { await api('DELETE', `/api/v1/colors/${b.dataset.del}`); colors(); }
   });
 }
 function simpleEditor(noun, base, fields, row, done, defaults = {}) {
@@ -1252,7 +1257,7 @@ function priceRows() {
   const rows = [];
   for (const s of catalog.styles) for (const z of s.sizes) rows.push({ key: 'size:' + z.id, type: 'Size', name: `${s.name} ${z.width}' x ${z.depth}'`, unit: 'each', base: z.price });
   for (const o of catalog.options) rows.push({ key: 'option:' + o.id, type: 'Option', name: o.name, unit: o.price_unit || 'each', base: o.price });
-  for (const c of catalog.colors) if (Number(c.price)) rows.push({ key: 'color:' + c.id, type: 'Color', name: `${c.category}: ${c.name}`, unit: 'each', base: c.price });
+  for (const c of catalog.colors) if (Number(c.price)) rows.push({ key: 'color:' + c.id, type: 'Color', name: `${colorUses(c).join(' / ')}: ${c.name}`, unit: 'each', base: c.price });
   for (const r of roofingList({ settings })) rows.push({ key: 'roofing:' + r.key, type: 'Roofing', name: r.name, unit: r.price_unit, base: r.price });
   return rows;
 }
