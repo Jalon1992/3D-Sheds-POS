@@ -356,7 +356,6 @@ export function sanitizeConfig(catalog, raw) {
       ...(i.gable && optById[Number(i.option_id)]?.gable_mode === 'allow' ? { gable: true } : {}),
       ...(i.package_of ? { package_of: String(i.package_of).slice(0, 60) } : {}),
       ...(finite(i.elev) ? { elev: clampNum(i.elev, 0, 30) } : {}),
-      ...(i.corner_trim === false && optById[Number(i.option_id)]?.kind === 'nest_box' ? { corner_trim: false } : {}),   // nest box without the white corner boards
     }));
   for (const it of items) {
     const o = optById[it.option_id];
