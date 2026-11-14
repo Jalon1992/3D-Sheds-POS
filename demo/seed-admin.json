@@ -1061,6 +1061,19 @@
     "price": 0,
     "active": 1,
     "sort": 29
+   },
+   {
+    "id": 35,
+    "name": "Match Siding",
+    "hex": "#c2b49a",
+    "category": "door",
+    "material": null,
+    "price": 0,
+    "active": 1,
+    "sort": 30,
+    "uses": [
+     "door"
+    ]
    }
   ],
   "options": [
