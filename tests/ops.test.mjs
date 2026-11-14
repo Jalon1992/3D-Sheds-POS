@@ -255,3 +255,18 @@ test('catalog upgrade: an older install gets the four garage doors once, and kee
     } finally { await s.stop(); }
   }
 });
+
+test('catalog upgrade: an older install gets the "Match Siding" door color once', async () => {
+  const dir = newDir(); let s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready(); await s.stop();
+  const db = new DatabaseSync(join(dir, 'data', 'shedbuilder.db'));
+  db.exec("DELETE FROM colors WHERE lower(name) = 'match siding'; DELETE FROM settings WHERE key = 'migr_match_siding'");
+  db.close();
+  for (let round = 0; round < 2; round++) {
+    s = boot(dir, { BACKUP_DISABLED: '1' }); await s.ready();
+    try {
+      const cat = await (await fetch(s.B + '/api/v1/catalog')).json();
+      const ms = cat.colors.filter(c => c.name === 'Match Siding');
+      assert.equal(ms.length, 1, 'added once'); assert.deepEqual(ms[0].uses, ['door']);
+    } finally { await s.stop(); }
+  }
+});

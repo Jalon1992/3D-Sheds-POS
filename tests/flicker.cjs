@@ -29,7 +29,12 @@ const dir = mkdtempSync(join(tmpdir(), 'flicker-'));
     const views = [];
     for (let a = 0; a < 6; a++) views.push({ a: a * Math.PI / 3 + 0.3, el: 0.25, r: 1 });
     for (let a = 0; a < 4; a++) views.push({ a: a * Math.PI / 2 + Math.PI / 4, el: 0.12, r: 0.55, corner: true });
+    // close-ups of the front door (where people zoom in): straight on and from either side, near and middle distance
+    for (const R of [7, 13]) for (const a of [-0.6, 0, 0.6]) views.push({ door: true, a, R });
+    if (process.env.FLICKER_VIEWS === 'door') views.splice(0, 10);
     for (const st of cat.styles.filter(s => !process.env.FLICKER_STYLE || s.name === process.env.FLICKER_STYLE)) {
+      // FLICKER_TRIM_FRAME=1: every door drawn with its frame boards in the trim color
+      if (process.env.FLICKER_TRIM_FRAME) await page.evaluate(() => window.__shed.state.catalog.options.forEach(o => { if (String(o.kind).startsWith('door')) o.trim_frame = 1; }));
       await page.evaluate(id => document.querySelector(`[data-style="${id}"]`).click(), st.id); await page.waitForTimeout(1200);
       let worst = { n: 0 };
       for (const [vi, v] of views.entries()) {
@@ -37,6 +42,12 @@ const dir = mkdtempSync(join(tmpdir(), 'flicker-'));
         for (let k = 0; k < 4; k++) {
           await page.evaluate(({ v, k }) => {
             const s = window.__shed.scene, g = s.geo, R = Math.max(g.W, g.D) * 1.9 * v.r + 6, ty = (g.floorY || 0.75) + g.H * 0.5;
+            if (v.door) {   // front wall faces +z
+              const fy = (g.floorY || 0.75) + 3.4;
+              s.controls.target.set(0, fy, g.D / 2);
+              s.camera.position.set(Math.sin(v.a) * v.R + k * 0.011, fy + 0.6 + k * 0.007, g.D / 2 + Math.cos(v.a) * v.R - k * 0.009);
+              s.controls.update(); return;
+            }
             const cx = v.corner ? Math.sign(Math.cos(v.a)) * g.W / 2 : 0, cz = v.corner ? Math.sign(Math.sin(v.a)) * g.D / 2 : 0, y = v.corner ? 1.2 : ty;
             s.controls.target.set(cx * 0.9, y, cz * 0.9);
             s.camera.position.set(cx + Math.cos(v.a) * R + k * 0.011, y + Math.sin(v.el) * R + k * 0.007, cz + Math.sin(v.a) * R - k * 0.009);
@@ -59,7 +70,8 @@ const dir = mkdtempSync(join(tmpdir(), 'flicker-'));
         }
         // in the scene: two front-facing surfaces within 1/8" of each other under the pixel = z-fighting
         const n = await page.evaluate(async pts => {
-          const THREE = await import('three'); const s = window.__shed.scene, el = s.renderer.domElement, rc = new THREE.Raycaster(); let n = 0;
+          const THREE = await import('three'); const s = window.__shed.scene, el = s.renderer.domElement, rc = new THREE.Raycaster(); let n = 0; const what = {};
+          const label = h => { const m = Array.isArray(h.object.material) ? h.object.material[h.face.materialIndex] : h.object.material; const nm = Object.entries(s.M || {}).find(([, v]) => v === m)?.[0] || m.type; const p = h.object.geometry.parameters || {}; return nm + ' ' + h.object.geometry.type.replace('Geometry', '') + (p.width ? `(${[p.width, p.height, p.depth].map(v => +(+v).toFixed(3)).join('x')})` : ''); };
           const nm = new THREE.Vector3();
           for (const [x, y] of pts.slice(0, 600)) {
             rc.setFromCamera(new THREE.Vector2((x + 0.5) / el.width * 2 - 1, -((y + 0.5) / el.height) * 2 + 1), s.camera);
@@ -73,16 +85,17 @@ const dir = mkdtempSync(join(tmpdir(), 'flicker-'));
             nm.copy(front[0].face.normal).transformDirection(front[0].object.matrixWorld);
             const n2 = front[1].face.normal.clone().transformDirection(front[1].object.matrixWorld);
             const gap = (front[1].distance - front[0].distance) * Math.abs(nm.dot(rc.ray.direction));
-            if (gap < 0.0104 && Math.abs(nm.dot(n2)) > 0.9) n++;   // parallel surfaces within 1/8" (not two faces meeting at an edge)
+            if (gap < 0.0104 && Math.abs(nm.dot(n2)) > 0.9) { n++; const k = label(front[0]) + '  vs  ' + label(front[1]) + `  (${(gap * 12).toFixed(3)}" apart)`; what[k] = (what[k] || 0) + 1; }   // parallel surfaces within 1/8"
           }
-          return n;
+          return { n, what };
         }, suspects);
-        if (n > worst.n) worst = { n, vi, corner: !!v.corner };
-        if (n > LIMIT) writeFileSync(join(dir, `${st.name.replace(/\W+/g, '-')}-view${vi}.png`), await page.locator('#viewport').screenshot());
+        const { n: zn, what } = n; if (zn > worst.n) worst = { n: zn, vi, corner: !!v.corner, door: !!v.door, what };
+        if (zn > LIMIT) writeFileSync(join(dir, `${st.name.replace(/\W+/g, '-')}-view${vi}.png`), await page.locator('#viewport').screenshot());
       }
       const ok = worst.n <= LIMIT;
       if (!ok) failed++;
-      console.log(`${ok ? '✔' : '✘'} ${st.name}: worst view ${worst.n} flickering pixels${worst.n ? ` (view ${worst.vi}${worst.corner ? ', corner' : ''})` : ''}`);
+      console.log(`${ok ? '✔' : '✘'} ${st.name}: worst view ${worst.n} flickering pixels${worst.n ? ` (view ${worst.vi}${worst.corner ? ', corner' : worst.door ? ', door close-up' : ''})` : ''}`);
+      if (!ok) for (const [k, c] of Object.entries(worst.what).sort((a, b) => b[1] - a[1]).slice(0, 5)) console.log(`    ${c} px: ${k}`);
     }
     if (errs.length) { failed++; console.log('✘ page errors: ' + errs.slice(0, 3).join(' | ')); }
     await browser.close();

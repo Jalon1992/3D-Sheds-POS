@@ -628,11 +628,13 @@ function renderColors() {
     }).join('')}</div>`;
   }
   html += groups.map(([k, label]) => {
+    // "Match Trim" / "Match Siding" swatches show the color they follow right now
+    const swatchHex = c => { const m = /match\s*(trim|siding)/i.exec(c.name || ''); return (m && cs.find(x => x.id === state.config.colors[m[1].toLowerCase()])?.hex) || c.hex; };
     const list = k === 'roof' ? roofColorsFor(state.catalog, state.config.roof_material) : cs.filter(c => colorFor(c, k) && c.active !== 0);
     if (!list.length) return '';
     const sel = list.find(c => c.id === state.config.colors[k]);
     return `<h3>${label}</h3><p class="chosen">${sel ? `<b>${esc(sel.name)}</b>${sel.price && showPrices() ? ' · +' + fmt(sel.price) : ''}` : ''}</p>
-    <div class="swatches">${list.map(c => `<button class="sw ${c.id === state.config.colors[k] ? 'on' : ''}" data-color="${k}:${c.id}" title="${esc(c.name)}"><i style="background:${esc(c.hex)}"></i>${esc(c.name)}${c.price && showPrices() ? `<em>+${fmt(c.price)}</em>` : ''}</button>`).join('')}</div>`;
+    <div class="swatches">${list.map(c => `<button class="sw ${c.id === state.config.colors[k] ? 'on' : ''}" data-color="${k}:${c.id}" title="${esc(c.name)}"><i style="background:${esc(swatchHex(c))}"></i>${esc(c.name)}${c.price && showPrices() ? `<em>+${fmt(c.price)}</em>` : ''}</button>`).join('')}</div>`;
   }).join('');
   return html;
 }
