@@ -294,13 +294,14 @@ function carriageLeaf(g, w, h, M, x, zf, hingeSide, { window: hasWin = true } = 
   const topR = 0.34, winH = hasWin ? Math.min(0.95, h * 0.16) : 0, underWin = hasWin ? 0.3 : 0, midR = 0.36, botR = 0.42;
   const yWinTop = h - topR, yWinBot = yWinTop - winH, yMid = h * 0.44;
   // stiles & rails (raised boards)
-  box(s, h, F, M.door, x - w / 2 + s / 2, h / 2, zb, g);
-  box(s, h, F, M.door, x + w / 2 - s / 2, h / 2, zb, g);
+  const FR = M.doorFrame || M.door;
+  box(s, h, F, FR, x - w / 2 + s / 2, h / 2, zb, g);
+  box(s, h, F, FR, x + w / 2 - s / 2, h / 2, zb, g);
   const iw = w - 2 * s;
-  box(iw, topR, F, M.door, x, h - topR / 2, zb, g);
-  if (hasWin) box(iw, underWin, F, M.door, x, yWinBot - underWin / 2, zb, g);
-  box(iw, midR, F, M.door, x, yMid, zb, g);
-  box(iw, botR, F, M.door, x, botR / 2, zb, g);
+  box(iw, topR, F, FR, x, h - topR / 2, zb, g);
+  if (hasWin) box(iw, underWin, F, FR, x, yWinBot - underWin / 2, zb, g);
+  box(iw, midR, F, FR, x, yMid, zb, g);
+  box(iw, botR, F, FR, x, botR / 2, zb, g);
   // vertical board grooves in the two panels
   const panels = [[botR, yMid - midR / 2], [yMid + midR / 2, yWinBot - underWin]];
   const boards = Math.max(3, Math.round(iw / 0.33));
@@ -366,25 +367,30 @@ function panelDoorLeaf(g, w, h, M, x, z) {
   const pw = w - 0.5;
   box(pw, h * 0.38, 0.04, M.door, x, h * 0.72, z + 0.07, g);
   box(pw, h * 0.38, 0.04, M.door, x, h * 0.27, z + 0.07, g);
+  if (M.doorFrame && M.doorFrame !== M.door) {   // trim-colored stiles and rails around the panels
+    const s = 0.25, zf = z + 0.085, F = 0.03;   // face just proud of the raised panels
+    box(s, h, F, M.doorFrame, x - w / 2 + s / 2, h / 2, zf, g); box(s, h, F, M.doorFrame, x + w / 2 - s / 2, h / 2, zf, g);
+    for (const [y, rh] of [[h - (h * 0.09) / 2 - 0.0, h * 0.09], [h * 0.495, h * 0.07], [(h * 0.08) / 2, h * 0.08]]) box(w - 2 * s, rh, F, M.doorFrame, x, y, zf, g);
+  }
 }
 function glassLeaf(g, w, h, M, x, z, lites = [3, 3], glassFrac = 1) {
   const st = 0.28;
   const gh = (h - st * 2) * glassFrac;
   // stiles & rails
-  box(st, h, 0.14, M.door, x - w / 2 + st / 2, h / 2, z, g);
-  box(st, h, 0.14, M.door, x + w / 2 - st / 2, h / 2, z, g);
-  box(w, st, 0.14, M.door, x, h - st / 2, z, g);
+  box(st, h, 0.14, (M.doorFrame || M.door), x - w / 2 + st / 2, h / 2, z, g);
+  box(st, h, 0.14, (M.doorFrame || M.door), x + w / 2 - st / 2, h / 2, z, g);
+  box(w - st * 2, st, 0.14, (M.doorFrame || M.door), x, h - st / 2, z, g);   // rails fit between the stiles (overlapping faces flicker)
   const glassBottom = h - st - gh;
-  box(w, glassBottom > st ? glassBottom : st, 0.14, M.door, x, (glassBottom > st ? glassBottom : st) / 2, z, g);
+  box(w - st * 2, glassBottom > st ? glassBottom : st, 0.14, (M.doorFrame || M.door), x, (glassBottom > st ? glassBottom : st) / 2, z, g);
   if (glassBottom > st + 0.4) { box(w - 0.7, glassBottom - 0.8, 0.04, M.door, x, glassBottom / 2, z + 0.08, g); }
   box(w - st * 2, gh, 0.03, M.glass, x, glassBottom + gh / 2, z, g);
   const [cols, rows] = lites;
-  for (let i = 1; i < cols; i++) box(0.05, gh, 0.16, M.door, x - w / 2 + st + (w - 2 * st) * i / cols, glassBottom + gh / 2, z, g);
-  for (let i = 1; i < rows; i++) box(w - st * 2, 0.05, 0.16, M.door, x, glassBottom + gh * i / rows, z, g);
+  for (let i = 1; i < cols; i++) box(0.05, gh, 0.16, (M.doorFrame || M.door), x - w / 2 + st + (w - 2 * st) * i / cols, glassBottom + gh / 2, z, g);
+  for (let i = 1; i < rows; i++) box(w - st * 2, 0.05, 0.16, (M.doorFrame || M.door), x, glassBottom + gh * i / rows, z, g);
 }
 function handle(g, x, y, z, M) {
   const k = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), M.steel); k.position.set(x, y, z); g.add(k);
-  box(0.1, 0.3, 0.04, M.steel, x, y, z - 0.05, g);
+  box(0.1, 0.3, 0.04, M.steel, x, y, z - 0.035, g);   // backplate sits just proud of the door face (flush = flicker)
 }
 function windowUnit(g, w, h, M, opts = {}) {
   // Exterior casing, sill and interior casing use the TRIM color (matches the rest of the trim);
@@ -434,6 +440,9 @@ export function parseGrid(v) {
 const sashGrids = o => { const t = parseGrid(o?.grid_top), b = parseGrid(o?.grid_bottom); return t || b ? { top: t || [1, 1], bottom: b || [1, 1] } : {}; };
 function buildKind(kind, w, h, d, M, ctx = {}) {
   const g = new THREE.Group();
+  // "Door trim in the trim color" (admin, per door option): stiles, rails, braces and astragal take the building's
+  // trim color; the door body and panels keep the door color
+  if (kind.startsWith('door')) M = { ...M, doorFrame: Number(ctx.opt?.trim_frame) ? M.trim : M.door };
   const zOut = T / 2;
   switch (kind) {
     case 'door_single': {
@@ -467,7 +476,7 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       const lw = w / 2 - 0.025;
       carriageLeaf(g, lw, h - 0.02, M, -w / 4, zOut - 0.06, -1);
       carriageLeaf(g, lw, h - 0.02, M, w / 4, zOut - 0.06, 1);
-      box(0.07, h - 0.06, 0.03, M.door, -0.035, h / 2, zOut + 0.02, g);          // astragal on the left (inactive) door over the meeting edge
+      box(0.07, h - 0.06, 0.03, M.doorFrame, -0.035, h / 2, zOut + 0.02, g);          // astragal on the left (inactive) door over the meeting edge
       // knob on the RIGHT door, on its stile next to the meeting edge
       const kx = 0.2;
       const k = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), M.metal); k.position.set(kx, h * 0.47, zOut + 0.1); g.add(k);
@@ -479,7 +488,7 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       const lw = w / 2 - 0.025;
       carriageLeaf(g, lw, h - 0.02, M, -w / 4, zOut - 0.06, -1, { window: false });
       carriageLeaf(g, lw, h - 0.02, M, w / 4, zOut - 0.06, 1, { window: false });
-      box(0.07, h - 0.06, 0.03, M.door, -0.035, h / 2, zOut + 0.02, g);
+      box(0.07, h - 0.06, 0.03, M.doorFrame, -0.035, h / 2, zOut + 0.02, g);
       const k = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), M.metal); k.position.set(0.2, h * 0.47, zOut + 0.1); g.add(k);
       box(0.12, 0.22, 0.03, M.metal, 0.2, h * 0.47, zOut + 0.04, g);
       break;
@@ -500,22 +509,24 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       for (const sx of [-1, 1]) {
         const x = sx * (w / 4);
         box(lw, h - 0.04, 0.1, M.door, x, h / 2, zf, g);
-        const b = 0.32, z2 = zf + 0.07;
-        box(lw, b, 0.05, M.trim, x, h - b / 2 - 0.02, z2, g);
-        box(lw, b, 0.05, M.trim, x, b / 2, z2, g);
-        box(lw, b * 0.8, 0.05, M.trim, x, h / 2, z2, g);
-        box(b, h - 0.04, 0.05, M.trim, x - lw / 2 + b / 2, h / 2, z2, g);
-        box(b, h - 0.04, 0.05, M.trim, x + lw / 2 - b / 2, h / 2, z2, g);
+        // frame boards stand clearly proud of the X-braces, and the two braces are offset from each other:
+        // faces closer than ~1/8" flicker against each other as the camera moves
+        const b = 0.32, z2 = zf + 0.07, FB = M.trim;
+        box(lw, b, 0.07, FB, x, h - b / 2 - 0.02, z2 + 0.01, g);
+        box(lw, b, 0.07, FB, x, b / 2, z2 + 0.01, g);
+        box(lw, b * 0.8, 0.07, FB, x, h / 2, z2 + 0.01, g);
+        box(b, h - 0.04, 0.07, FB, x - lw / 2 + b / 2, h / 2, z2 + 0.01, g);
+        box(b, h - 0.04, 0.07, FB, x + lw / 2 - b / 2, h / 2, z2 + 0.01, g);
         for (const [y0, y1] of [[b, h / 2 - b * 0.4], [h / 2 + b * 0.4, h - b]]) {
           const iw = lw - 2 * b, ih = y1 - y0;
           const len = Math.hypot(iw, ih), ang = Math.atan2(ih, iw);
-          const m1 = box(len, b * 0.75, 0.04, M.trim, x, (y0 + y1) / 2, z2, g); m1.rotation.z = ang;
-          const m2 = box(len, b * 0.75, 0.04, M.trim, x, (y0 + y1) / 2, z2 + 0.005, g); m2.rotation.z = -ang;
+          const m1 = box(len, b * 0.75, 0.04, M.trim, x, (y0 + y1) / 2, z2 - 0.005, g); m1.rotation.z = ang;
+          const m2 = box(len, b * 0.75, 0.04, M.trim, x, (y0 + y1) / 2, z2 + 0.015, g); m2.rotation.z = -ang;
         }
       }
       // hinges + handle
-      for (const sx of [-1, 1]) for (const y of [h * 0.2, h * 0.8]) box(0.5, 0.08, 0.03, M.metal, sx * (w / 2 - 0.3), y, zOut + 0.04, g);
-      box(0.06, 0.7, 0.05, M.metal, -0.12, h / 2, zOut + 0.06, g); box(0.06, 0.7, 0.05, M.metal, 0.12, h / 2, zOut + 0.06, g);
+      for (const sx of [-1, 1]) for (const y of [h * 0.2, h * 0.8]) box(0.5, 0.08, 0.03, M.metal, sx * (w / 2 - 0.3), y, zOut + 0.072, g);   // on the frame boards' face
+      box(0.06, 0.7, 0.05, M.metal, -0.12, h / 2, zOut + 0.085, g); box(0.06, 0.7, 0.05, M.metal, 0.12, h / 2, zOut + 0.085, g);
       casing(g, w, h, M, zOut);
       break;
     }
@@ -1060,10 +1071,12 @@ export class ShedScene {
     const style = catalog.styles.find(s => s.id === config.style_id);
     const size = style?.sizes.find(s => s.id === config.size_id);
     if (!style || !size) return;
-    const colorById = Object.fromEntries(catalog.colors.map(c => [c.id, /match\s*trim/i.test(c.name) ? null : c.hex]));
+    // "Match Trim" / "Match Siding" door and window colors follow the building's trim / siding color
+    const colorById = Object.fromEntries(catalog.colors.map(c => [c.id, /match\s*(trim|siding)/i.test(c.name) ? null : c.hex]));
+    const follows = k => (/match\s*siding/i.test(catalog.colors.find(c => c.id === config.colors?.[k])?.name || '') ? 'siding' : 'trim');
     const colors = {}; for (const k of ['siding', 'trim', 'roof', 'door', 'window']) colors[k] = colorById[config.colors?.[k]];
-    if (!colors.door) colors.door = colors.trim;
-    if (!colors.window) colors.window = colors.trim;
+    if (!colors.door) colors.door = colors[follows('door')];
+    if (!colors.window) colors.window = colors[follows('window')];
     const optById = Object.fromEntries(catalog.options.map(o => [o.id, o]));
     const firstBuild = !this.geo;
     const prevDims = this.geo && [this.geo.W, this.geo.D, this.geo.H, this.geo.peak].join();

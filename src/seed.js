@@ -68,7 +68,7 @@ export function seed() {
     ['roof', 'Ocean Blue', '#2c4a63', 0, 'metal'], ['roof', 'Polar White', '#eceeea', 0, 'metal'],
     ['window', 'White', '#f6f6f2'], ['window', 'Match Trim', '#f4f4ef'], ['window', 'Black', '#1e1f20'],
     ['window', 'Bronze', '#4a3b2c'], ['window', 'Almond', '#d9cdb4'],
-    ['door', 'Match Trim', '#f4f4ef'], ['door', 'Black', '#1e1f20'], ['door', 'Barn Red', '#8c2d22'], ['door', 'Natural Wood', '#9a6a40', 95],
+    ['door', 'Match Trim', '#f4f4ef'], ['door', 'Match Siding', '#c2b49a'], ['door', 'Black', '#1e1f20'], ['door', 'Barn Red', '#8c2d22'], ['door', 'Natural Wood', '#9a6a40', 95],
   ];
   colors.forEach(([category, name, hex, price, material], i) => { C[name + ':' + category] = ins('colors', { category, name, hex, price: price || 0, material: material || null, sort: i }); });
 
@@ -157,7 +157,7 @@ export function seed() {
 
   addChickenCoop();
   addGarageDoors();
-  setSettings({ migr_catalog_v3: true, migr_shelf_floor: true, migr_coop: true, migr_coop2: true, migr_garage: true });
+  setSettings({ migr_catalog_v3: true, migr_shelf_floor: true, migr_coop: true, migr_coop2: true, migr_garage: true, migr_match_siding: true });
   console.log('  Seeded sample catalog (styles, sizes, colors, options).');
 }
 
@@ -237,6 +237,14 @@ export const NEW_OPTIONS = [
 ];
 export function upgradeCatalog() {
   if (!getSettings().migr_coop) { addChickenCoop(); setSettings({ migr_coop: true, migr_coop2: true }); console.log('  Catalog updated: added the Chicken Coop style and coop parts.'); }
+  if (!getSettings().migr_match_siding) {   // door color that follows the siding (the door in the shed color)
+    if (!get("SELECT id FROM colors WHERE lower(name) = 'match siding'")) {
+      const after = get("SELECT sort FROM colors WHERE category = 'door' AND lower(name) = 'match trim'")?.sort;
+      run("INSERT INTO colors (category, name, hex, price, sort, active, uses) VALUES ('door', 'Match Siding', '#c2b49a', 0, ?, 1, '[\"door\"]')", after ?? 0);
+      console.log('  Catalog updated: added the "Match Siding" door color (door in the shed color).');
+    }
+    setSettings({ migr_match_siding: true });
+  }
   if (!getSettings().migr_garage) { addGarageDoors(); setSettings({ migr_garage: true }); console.log('  Catalog updated: added garage doors (standard and carriage house, insulated and uninsulated).'); }
   if (!getSettings().migr_coop2) {
     // coop windows are 14" x 21" and the nest box is 6' long, as built; only where the first version is still unchanged

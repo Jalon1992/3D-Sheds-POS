@@ -876,3 +876,19 @@ test('combine duplicate paints: one paint, offered everywhere it was, quotes and
   assert.equal(cat.styles.find(s => s.id === st.id).default_colors.trim, a.id, 'style default repointed');
   const again = (await admin.post('/api/admin/colors/combine', {})).data; assert.equal(again.combined, 0, 'nothing left to combine');
 });
+
+test('doors: "Door trim in the trim color" saves per option; "Match Siding" door color exists', async () => {
+  const cat = (await admin.get('/api/v1/catalog')).data;
+  const door = cat.options.find(o => o.kind === 'door_panel_double') || cat.options.find(o => String(o.kind).startsWith('door'));
+  assert.ok(!door.trim_frame, 'off by default');
+  await admin.patch('/api/v1/options/' + door.id, { trim_frame: true });
+  assert.equal((await admin.get('/api/v1/options/' + door.id)).data.trim_frame, 1);
+  await admin.patch('/api/v1/options/' + door.id, { trim_frame: '<b>' });
+  assert.equal((await admin.get('/api/v1/options/' + door.id)).data.trim_frame, 0, 'flags are only ever 0 or 1');
+  const ms = cat.colors.find(c => c.name === 'Match Siding');
+  assert.ok(ms && (ms.uses || [ms.category]).includes('door'), 'Match Siding offered for doors');
+  // a quote with the door in "Match Siding" prices and draws fine
+  const st = cat.styles[0];
+  const q = await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: st.sizes[0].id, colors: { door: ms.id }, items: [{ option_id: door.id, wall: 'front', offset: 0 }] }, customer: { first_name: 'Door', email: 'door@test.com' } });
+  assert.equal(q.status, 201);
+});
