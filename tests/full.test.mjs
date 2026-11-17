@@ -892,3 +892,34 @@ test('doors: "Door trim in the trim color" saves per option; "Match Siding" door
   const q = await admin.post('/api/v1/quotes', { config: { style_id: st.id, size_id: st.sizes[0].id, colors: { door: ms.id }, items: [{ option_id: door.id, wall: 'front', offset: 0 }] }, customer: { first_name: 'Door', email: 'door@test.com' } });
   assert.equal(q.status, 201);
 });
+
+test('door colors per door: follows the building, always one color, or customer picks from a list', async () => {
+  let cat = (await admin.get('/api/v1/catalog')).data;
+  const door = cat.options.find(o => o.kind === 'door_single') || cat.options.find(o => String(o.kind).startsWith('door'));
+  const doorCols = cat.colors.filter(c => (c.uses || [c.category]).includes('door') && !/match/i.test(c.name));
+  const red = (await admin.post('/api/v1/colors', { name: 'Door Red', hex: '#a01818', uses: ['door'], price: 40 })).data;
+  const blk = doorCols[0];
+  // validation: unknown mode dropped, unknown color ids dropped
+  await admin.patch('/api/v1/options/' + door.id, { door_color_mode: 'rainbow', door_colors: [red.id, 999999, 'x'] });
+  let row = (await admin.get('/api/v1/options/' + door.id)).data;
+  assert.equal(row.door_color_mode, null); assert.deepEqual(row.door_colors, [red.id]);
+  const st = cat.styles[0], cfg = extra => ({ style_id: st.id, size_id: st.sizes[0].id, items: [{ uid: 'd1', option_id: door.id, wall: 'front', offset: 0, ...extra }] });
+  const lines = async extra => (await anon.post('/api/v1/price', cfg(extra))).data.lines.filter(l => l.item_uid === 'd1');
+  assert.equal((await lines({ color_id: red.id })).length, 0, 'follows the building: no per-door color');
+  // customer picks: their pick is kept and priced per door; a color not on the list is ignored
+  await admin.patch('/api/v1/options/' + door.id, { door_color_mode: 'custom', door_colors: [red.id, blk.id] });
+  let l = await lines({ color_id: red.id });
+  assert.equal(l.length, 1); assert.equal(l[0].label, `${door.name} color: Door Red`); assert.equal(l[0].amount, 40);
+  l = await lines({ color_id: 999999 });
+  assert.ok([red.id, blk.id].includes(l[0].color_id), 'falls back to an allowed color');
+  const q = await admin.post('/api/v1/quotes', { config: cfg({ color_id: red.id }), customer: { first_name: 'Dc', email: 'dc@test.com' } });
+  assert.equal(q.status, 201); assert.equal(q.data.config.items.find(i => i.uid === 'd1').color_id, red.id, 'saved on the quote');
+  // always one color: shown on the order at no charge; a customer's pick is ignored
+  await admin.patch('/api/v1/options/' + door.id, { door_color_mode: 'fixed', door_color_id: blk.id });
+  l = await lines({ color_id: red.id });
+  assert.equal(l[0].color_id, blk.id); assert.equal(l[0].amount, 0); assert.equal(l[0].note, 'Standard color');
+  // back to normal
+  await admin.patch('/api/v1/options/' + door.id, { door_color_mode: '', door_color_id: null, door_colors: [] });
+  row = (await admin.get('/api/v1/options/' + door.id)).data; assert.equal(row.door_color_mode, null); assert.equal(row.door_colors, null);
+  await admin.del('/api/v1/colors/' + red.id);
+});

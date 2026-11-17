@@ -160,6 +160,7 @@ h3:first-of-type { margin-top: 0; }
 .sw.on i { box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--brand); }
 .sw.on i::after { content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 18px; border: solid #fff; border-width: 0 3px 3px 0; transform: translate(-50%, -62%) rotate(45deg); filter: drop-shadow(0 0 1px rgba(0,0,0,.6)); }
 .sw em { display: block; font-style: normal; color: var(--brand); font-weight: 700; }
+.swatches.sm { gap: 8px; margin-bottom: 4px; } .swatches.sm .sw { width: 46px; } .swatches.sm .sw i { width: 34px; height: 34px; }
 .chosen { font-size: 13px; color: var(--ink-2); margin: -4px 0 10px; }
 .chosen b { color: var(--ink); }
 

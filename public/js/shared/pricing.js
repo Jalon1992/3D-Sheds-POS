@@ -88,6 +88,22 @@ export function roofMaterialPrice(mat, style, size) {
 /** Where a color is offered: the paint's "Used for" list (one paint for siding, trim and doors), else its one category. */
 export const colorUses = c => (Array.isArray(c?.uses) && c.uses.length ? c.uses : [c?.category]);
 export const colorFor = (c, cat) => colorUses(c).includes(cat);
+/** A door option's own color setting: 'fixed' = always one color, 'custom' = the customer picks for that door,
+ *  anything else = follows the building's door color. */
+export const doorColorMode = o => (o?.door_color_mode === 'fixed' && o.door_color_id ? 'fixed' : o?.door_color_mode === 'custom' ? 'custom' : '');
+/** Colors a customer can pick for a 'custom' door: the admin's list, else every available door color. */
+export function doorColorChoices(catalog, o) {
+  const ids = Array.isArray(o?.door_colors) && o.door_colors.length ? o.door_colors.map(Number) : null;
+  return catalog.colors.filter(c => c.active !== 0 && (ids ? ids.includes(c.id) : colorFor(c, 'door')));
+}
+/** The color id a door item ends up with, or null when it follows the building's door color. */
+export function doorColorId(catalog, o, item, buildingDoor) {
+  const mode = doorColorMode(o);
+  if (mode === 'fixed') return Number(o.door_color_id);
+  if (mode !== 'custom') return null;
+  const ch = doorColorChoices(catalog, o);
+  return (ch.find(c => c.id === Number(item?.color_id)) || ch.find(c => c.id === Number(buildingDoor)) || ch[0])?.id ?? null;
+}
 /** Roof colors that work with a roofing material (colors with no material set work with all). */
 export function roofColorsFor(catalog, matKey) {
   return catalog.colors.filter(c => colorFor(c, 'roof') && c.active !== 0 && (!c.material || c.material === matKey));
@@ -208,6 +224,16 @@ export function priceConfig(catalog, config) {
     if (!c) continue;
     const amt = Number(c.price) || 0;
     lines.push({ type: 'color', category: cat, label: `${cap(cat)} color: ${c.name}`, amount: amt, color_id: c.id });
+  }
+
+  // doors with their own color (always one color, or picked for that door): listed so the order shows it;
+  // a picked color's upcharge applies per door
+  for (const it of config.items || []) {
+    const o = optById[it.option_id], cid = o && doorColorId(catalog, o, it, config.colors?.door);
+    const c = cid && colorById[cid];
+    if (!c) continue;
+    const mode = doorColorMode(o), amt = mode === 'custom' ? (Number(c.price) || 0) * (it.qty || 1) : 0;
+    lines.push({ type: 'color', category: 'door', label: `${o.name} color: ${c.name}`, amount: amt, color_id: c.id, item_uid: it.uid, ...(mode === 'fixed' ? { note: 'Standard color' } : {}) });
   }
 
   for (const it of config.items || []) {
@@ -359,6 +385,7 @@ export function sanitizeConfig(catalog, raw) {
       ...(i.gable && optById[Number(i.option_id)]?.gable_mode === 'allow' ? { gable: true } : {}),
       ...(i.package_of ? { package_of: String(i.package_of).slice(0, 60) } : {}),
       ...(finite(i.elev) ? { elev: clampNum(i.elev, 0, 30) } : {}),
+      ...(doorColorMode(optById[Number(i.option_id)]) === 'custom' && doorColorChoices(catalog, optById[Number(i.option_id)]).some(c => c.id === Number(i.color_id)) ? { color_id: Number(i.color_id) } : {}),
     }));
   for (const it of items) {
     const o = optById[it.option_id];
