@@ -1,6 +1,6 @@
 // Customer-facing configurator: Style → Size → Colors → Options → Quote.
 import { ShedScene } from './shed3d.js';
-import { defaultConfig, priceConfig, money, WALLS, colorGroupEnabled, resolveTier, tierCatalog, findDealer, roofChoices, roofColorsFor, roofMaterialPrice, roofingList, optionAvailable, sanitizeConfig, isPackage, placePackage, lengthChoices, windowHeightAdjustable, isWindow, colorFor } from './shared/pricing.js';
+import { defaultConfig, priceConfig, money, WALLS, colorGroupEnabled, resolveTier, tierCatalog, findDealer, roofChoices, roofColorsFor, roofMaterialPrice, roofingList, optionAvailable, sanitizeConfig, isPackage, placePackage, lengthChoices, windowHeightAdjustable, isWindow, colorFor, doorColorMode, doorColorChoices, doorColorId } from './shared/pricing.js';
 import { shedGeometry, findSpot, canPlace, resolvePlacement, gableMode, inGable } from './shared/geometry.js';
 import { floorPlanSVG } from './shared/floorplan.js';
 import { buildDrawingPackage } from './drawings.js';
@@ -446,6 +446,7 @@ function selectItem(uid, opts = {}) {
       ${wallable ? `<div class="walls">${WALLS.map(w => { const no = gableMode(o) === 'only' && !geo().isGable(w); return `<button data-wall="${w}" class="${it.wall === w ? 'on' : ''}" ${no ? 'disabled title="Gable ends only"' : ''}>${w}</button>`; }).join('')}</div>` : ''}
       ${movable ? `<div class="mv"><button data-move="-1" aria-label="Move left"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><button data-move="1" aria-label="Move right"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></div>` : ''}
     </div>` : ''}
+    ${doorColorMode(o) === 'custom' ? (() => { const cur = doorColorId(state.catalog, o, it, state.config.colors.door); return `<div class="ic-label">Door color</div><div class="swatches sm">${doorColorChoices(state.catalog, o).map(c => `<button class="sw ${c.id === cur ? 'on' : ''}" data-dcolor="${c.id}" title="${esc(c.name)}"><i style="background:${esc((/match\s*(trim|siding)/i.exec(c.name) && state.catalog.colors.find(x => x.id === state.config.colors[/siding/i.test(c.name) ? 'siding' : 'trim'])?.hex) || c.hex)}"></i>${esc(c.name)}${c.price && showPrices() ? `<em>+${fmt(c.price)}</em>` : ''}</button>`).join('')}</div>`; })() : ''}
     ${gableMode(o) === 'allow' && geo().isGable(it.wall) ? `<div class="ic-label">Height</div><div class="walls"><button data-gable="0" class="${it.gable ? '' : 'on'}">On the wall</button><button data-gable="1" class="${it.gable ? 'on' : ''}">Up in the gable</button></div>` : ''}
     ${gableMode(o) === 'only' ? `<div class="ic-meta" style="margin-top:8px">Sits up in the gable end.</div>` : ''}
     ${(() => {
@@ -542,6 +543,7 @@ $('#itemcard').addEventListener('click', e => {
   else if (b.dataset.wall) moveToWall(uid, b.dataset.wall);
   else if (b.dataset.move) moveItem(uid, Number(b.dataset.move));
   else if (b.dataset.gable !== undefined) setGable(uid, b.dataset.gable === '1');
+  else if (b.dataset.dcolor) { const it = state.config.items.find(i => i.uid === uid); if (it) { it.color_id = Number(b.dataset.dcolor); rebuild(); selectItem(uid); renderPanel(); } }
   else if (b.dataset.elev) setElev(uid, Number(b.dataset.elev));
   else if (b.dataset.elevreset) resetElev(uid);
   else if (b.dataset.len) setLength(uid, Number(b.dataset.len));
@@ -988,7 +990,7 @@ async function boot() {
   if (savedLoc.zip && !state.config.zip && /^\d{5}$/.test(savedLoc.zip)) state.config.zip = savedLoc.zip;
   applyTier();
   rebuild();
-  if (params.has('debug')) window.__shed = { scene, state, optById, addOption, removeItem, swapItem, moveItem, moveToWall, setGable, setElev, setLength, dragItem, fitItems, pricing, notice, go };
+  if (params.has('debug')) window.__shed = { scene, state, optById, addOption, removeItem, swapItem, moveItem, moveToWall, setGable, selectItem, setElev, setLength, dragItem, fitItems, pricing, notice, go };
   renderSteps(); renderPanel();
   if (state.jumpToSize) setTimeout(() => $('#sizeHead')?.scrollIntoView({ block: 'start' }), 50);
   setTimeout(() => $('#loading').classList.add('gone'), 150);
