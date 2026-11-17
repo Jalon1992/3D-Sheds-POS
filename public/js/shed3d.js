@@ -8,6 +8,7 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { shedGeometry, resolvePlacement, FLOOR_Y, WALL_T, rakeTailLevel } from './shared/geometry.js';
+import { doorColorId } from './shared/pricing.js';
 
 const T = WALL_T;
 
@@ -1438,7 +1439,15 @@ export class ShedScene {
         default: continue;
       }
       const opening = o.placement === 'opening';
-      const model = buildKind(o.kind || 'box', kindW, kindH, kindD, M, { floorY: y0, opt: o, elev: p.elev, item: it });
+      // a door with its own color (always one color, or picked for this door) gets its own door material
+      let MI = M;
+      const dcid = doorColorId(catalog, o, it, config.colors?.door);
+      if (dcid) {
+        const dc = catalog.colors.find(c => c.id === dcid);
+        const hex = /match\s*siding/i.test(dc?.name || '') ? colors.siding : /match\s*trim/i.test(dc?.name || '') ? colors.trim : dc?.hex;
+        if (hex) { M.doorBy ||= {}; MI = { ...M, door: M.doorBy[hex] ||= new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 0.6 }), doorGroove: null, garageShade: null }; }
+      }
+      const model = buildKind(o.kind || 'box', kindW, kindH, kindD, MI, { floorY: y0, opt: o, elev: p.elev, item: it });
       if (Number(o.slanted_corners) && o.placement === 'opening') slantCorners(model, kindW, kindH, M);
       holder.add(model);
       if (o.model_url) {

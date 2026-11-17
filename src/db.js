@@ -225,7 +225,10 @@ for (const sql of [
   'ALTER TABLE options ADD COLUMN garage_windows INTEGER',           // garage doors: windows across the top section
   'ALTER TABLE options ADD COLUMN insulated INTEGER',                // garage doors: insulated (shown to customers, priced on the option)
   'ALTER TABLE colors ADD COLUMN uses TEXT',
-  'ALTER TABLE options ADD COLUMN trim_frame INTEGER',               // door: stiles, rails and braces in the trim color                         // JSON: where a paint is offered (siding, trim, door, window, roof)
+  'ALTER TABLE options ADD COLUMN trim_frame INTEGER',
+  'ALTER TABLE options ADD COLUMN door_color_mode TEXT',             // '' follows the building's door color, 'fixed', 'custom'
+  'ALTER TABLE options ADD COLUMN door_color_id INTEGER',            // fixed: always this color
+  'ALTER TABLE options ADD COLUMN door_colors TEXT',                 // custom: JSON list of color ids customers can pick (empty = all door colors)               // door: stiles, rails and braces in the trim color                         // JSON: where a paint is offered (siding, trim, door, window, roof)
   'ALTER TABLE options ADD COLUMN no_corner_trim INTEGER',           // egg (nest) box built without the white corner boards
   'ALTER TABLE options ADD COLUMN slanted_corners INTEGER',          // doors: trim with slanted (45°) top corners
   'ALTER TABLE options ADD COLUMN package_items TEXT',
@@ -286,7 +289,7 @@ export const DB_SCHEMA = dbVersion();
 if (DB_SCHEMA > SCHEMA_VERSION) console.warn(`  ⚠  This database (schema ${DB_SCHEMA}) is newer than this version of the app (schema ${SCHEMA_VERSION}). That's expected right after undoing an update.`);
 
 // ---- JSON column helpers -----------------------------------------------------
-export const JSON_COLS = new Set(['uses', 'standard_options', 'default_colors', 'roof_choices', 'available_options', 'only_styles', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
+export const JSON_COLS = new Set(['uses', 'door_colors', 'standard_options', 'default_colors', 'roof_choices', 'available_options', 'only_styles', 'package_items', 'roofing', 'price_tiers', 'dealers', 'zip_tiers', 'events', 'headers', 'config', 'pricing', 'utm',
   'tags', 'stages', 'pages', 'fields', 'data', 'values_json', 'roles', 'read_by', 'payload']);
 
 export function parseRow(row) {

@@ -67,8 +67,8 @@ function field(f, v) {
     case 'section': return `<div class="section-t">${esc(f.label)}</div>`;
     case 'html': return f.html;
     case 'checkbox': return `<label class="fld${full}"><span>&nbsp;</span><label class="chk"><input type="checkbox" name="${f.key}" ${val === true || val === 1 || val === '1' ? 'checked' : ''}>${esc(f.label)}</label>${help}</label>`;
-    case 'multi': { const sel = Array.isArray(val) && val.length ? val : f.options.map(o => o[0]);
-      return `<div class="fld${full}"><span>${esc(f.label)}</span><div class="row">${f.options.map(([k, l]) => `<label class="chk"><input type="checkbox" data-multi="${f.key}" value="${esc(k)}" ${sel.includes(k) ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div>${help}</div>`; }
+    case 'multi': { const sel = (Array.isArray(val) && val.length ? val : (f.defaults || f.options.map(o => o[0]))).map(String);
+      return `<div class="fld${full}"><span>${esc(f.label)}</span><div class="row">${f.options.map(([k, l]) => `<label class="chk"><input type="checkbox" data-multi="${f.key}" value="${esc(k)}" ${sel.includes(String(k)) ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div>${help}</div>`; }
     case 'select': return `<label class="fld${full}"><span>${esc(f.label)}</span><select name="${f.key}">${(typeof f.options === 'function' ? f.options() : f.options).map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>${help}</label>`;
     case 'textarea': return `<label class="fld${full}"><span>${esc(f.label)}</span><textarea name="${f.key}" ${f.ph ? `placeholder="${esc(f.ph)}"` : ''}>${esc(val)}</textarea>${help}</label>`;
     case 'json': return `<label class="fld${full}"><span>${esc(f.label)}</span><textarea class="code" name="${f.key}" data-json>${esc(typeof val === 'string' ? val : JSON.stringify(val || f.empty || {}, null, 2))}</textarea>${help}</label>`;
@@ -82,7 +82,7 @@ function readFields(root, fields) {
   const out = {};
   for (const f of fields) {
     if (!f.key) continue;
-    if (f.type === 'multi') { out[f.key] = [...root.querySelectorAll(`[data-multi="${f.key}"]:checked`)].map(x => x.value); continue; }
+    if (f.type === 'multi') { const on = [...root.querySelectorAll(`[data-multi="${f.key}"]:checked`)].map(x => x.value); const dflt = (f.defaults || f.options.map(o => o[0])).map(String); out[f.key] = f.allIsEmpty && on.length === dflt.length && on.every(v => dflt.includes(v)) ? [] : on; continue; }
     const el = root.querySelector(`[name="${f.key}"]`); if (!el) continue;
     if (f.type === 'checkbox') out[f.key] = el.checked ? 1 : 0;
     else if (f.type === 'number') out[f.key] = el.value === '' ? null : Number(el.value);
@@ -676,6 +676,10 @@ const OPTION_FIELDS = () => [
   { key: 'garage_panel', label: 'Garage door style', type: 'select', options: [['', '—'], ['standard', 'Standard (raised short panels)'], ['carriage', 'Carriage house (grooved panels, hinges & handles)']], help: 'For the "Garage door" built-in model. Set the door size with Width and Height above (e.g. 9 × 7, 10 × 8, 16 × 7).' },
   { key: 'garage_windows', label: 'Row of windows across the top section', type: 'checkbox' },
   { key: 'insulated', label: 'Insulated', type: 'checkbox', help: 'Insulated doors are drawn thicker (2" foam core). Keep insulated and uninsulated as separate options so each has its own price, and say "Insulated" in the name so it reads that way on quotes.' },
+  { type: 'html', html: '<div class="section-t full">Door color</div>' },
+  { key: 'door_color_mode', label: 'This door\'s color', type: 'select', options: [['', 'Follows the building\'s door color'], ['fixed', 'Always one color (set below)'], ['custom', 'Customer picks the color for this door']], help: '"Customer picks" adds a color choice when they tap this door in the 3D designer. A picked color\'s upcharge is added per door.' },
+  { key: 'door_color_id', label: 'Always this color', type: 'select', options: [['', '—'], ...catalog.colors.filter(c => c.active !== 0 && !colorUses(c).includes('roof')).map(c => [String(c.id), `${c.name}${colorFor(c, 'door') ? '' : ' (' + colorUses(c).join('/') + ')'}`])], help: 'Used when "Always one color" is chosen.' },
+  { key: 'door_colors', label: 'Colors customers can pick', type: 'multi', allIsEmpty: true, options: catalog.colors.filter(c => c.active !== 0 && !colorUses(c).includes('roof')).sort((x, y) => Number(colorFor(y, 'door')) - Number(colorFor(x, 'door'))).map(c => [String(c.id), `${c.name}${colorFor(c, 'door') ? '' : ' (' + colorUses(c).join('/') + ')'}`]), defaults: catalog.colors.filter(c => c.active !== 0 && colorFor(c, 'door')).map(c => String(c.id)), help: 'Used when "Customer picks" is chosen. Siding and trim paints can be ticked too. Leaving exactly the door colors ticked also offers door colors you add later.' },
   { key: 'trim_frame', label: 'Door trim in the trim color', type: 'checkbox', help: 'Doors: the frame boards on the door (stiles, rails, braces) are the building\'s trim color; the door itself stays the door color. Pick the door color "Match Siding" to make the door the shed color.' },
   { key: 'no_corner_trim', label: 'No corner trim on the egg box', type: 'checkbox', help: 'Egg (nest) box only: builds it without the white corner boards. Leave unticked for corner boards.' },
   { key: 'slanted_corners', label: 'Slanted top corners on the trim', type: 'checkbox', help: 'Any door: adds 45° trim blocks in the two top corners of the opening.' },
