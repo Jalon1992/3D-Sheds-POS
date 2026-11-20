@@ -33,6 +33,8 @@ const dir = mkdtempSync(join(tmpdir(), 'flicker-'));
     for (const R of [7, 13]) for (const a of [-0.6, 0, 0.6]) views.push({ door: true, a, R });
     if (process.env.FLICKER_VIEWS === 'door') views.splice(0, 10);
     for (const st of cat.styles.filter(s => !process.env.FLICKER_STYLE || s.name === process.env.FLICKER_STYLE)) {
+      // FLICKER_NEAR=0.004: squeeze the depth range to act like a phone/tablet with a less precise depth buffer
+      if (process.env.FLICKER_NEAR) await page.evaluate(n => { const s = window.__shed.scene; s.camera.near = Number(n); s.camera.updateProjectionMatrix(); }, process.env.FLICKER_NEAR);
       // FLICKER_TRIM_FRAME=1: every door drawn with its frame boards in the trim color
       if (process.env.FLICKER_TRIM_FRAME) await page.evaluate(() => window.__shed.state.catalog.options.forEach(o => { if (String(o.kind).startsWith('door')) o.trim_frame = 1; }));
       await page.evaluate(id => document.querySelector(`[data-style="${id}"]`).click(), st.id); await page.waitForTimeout(1200);

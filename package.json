@@ -18,7 +18,8 @@
     "test:messaging": "node --test tests/messaging.test.mjs",
     "test:sweep": "node --disable-warning=ExperimentalWarning tests/sweep.cjs",
     "test:glitch": "node tests/glitch.cjs",
-    "test:flicker": "node tests/flicker.cjs"
+    "test:flicker": "node tests/flicker.cjs",
+    "test:shimmer": "node tests/shimmer.cjs"
   },
   "dependencies": {
     "express": "^4.22.3",
