@@ -232,8 +232,8 @@ function makeMaterials(style, colors) {
     roofTex,
     roof: (u, v) => new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), map: tiled(roofTex, u, v), roughness: style.roof_material === 'metal' ? 0.4 : 0.95, metalness: style.roof_material === 'metal' ? 0.35 : 0 }),
     roofPlain: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e').multiplyScalar(0.85), roughness: 0.8 }),
-    roofTrim: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), roughness: 0.42, metalness: 0.45 }),
-    agPanel: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), roughness: 0.55, metalness: 0.55, side: THREE.DoubleSide }),   // .55: glints on the thin ribs sparkled at .38
+    roofTrim: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), roughness: 0.65, metalness: 0.35 }),   // satin, like the panels
+    agPanel: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e'), roughness: 0.75, metalness: 0.3, side: THREE.DoubleSide }),   // satin painted steel: shinier settings made the thin ribs sparkle as the camera moved
     screw: new THREE.MeshStandardMaterial({ color: c(colors.roof, '#3a3c3e').multiplyScalar(0.8), roughness: 0.35, metalness: 0.6 }),
     door: new THREE.MeshStandardMaterial({ color: c(colors.door, colors.trim || '#f4f4ef'), roughness: 0.6 }),
     window: new THREE.MeshStandardMaterial({ color: c(colors.window, colors.trim || '#f4f4ef'), roughness: 0.55 }),
@@ -275,12 +275,14 @@ function casing(g, w, h, M, zOut, withSill) {
   if (M.noCasing) return; // exported .glb files: the builder adds its own trim around the opening
   const cw = M.cw ?? 0.33, ct = 0.06;
   // windows/vents: flat picture-frame casing all the way around (no projecting sill); doors: sides + head only
-  const lo = withSill ? -cw : 0, sh = h + cw - lo;
-  box(cw, sh, ct, M.trim, -w / 2 - cw / 2, lo + sh / 2, zOut + ct / 2, g);
-  box(cw, sh, ct, M.trim, w / 2 + cw / 2, lo + sh / 2, zOut + ct / 2, g);
+  // the casing laps 3/8" over the opening, like real trim: with its edge exactly on the opening's edge, a hairline
+  // of the opening's raw side showed and hid as the camera moved (a shimmering line around doors and windows)
+  const ov = 0.03, lo = withSill ? ov : 0, sh = h - ov - lo;   // sides run between the head and sill boards (no overlapping faces)
+  box(cw, sh, ct, M.trim, -w / 2 - cw / 2 + ov, lo + sh / 2, zOut + ct / 2, g);
+  box(cw, sh, ct, M.trim, w / 2 + cw / 2 - ov, lo + sh / 2, zOut + ct / 2, g);
   // windows: head and bottom are flush with the sides (a clean flat frame); doors keep the small head-trim ears
-  box(w + cw * 2 + (withSill ? 0 : 0.1), cw, ct + (withSill ? 0 : 0.02), M.trim, 0, h + cw / 2, zOut + ct / 2, g);
-  if (withSill) box(w + cw * 2, cw, ct, M.trim, 0, -cw / 2, zOut + ct / 2, g);
+  box(w + cw * 2 - ov * 2 + (withSill ? 0 : 0.1), cw, ct + (withSill ? 0 : 0.02), M.trim, 0, h + cw / 2 - ov, zOut + ct / 2, g);
+  if (withSill) box(w + cw * 2 - ov * 2, cw, ct, M.trim, 0, -cw / 2 + ov, zOut + ct / 2, g);
 }
 // Carriage-house door leaf (matches the 72" double / 36" single carriage doors): 5-lite window across the top,
 // framed upper & lower panels of vertical boards, black strap hinges on the hinge side.
@@ -293,7 +295,7 @@ function carriageLeaf(g, w, h, M, x, zf, hingeSide, { window: hasWin = true } = 
   const zb = zf + T0 / 2 + F / 2, s = Math.min(0.36, w * 0.12);   // stile width ~4.3"
   // top rail is wide enough (4") to carry the top hinge above the window
   const topR = 0.34, winH = hasWin ? Math.min(0.95, h * 0.16) : 0, underWin = hasWin ? 0.3 : 0, midR = 0.36, botR = 0.42;
-  const yWinTop = h - topR, yWinBot = yWinTop - winH, yMid = h * 0.44;
+  const yWinTop = h - topR, yWinBot = yWinTop - winH, yMid = h / 2;   // middle rail centred at half height
   // stiles & rails (raised boards)
   const FR = M.doorFrame || M.door;
   box(s, h, F, FR, x - w / 2 + s / 2, h / 2, zb, g);
@@ -521,8 +523,8 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
         for (const [y0, y1] of [[b, h / 2 - b * 0.4], [h / 2 + b * 0.4, h - b]]) {
           const iw = lw - 2 * b, ih = y1 - y0;
           const len = Math.hypot(iw, ih), ang = Math.atan2(ih, iw);
-          const m1 = box(len, b * 0.75, 0.04, M.trim, x, (y0 + y1) / 2, z2 - 0.005, g); m1.rotation.z = ang;
-          const m2 = box(len, b * 0.75, 0.04, M.trim, x, (y0 + y1) / 2, z2 + 0.015, g); m2.rotation.z = -ang;
+          const m1 = box(len, b * 0.75, 0.03, M.trim, x, (y0 + y1) / 2, z2 - 0.01, g); m1.rotation.z = ang;
+          const m2 = box(len, b * 0.75, 0.03, M.trim, x, (y0 + y1) / 2, z2 + 0.02, g); m2.rotation.z = -ang;
         }
       }
       // hinges + handle
@@ -739,7 +741,7 @@ function buildKind(kind, w, h, d, M, ctx = {}) {
       const backTop = h + 0.15, frontTop = Math.max(h * 0.6, backTop - D * 0.38);
       const SP = sidingPlain(M), osb = M.osbTop || (M.osbTop = new THREE.MeshStandardMaterial({ color: 0xffffff, map: osbTex(), roughness: 0.9 }));
       const lum = M.lumber || (M.lumber = new THREE.MeshStandardMaterial({ color: 0xffffff, map: lumberTex(), roughness: 0.75 }));
-      box(w, 0.1, D, SP, 0, -0.05, zOut + D / 2, g);                                                // floor (top = bottom of the hole)
+      box(w - 2 * pT, 0.1, D - pT, SP, 0, -0.05, zOut + (D - pT) / 2, g);                        // floor (top = bottom of the hole), fitted inside the front and end boards (flush faces flickered)
       box(w - 0.12, 0.012, D - 0.08, osb, 0, 0.007, zOut + D / 2, g);
       box(w, frontTop - bot, pT, sidingFor(M, w, frontTop - bot), 0, (frontTop + bot) / 2, zf - pT / 2, g);   // front
       box(w - 0.12, frontTop - 0.02, 0.012, osb, 0, frontTop / 2, zf - pT - 0.007, g);
@@ -1094,7 +1096,7 @@ export class ShedScene {
     const M = this.M = makeMaterials({ ...style, roof_material: config.roof_material || style.roof_material }, colors);
     if ((config.roof_material || style.roof_material) === 'metal') {
       // painted steel: ridge cap & trims match the panels, all with soft reflections
-      M.roofPlain.roughness = 0.42; M.roofPlain.metalness = 0.45; M.roofPlain.color.copy(M.agPanel.color);
+      M.roofPlain.roughness = 0.65; M.roofPlain.metalness = 0.35; M.roofPlain.color.copy(M.agPanel.color);
       // light colors (Galvalume, Polar White) read as bare/bright steel: more metal, slightly darker base so they don't wash out
       const hsl = {}; M.agPanel.color.getHSL(hsl);
       const bare = hsl.l > 0.55 && hsl.s < 0.12;
@@ -1232,7 +1234,8 @@ export class ShedScene {
       const u = [(Bp[0] - A[0]) / len, (Bp[1] - A[1]) / len], n = normal(segIdx);
       const geo = new THREE.ExtrudeGeometry(agShape, { depth: len, bevelEnabled: false, curveSegments: 1 });
       const m = new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(n[0], n[1], 0), new THREE.Vector3(u[0], u[1], 0));
-      m.setPosition(A[0], A[1], 0); geo.applyMatrix4(m); geo.computeVertexNormals();
+      const LIFT = 0.012;   // panels sit 1/8" off the deck: flush, their undersides fought the deck for pixels
+      m.setPosition(A[0] + n[0] * LIFT, A[1] + n[1] * LIFT, 0); geo.applyMatrix4(m); geo.computeVertexNormals();
       const mesh = new THREE.Mesh(geo, M.agPanel); mesh.castShadow = mesh.receiveShadow = true; mesh.userData.solid = true; roofG.add(mesh);
       // screws: beside each major rib, rows every 2 ft down the slope
       const rows = []; for (let d = 0.6; d < len - 0.3; d += 2) rows.push(d); rows.push(len - 0.25);
@@ -1241,7 +1244,7 @@ export class ShedScene {
       const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], 0));
       const mm = new THREE.Matrix4(); let k = 0;
       for (const d of rows) for (const z of ribs) {
-        mm.compose(new THREE.Vector3(A[0] + u[0] * d + n[0] * 0.012, A[1] + u[1] * d + n[1] * 0.012, -z), q, new THREE.Vector3(1, 1, 1));
+        mm.compose(new THREE.Vector3(A[0] + u[0] * d + n[0] * (0.012 + LIFT), A[1] + u[1] * d + n[1] * (0.012 + LIFT), -z), q, new THREE.Vector3(1, 1, 1));
         inst.setMatrixAt(k++, mm);
       }
       inst.userData.solid = true; inst.userData.detail = 0.056; roofG.add(inst);   // tiny: hidden when it would be under ~3 px (it sparkles)
@@ -1292,7 +1295,9 @@ export class ShedScene {
       for (let k = 0; k < cnt; k++) {
         // each cap shingle stays within the roof length (none sticks out past the rake)
         const z0 = -RL + exp * k, z1 = Math.min(RL - 0.005, z0 + exp + 0.03), lenZ = z1 - z0; if (lenZ <= 0.01) continue;
-        const b = box(len, ct, lenZ, k % 2 ? M.roofPlain : dark, P[0] + ux * len / 2 + n[0] * ct / 2, P[1] + uy * len / 2 + n[1] * ct / 2, (z0 + z1) / 2, roofG);
+        // every other cap shingle laps over its neighbours (a touch thicker): with level tops the overlaps flickered
+        const t = ct + (k % 2 ? 0.014 : 0);
+        const b = box(len, t, lenZ, k % 2 ? M.roofPlain : dark, P[0] + ux * len / 2 + n[0] * t / 2, P[1] + uy * len / 2 + n[1] * t / 2, (z0 + z1) / 2, roofG);
         b.rotation.z = Math.atan2(uy, ux); b.userData.solid = true;
       }
     };
