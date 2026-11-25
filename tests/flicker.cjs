@@ -38,6 +38,12 @@ const dir = mkdtempSync(join(tmpdir(), 'flicker-'));
       // FLICKER_TRIM_FRAME=1: every door drawn with its frame boards in the trim color
       if (process.env.FLICKER_TRIM_FRAME) await page.evaluate(() => window.__shed.state.catalog.options.forEach(o => { if (String(o.kind).startsWith('door')) o.trim_frame = 1; }));
       await page.evaluate(id => document.querySelector(`[data-style="${id}"]`).click(), st.id); await page.waitForTimeout(1200);
+      // FLICKER_DOOR=door_carriage_double: put that door type on the front of every style (to test one door closely)
+      if (process.env.FLICKER_DOOR) {
+        const swapped = await page.evaluate(kind => { const H = window.__shed, st = H.state, o = st.catalog.options.find(x => x.kind === kind && x.active !== 0); const d = st.config.items.find(i => i.wall === 'front' && String(st.catalog.options.find(x => x.id === i.option_id)?.kind).startsWith('door')); if (!o || !d) return false; H.swapItem(d.uid, o.id); return true; }, process.env.FLICKER_DOOR);
+        if (!swapped) { console.log(`  (${st.name}: no front door to swap)`); continue; }
+        await page.waitForTimeout(800);
+      }
       let worst = { n: 0 };
       for (const [vi, v] of views.entries()) {
         const frames = [];
