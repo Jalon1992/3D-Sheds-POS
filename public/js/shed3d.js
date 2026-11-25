@@ -291,11 +291,17 @@ function carriageLeaf(g, w, h, M, x, zf, hingeSide, { window: hasWin = true } = 
   const T0 = 0.1, F = 0.05;                     // slab and frame-board thickness
   const groove = M.doorGroove || (M.doorGroove = M.door.clone());
   groove.color = M.door.color.clone().multiplyScalar(0.72);
-  box(w, h, T0, M.door, x, h / 2, zf, g);
   const zb = zf + T0 / 2 + F / 2, s = Math.min(0.36, w * 0.12);   // stile width ~4.3"
   // top rail is wide enough (4") to carry the top hinge above the window
   const topR = 0.34, winH = hasWin ? Math.min(0.95, h * 0.16) : 0, underWin = hasWin ? 0.3 : 0, midR = 0.36, botR = 0.42;
   const yWinTop = h - topR, yWinBot = yWinTop - winH, yMid = h / 2;   // middle rail centred at half height
+  // backing slab; with a window it's open behind the glass (you see into the building, like the other windows)
+  if (!hasWin) box(w, h, T0, M.door, x, h / 2, zf, g);
+  else {
+    box(w, yWinBot, T0, M.door, x, yWinBot / 2, zf, g);
+    box(w, h - yWinTop, T0, M.door, x, (h + yWinTop) / 2, zf, g);
+    for (const sx of [-1, 1]) box(s, winH, T0, M.door, x + sx * (w / 2 - s / 2), (yWinTop + yWinBot) / 2, zf, g);
+  }
   // stiles & rails (raised boards)
   const FR = M.doorFrame || M.door;
   box(s, h, F, FR, x - w / 2 + s / 2, h / 2, zb, g);
@@ -317,12 +323,15 @@ function carriageLeaf(g, w, h, M, x, zf, hingeSide, { window: hasWin = true } = 
   }
   // 5-lite window: dark glass, trim-colored frame and muntins
   if (hasWin) {
-  const wy = (yWinTop + yWinBot) / 2, gz = zf + T0 / 2;
-  box(iw, winH, 0.02, M.glassDark || (M.glassDark = new THREE.MeshStandardMaterial({ color: 0x1b2226, roughness: 0.12, metalness: 0.4 })), x, wy, gz, g);
-  const fb = 0.06, mz = gz + 0.02;
-  box(iw, fb, 0.04, M.trim, x, yWinTop - fb / 2, mz, g); box(iw, fb, 0.04, M.trim, x, yWinBot + fb / 2, mz, g);
-  box(fb, winH, 0.04, M.trim, x - iw / 2 + fb / 2, wy, mz, g); box(fb, winH, 0.04, M.trim, x + iw / 2 - fb / 2, wy, mz, g);
-  for (let k = 1; k < 5; k++) box(0.045, winH, 0.035, M.trim, x - iw / 2 + iw * k / 5, wy, mz, g);
+  // same as the other windows: see-through glass in a real opening, with a frame and grids in the window color.
+  // The frame lines the opening (front face just behind the door's raised boards), the grid bars fit between the
+  // frame pieces and stand clear of the glass: no two faces overlap in the same plane (that's what flickers).
+  const wy = (yWinTop + yWinBot) / 2, MW = M.window || M.trim;
+  const gl = box(iw, winH, 0.02, M.glass, x, wy, zf, g); gl.castShadow = false;   // clear glass casts no shadow
+  const fb = 0.06, fd = T0 + 0.03, fz = zf + 0.015, ih = winH - 2 * fb;
+  box(iw, fb, fd, MW, x, yWinTop - fb / 2, fz, g); box(iw, fb, fd, MW, x, yWinBot + fb / 2, fz, g);
+  box(fb, ih, fd, MW, x - iw / 2 + fb / 2, wy, fz, g); box(fb, ih, fd, MW, x + iw / 2 - fb / 2, wy, fz, g);
+  for (let k = 1; k < 5; k++) box(0.045, ih, 0.04, MW, x - iw / 2 + iw * k / 5, wy, zf + 0.04, g);
   }
   // T-hinges on the hinge edge: top hinge on the top rail (above the window), middle on the mid rail, bottom on the bottom rail
   const plateH = 0.4;

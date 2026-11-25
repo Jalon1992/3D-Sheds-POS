@@ -163,11 +163,11 @@ export function elevationSVG(catalog, config, wall, opts = {}) {
         } else if (kind === 'door_carriage' || kind === 'door_carriage_right' || kind === 'door_carriage_double' || kind === 'door_panel' || kind === 'door_panel_double') {
           const nL = kind === 'door_carriage_double' || kind === 'door_panel_double' ? 2 : 1, lwp = (x1 - x0) / nL, win = kind.startsWith('door_carriage');
           for (let L = 0; L < nL; L++) {
-            const a = x0 + L * lwp, b = a + lwp, st = lwp * 0.12, wt = y0 + hpx * 0.04, wb = wt + hpx * 0.16, mid = y0 + hpx * 0.56;
+            const a = x0 + L * lwp, b = a + lwp, st = lwp * 0.12, wt = y0 + hpx * 0.04, wb = wt + hpx * 0.16, mid = y0 + hpx * 0.5;   // middle rail at half height, as built
             if (L) o.push(`<line x1="${a}" y1="${y0}" x2="${a}" y2="${y1}" stroke="#1d2624"/>`);
             if (!win) { o.push(`<rect x="${a + st}" y="${y0 + hpx * 0.06}" width="${lwp - 2 * st}" height="${mid - y0 - hpx * 0.09}" fill="none" stroke="#1d2624" stroke-opacity=".6"/>`); o.push(`<rect x="${a + st}" y="${mid + hpx * 0.03}" width="${lwp - 2 * st}" height="${y1 - mid - hpx * 0.1}" fill="none" stroke="#1d2624" stroke-opacity=".6"/>`); continue; }
-            o.push(`<rect x="${a + st}" y="${wt}" width="${lwp - 2 * st}" height="${wb - wt}" fill="#3a4448" stroke="#1d2624"/>`);
-            for (let k = 1; k < 5; k++) o.push(`<line x1="${a + st + (lwp - 2 * st) * k / 5}" y1="${wt}" x2="${a + st + (lwp - 2 * st) * k / 5}" y2="${wb}" stroke="#ffffff" stroke-width="1.5"/>`);
+            o.push(`<rect x="${a + st}" y="${wt}" width="${lwp - 2 * st}" height="${wb - wt}" fill="#dfe8ee" stroke="#1d2624"/>`);   // glass, like the other windows
+            for (let k = 1; k < 5; k++) o.push(`<line x1="${a + st + (lwp - 2 * st) * k / 5}" y1="${wt}" x2="${a + st + (lwp - 2 * st) * k / 5}" y2="${wb}" stroke="#1d2624" stroke-opacity=".7" stroke-width="1.2"/>`);
             o.push(`<rect x="${a + st}" y="${wb + hpx * 0.05}" width="${lwp - 2 * st}" height="${mid - wb - hpx * 0.08}" fill="none" stroke="#1d2624" stroke-opacity=".6"/>`);
             o.push(`<rect x="${a + st}" y="${mid + hpx * 0.03}" width="${lwp - 2 * st}" height="${y1 - mid - hpx * 0.1}" fill="none" stroke="#1d2624" stroke-opacity=".6"/>`);
           }
